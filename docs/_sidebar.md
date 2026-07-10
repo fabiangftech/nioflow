@@ -1,6 +1,7 @@
 - [Overview](/)
 - [Quick start](quickstart.md)
 - [Examples](examples.md)
+- [Spring Boot](springboot.md)
 - [Architecture](architecture.md)
 - [API reference](reference.md)
 

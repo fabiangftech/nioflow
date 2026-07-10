@@ -8,11 +8,11 @@ Entry point: `dev.nioflow.application.facade.DefaultNioFlow<T>` — implements t
 
 | Constructor | Use when |
 |---|---|
-| `new NioFlow<>()` | Default: everything on virtual threads, unbounded admission. |
-| `new NioFlow<>(Backpressure bp)` | Virtual threads + admission control. |
-| `new NioFlow<>(ExecutorService ex)` | Your executor for `submit` stages; you keep its lifecycle. |
-| `new NioFlow<>(ExecutorService ex, int handleWorkers)` | Plus a fixed handle-worker pool bounding sync parallelism (CPU-heavy chains). |
-| `new NioFlow<>(ExecutorService ex, int handleWorkers, Backpressure bp)` | Fully tuned. |
+| `new DefaultNioFlow<>()` | Default: everything on virtual threads, unbounded admission. |
+| `new DefaultNioFlow<>(Backpressure bp)` | Virtual threads + admission control. |
+| `new DefaultNioFlow<>(ExecutorService ex)` | Your executor for `submit` stages; you keep its lifecycle. |
+| `new DefaultNioFlow<>(ExecutorService ex, int handleWorkers)` | Plus a fixed handle-worker pool bounding sync parallelism (CPU-heavy chains). |
+| `new DefaultNioFlow<>(ExecutorService ex, int handleWorkers, Backpressure bp)` | Fully tuned. |
 
 ## Injecting values
 
@@ -21,6 +21,7 @@ Entry point: `dev.nioflow.application.facade.DefaultNioFlow<T>` — implements t
 | `just(input)` | Injects one value; it starts walking the chain immediately. |
 | `just(input, context)` | Same, with seed metadata for `FlowContext`. |
 | `justAll(inputs)` | Injects every value in iteration order, honoring backpressure per value. |
+| `call(input[, context][, timeout])` | Request/response injection: returns that value's own `CompletableFuture`. See [below](#requestresponse-call). |
 
 ## Stages
 
@@ -70,33 +71,71 @@ The one distinction that matters: **`handle` is synchronous, `submit` is asynchr
 
 | Operator | Description |
 |---|---|
-| `seal()` | Freezes the chain (further links throw) and releases finished values. Seal every stream-style flow. |
+| `seal()` | Freezes the chain (further links and edits throw) and releases finished values. Seal every fixed, stream-style flow. |
+| `release()` | Releases finished values like `seal()`, but the chain stays open to appends and runtime edits. The mode for long-lived, editable service flows. |
 | `join()` | Waits for quiescence; returns the newest injected value's result; rethrows a recorded failure once. |
 | `join(timeout)` | Same, bounded by a timeout (`CompletionException` wrapping `TimeoutException`). |
 | `close()` | Graceful: drains up to 10 s, then stops the engine. Idempotent. Never shuts down your executor. |
 | `close(gracePeriod)` | Custom grace period. |
 
-## Request/response (web)
+## Request/response (`call`)
 
-`NioFlowGateway<T, R>` bridges request-driven callers (Spring WebMVC, WebFlux, RPC) into a running flow: each `call` injects one value and returns a `CompletableFuture` completed with **that value's own result** — unlike `join()`, which waits for the whole flow. Declare and seal the chain once at startup; serve each request with a `call`.
+`call` is the request/response form of injection — native to `NioFlow`, no bridge class needed. Each `call` injects one value and returns a `CompletableFuture` resolved with **that value's own outcome** — unlike `join()`, which waits for the whole flow. Declare the chain once at startup; serve each request with a `call`. This is the fit for Spring controllers — see [Spring Boot](springboot.md).
 
 | Method | Description |
 |---|---|
-| `NioFlowGateway.of(flow)` | Bridges a chain that keeps its type (`<T, T>`). |
-| `NioFlowGateway.of(entry, exit)` | Re-typed chain: inject through `entry`, observe results on the final view `exit`. |
-| `call(input)` | Injects and returns the value's own future. Rejected admission fails the future instead of throwing. |
-| `call(input, context)` | Same, with seed metadata for `FlowContext` (`"nioflow.gateway.id"` is reserved). |
-| `call(input, timeout)` | Bounded: `TimeoutException` if the value is slow — or dropped by a `filter`. Prefer this in web handlers. |
-| `pending()` | Calls still waiting for their result. |
+| `call(input)` | Injects and returns the value's own future. Rejected admission (closed flow, FAIL backpressure) fails the future instead of throwing. |
+| `call(input, context)` | Same, with seed metadata for `FlowContext`. |
+| `call(input, timeout)` | Bounded: the future fails with `TimeoutException` if the value is slow; the value keeps flowing. Prefer this in web handlers. |
+| `call(input, context, timeout)` | Metadata + bound combined. |
 
-Spring adapters (both generic, `compileOnly` dependencies):
+How the future resolves:
 
-| Adapter | Returns | Extra dependency |
-|---|---|---|
-| `NioFlowMvc.deferred(gateway, input[, timeout])` | `DeferredResult<R>` for async WebMVC controllers | `org.springframework:spring-web` |
-| `NioFlowReactive.mono(gateway, input[, timeout])` | cold `Mono<R>` for WebFlux handlers | `io.projectreactor:reactor-core` |
+- **Completed** with the value's end-of-chain result. A `fanOut` resolves it with the first split-off value to finish.
+- **Failed** with the terminal error, after every `onErrorResume` had its chance.
+- **Cancelled** when the value leaves deliberately: dropped by a `filter`, an empty `fanOut`, or a `Backpressure.dropping` admission.
 
-WebMVC controllers may also return the gateway's `CompletableFuture` directly — Spring handles it natively. Register `NioFlow` beans normally: they are `AutoCloseable`, so Spring closes them on context shutdown.
+The result type is stated at the call site (`CompletableFuture<Invoice> f = flow.call(order)`) — the engine is untyped, like with `adapt`.
+
+## Runtime editing
+
+Structural edits start a **new version** of the chain (copy-on-write): values already in flight — recoveries and lanes included — finish on the version they were injected into; values injected after the edit walk the new one. Edits anchor on **named stages**, run under the engine lock (safe from any thread) and throw `IllegalStateException` on a sealed flow.
+
+| Operator | Description |
+|---|---|
+| `remove(name)` | Takes out the named stage — or the whole region a previous `replace` spliced under that name. |
+| `replace(name, segment)` | Swaps the named stage for the segment's links. The links are remembered as the name's **region**: a later `replace` swaps the whole segment again. |
+| `insertBefore(anchor, segment)` | Splices the segment right before the anchor. |
+| `insertAfter(anchor, segment)` | Splices the segment right after the anchor. |
+
+Segments build with the full fluent API (stages, filters, forks, recoveries) on a detached view — injecting, joining or registering handlers inside one throws. Spliced links inherit the anchor's lane, so editing inside a fork stays inside that fork. Values parked at the end of the old version are released by an edit.
+
+```java
+flow.replace("routes", f -> f.match()
+        .is(v -> isBilling(v), lane -> lane.submit(v -> billing(v)))
+        .is(v -> isAudit(v),   lane -> lane.handle(v -> audit(v))));
+```
+
+## Scoped flows
+
+`scoped()` hands out an ephemeral, caller-private view over the same engine: links declared on it never touch the shared chain, and concurrent scopes never see each other. The pattern for one shared (even empty) flow serving many callers that each declare their own stages.
+
+| Behavior | Detail |
+|---|---|
+| Chain | Starts from a snapshot of the shared chain; every link declared on the scope is private. |
+| `just` / `justAll` | Buffered — links and values may be declared in any order. |
+| `join()` / `join(timeout)` | Flushes the buffered values through the scope's chain and waits for **those values only**. |
+| `call(...)` | Dispatches one value immediately with the links declared so far. |
+| `onComplete` / `onError` | Scope-local: observe only the scope's values. |
+| Memory | Scope values are released on finish — no `seal()` needed. |
+| Rejected on a scope | Structural edits, `metrics`, `trace` (global concerns). `close()` is a no-op — it never stops the shared engine. |
+
+```java
+flow.scoped()
+    .just("Hello")
+    .handle("greeting", s -> s + ", World!")
+    .join();                             // "Hello, World!" — the shared chain stays untouched
+```
 
 ## Backpressure
 
@@ -116,8 +155,6 @@ WebMVC controllers may also return the gateway's `CompletableFuture` directly �
 | `Resilience<T>` | `Resilience4j.retry / circuitBreaker / rateLimiter / bulkhead` | `io.github.resilience4j:resilience4j-all` |
 | `NioFlowMetrics` | `OpenTelemetryMetrics.of(meter)` | `io.opentelemetry:opentelemetry-api` |
 | `NioFlowTracer` | `LoggingTracer.debug() / info() / to(logger, level)` | none (JDK `System.Logger`) |
-| `NioFlowGateway<T, R>` | `NioFlowMvc.deferred(...)` (WebMVC) | `org.springframework:spring-web` |
-| `NioFlowGateway<T, R>` | `NioFlowReactive.mono(...)` (WebFlux) | `io.projectreactor:reactor-core` |
 
 All ports are functional or default-method interfaces — implement them with a lambda when an adapter is overkill.
 

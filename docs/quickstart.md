@@ -36,7 +36,7 @@ A nio-flow is built in three steps: **declare** the chain, **inject** values, **
 ```java
 import dev.nioflow.application.facade.DefaultNioFlow;
 
-try (NioFlow<Integer> flow = new NioFlow<>()) {
+try (NioFlow<Integer> flow = new DefaultNioFlow<>()) {
 
     // 1. Declare the chain — once, before injecting values
     flow.handle(x -> x * 2)              // sync stage: runs on a handle worker
@@ -67,7 +67,7 @@ Key points:
 Errors short-circuit only the failing value. You choose what happens next:
 
 ```java
-try (NioFlow<String> flow = new NioFlow<>()) {
+try (NioFlow<String> flow = new DefaultNioFlow<>()) {
     flow.handle("parse", s -> parse(s))          // named stage: failures say where
         .onErrorResume(error -> "fallback")      // recover: value resumes from here
         .submit(s -> store(s))
@@ -87,19 +87,33 @@ try (NioFlow<String> flow = new NioFlow<>()) {
 
 Declare the whole chain — recoveries included — **before** injecting values: a recovery only catches failures of links declared before it.
 
+## Serving requests with `call`
+
+`join()` waits for the *whole* flow — right for pipelines, wrong for request/response. When each caller needs its own value's result, use `call`: it injects like `just` and returns a `CompletableFuture` resolved with that value's — and only that value's — outcome:
+
+```java
+flow.handle("validate", o -> validate(o))
+    .submit("price", o -> price(o))
+    .release();                                   // flat memory, chain stays editable
+
+CompletableFuture<Order> reply = flow.call(order, Duration.ofSeconds(2));
+```
+
+Many calls run concurrently; a failure fails only its own future; a value dropped by a `filter` cancels it. This is the shape for web handlers — see [Spring Boot](springboot.md).
+
 ## Choosing an executor
 
 The default constructor runs everything on virtual threads. For finer control:
 
 ```java
 // Your executor for submit stages — you keep its lifecycle, close() won't touch it
-NioFlow<Order> flow = new NioFlow<>(executor);
+NioFlow<Order> flow = new DefaultNioFlow<>(executor);
 
 // Bound sync parallelism with a fixed handle-worker pool (CPU-heavy chains)
-NioFlow<Order> flow = new NioFlow<>(executor, 8);
+NioFlow<Order> flow = new DefaultNioFlow<>(executor, 8);
 
 // Fully tuned: executor + handle workers + backpressure
-NioFlow<Order> flow = new NioFlow<>(executor, 8, Backpressure.blocking(10_000));
+NioFlow<Order> flow = new DefaultNioFlow<>(executor, 8, Backpressure.blocking(10_000));
 ```
 
 > With a **fixed** handle-worker pool, keep `handle` stages fast and non-blocking — a blocked handle ties up a shared worker. With the default virtual workers there is no such restriction.
@@ -107,5 +121,6 @@ NioFlow<Order> flow = new NioFlow<>(executor, 8, Backpressure.blocking(10_000));
 ## Next steps
 
 - [Examples](examples.md) — forks, batching, fan-out, resilience, backpressure and observability.
+- [Spring Boot](springboot.md) — one flow bean, `call` from controllers, runtime edits and scopes.
 - [Architecture](architecture.md) — how the engine works and what it guarantees.
 - [API reference](reference.md) — the full operator catalogue.

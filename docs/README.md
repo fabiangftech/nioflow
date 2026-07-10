@@ -7,7 +7,7 @@ Every stage is one of two kinds — and that's the heart of the API: **`handle` 
 ```java
 import dev.nioflow.application.facade.DefaultNioFlow;
 
-try (NioFlow<Order> flow = new NioFlow<>()) {
+try (NioFlow<Order> flow = new DefaultNioFlow<>()) {
     flow.handle("validate", orders::validate)
         .submit("enrich", api::enrich)                 // async stage — never blocks other values
         .when(order -> order.priority())
@@ -50,6 +50,9 @@ Requires **Java 25+** (virtual threads and scoped values). The core has **zero r
 - **Virtual threads by default** — blocking anywhere ties up only that value, not a shared worker.
 - **Per-value error isolation** — a failure short-circuits one value, is delivered to `onError`, and can be recovered in place with `onErrorResume`.
 - **Rich flow shapes** — two-way forks (`when`), switch-style forks (`match`), filtering, fan-out, type adaptation and reusable segments (`via`).
+- **Request/response built in** — `call` injects one value and returns a `CompletableFuture` with *that value's own* result: the natural fit for web handlers sharing one long-lived flow, no bridge class needed.
+- **Editable at runtime** — `remove`/`replace`/`insertBefore`/`insertAfter` swap whole segments of the chain while values are in flight; each value finishes on the version it entered (copy-on-write).
+- **Scoped flows** — `scoped()` gives each caller an ephemeral private chain over the same engine: one shared (even empty) flow serves many call sites, and their stages never interfere.
 - **Bulk IO built in** — `batch` groups values by size or age and runs one async call for the whole group, with per-value recovery.
 - **Backpressure** — bound the number of values in flight and choose to block, drop or fail at capacity.
 - **Observability first** — a metrics port (with an OpenTelemetry adapter), an opt-in per-value tracer, and a one-line diagnostics dump of the running flow.
@@ -59,6 +62,7 @@ Requires **Java 25+** (virtual threads and scoped values). The core has **zero r
 
 - [Quick start](quickstart.md) — install, build your first flow, handle errors.
 - [Examples](examples.md) — forks, batching, resilience, backpressure, observability.
+- [Spring Boot](springboot.md) — one flow bean, `call` from controllers, runtime edits and scopes.
 - [Architecture](architecture.md) — the engine, the threading model and the guarantees.
 - [API reference](reference.md) — every operator at a glance.
 

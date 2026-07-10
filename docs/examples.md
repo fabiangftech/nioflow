@@ -42,7 +42,7 @@ flow.match()
 `adapt` converts the value and returns a re-typed view over the same running flow. Register `onComplete` on the **final** view, after the last `adapt`.
 
 ```java
-NioFlow<Order> orders = new NioFlow<>();
+NioFlow<Order> orders = new DefaultNioFlow<>();
 orders.handle("validate", o -> validate(o))
       .adapt(o -> toInvoice(o))            // NioFlow<Invoice> from here on
       .submit(invoice -> send(invoice))
@@ -92,14 +92,69 @@ flow.via(billing())
     .submit(invoice -> send(invoice));
 ```
 
+## Request/response with `call`
+
+Each `call` injects one value and returns a future resolved with **that value's own** outcome — many calls fly concurrently, and a failure fails only its own future. The fit for web handlers sharing one long-lived flow:
+
+```java
+flow.handle("validate", o -> validate(o))
+    .submit("price", o -> price(o))
+    .onErrorResume(error -> Order.rejected(error))
+    .release();
+
+CompletableFuture<Order> reply = flow.call(order, Duration.ofSeconds(2));
+```
+
+A value dropped by a `filter` (or an empty `fanOut`) **cancels** its future; prefer the `timeout` variants in request-driven callers anyway.
+
+## Editing the chain at runtime
+
+Structural edits anchor on **named stages** and are copy-on-write: values in flight finish on the version they entered; values injected afterwards walk the new chain. `replace` remembers what it spliced under that name — a later `replace` swaps the whole segment, `remove` takes it all out:
+
+```java
+flow.handle("routes", e -> e)          // the editable anchor
+    .submit("store", e -> store(e))
+    .release();                        // flat memory, chain stays editable
+
+// later, from any thread — e.g. an admin endpoint:
+flow.replace("routes", f -> f.match()
+        .is(e -> e.isBilling(), lane -> lane.submit(e -> billing(e)))
+        .is(e -> e.isAudit(),   lane -> lane.handle(e -> audit(e))));
+
+flow.remove("routes");                 // removes the whole spliced segment
+```
+
+Segments only declare structure — injecting or registering handlers inside one throws — and inherit the anchor's lane, so editing inside a fork stays inside that fork.
+
+## Scoped flows: stages at the call site
+
+`scoped()` opens an ephemeral, caller-private chain over the same engine. Links declared on the scope never touch the shared chain; concurrent scopes never interfere; `join()` waits only for the scope's own values. One empty shared flow can serve every caller:
+
+```java
+NioFlow<String> flow = new DefaultNioFlow<>();   // shared, empty — e.g. a Spring bean
+
+String greeting = flow.scoped()
+        .just("Hello")
+        .handle("greeting", s -> s + ", World!")
+        .join();                                 // "Hello, World!", every time
+
+// or the async style, one scope per request:
+CompletableFuture<Quote> quote = flow.scoped()
+        .submit(r -> priceRemote(r))
+        .adapt(r -> toQuote(r))
+        .call(request, Duration.ofSeconds(2));
+```
+
+Scope values ride the shared engine (threads, executor, backpressure) and are released on finish. `onComplete`/`onError` on a scope observe only that scope; structural edits, `metrics` and `trace` throw on one; closing a scope never stops the shared engine.
+
 ## Backpressure
 
 Bound the number of values in flight and choose what `just` does at capacity:
 
 ```java
-new NioFlow<>(Backpressure.blocking(1_000));   // producer waits for a free slot
-new NioFlow<>(Backpressure.dropping(1_000));   // new values silently discarded
-new NioFlow<>(Backpressure.failing(1_000));    // just() throws RejectedExecutionException
+new DefaultNioFlow<>(Backpressure.blocking(1_000));   // producer waits for a free slot
+new DefaultNioFlow<>(Backpressure.dropping(1_000));   // new values silently discarded
+new DefaultNioFlow<>(Backpressure.failing(1_000));    // just() throws RejectedExecutionException
 ```
 
 Only injection is bounded — values already flowing are never lost to backpressure.
