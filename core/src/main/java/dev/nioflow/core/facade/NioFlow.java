@@ -6,6 +6,7 @@ import dev.nioflow.core.model.Diagnostics;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -61,6 +62,64 @@ public interface NioFlow<T> extends AutoCloseable {
      * @return this nio-flow, for chaining
      */
     NioFlow<T> justAll(Iterable<T> inputs);
+
+    /**
+     * Request/response injection: injects the value like {@link #just(Object)} and
+     * returns a future resolved with that value's — and only that value's — own
+     * outcome, concurrent with every other call. Completed with the value's
+     * end-of-chain result; failed when the value fails past every recovery, or when
+     * admission rejects it (closed nio-flow, FAIL backpressure) — never thrown;
+     * cancelled when the value leaves deliberately (a {@code filter} drop, an empty
+     * {@code fanOut}, a DROP backpressure policy). A {@code fanOut} into several
+     * values resolves the future with the first of them to finish.
+     *
+     * <p>This is the natural fit for request-driven callers — a web handler serving
+     * each request from one shared, long-lived nio-flow: declare the chain once,
+     * {@code release()} (or {@code seal()}) it, and serve every request with a
+     * bounded {@code call}. Prefer the {@code timeout} variants there: they put an
+     * upper bound on the caller's wait, whatever happens to the value.
+     *
+     * @param <R>   the type flowing at the end of the chain; the engine is untyped,
+     *              so the caller states what the chain delivers
+     * @param input the value to inject
+     * @return a future delivering this value's own outcome
+     */
+    <R> CompletableFuture<R> call(T input);
+
+    /**
+     * Like {@link #call(Object)} with seed metadata (trace id, tenant, ...) copied
+     * into the value's {@code FlowContext}.
+     *
+     * @param <R>     the type flowing at the end of the chain
+     * @param input   the value to inject
+     * @param context initial metadata copied into the value's {@code FlowContext}
+     * @return a future delivering this value's own outcome
+     */
+    <R> CompletableFuture<R> call(T input, Map<String, Object> context);
+
+    /**
+     * Like {@link #call(Object)} but bounded: if the value has not finished when the
+     * timeout expires, the future fails with a {@code TimeoutException}; the value
+     * itself keeps flowing and its late outcome is ignored.
+     *
+     * @param <R>     the type flowing at the end of the chain
+     * @param input   the value to inject
+     * @param timeout how long to wait for the value's outcome before giving up
+     * @return a future delivering this value's own outcome
+     */
+    <R> CompletableFuture<R> call(T input, Duration timeout);
+
+    /**
+     * Like {@link #call(Object, Map)} and {@link #call(Object, Duration)} combined:
+     * seed metadata plus a bound on how long the caller waits.
+     *
+     * @param <R>     the type flowing at the end of the chain
+     * @param input   the value to inject
+     * @param context initial metadata copied into the value's {@code FlowContext}
+     * @param timeout how long to wait for the value's outcome before giving up
+     * @return a future delivering this value's own outcome
+     */
+    <R> CompletableFuture<R> call(T input, Map<String, Object> context, Duration timeout);
 
     /**
      * Appends a synchronous stage: the function transforms the value in place on a
@@ -311,9 +370,122 @@ public interface NioFlow<T> extends AutoCloseable {
     Diagnostics diagnostics();
 
     /**
+     * Structural edit: starts a new version of the chain without the first stage
+     * named {@code name} — or, when the name was previously {@code replace}d, without
+     * that whole region. Editing never disturbs values in flight — they finish on
+     * the version they were injected into, with their recoveries and lanes intact —
+     * while values injected after the edit walk the new chain. Values parked at the
+     * end of the old version are released: appending later does not resume them.
+     * Edits are engine-locked, so they are safe from any thread.
+     *
+     * @param name the name of the stage to remove
+     * @return this nio-flow, for chaining
+     * @throws IllegalArgumentException when no stage is named {@code name}
+     * @throws IllegalStateException    when the nio-flow is sealed
+     */
+    NioFlow<T> remove(String name);
+
+    /**
+     * Structural edit: starts a new version of the chain where the segment's links
+     * take the place of the first stage named {@code name}. The segment builds its
+     * replacement with the full fluent API — stages, filters, forks, recoveries —
+     * but only declares structure: injecting, joining or registering handlers inside
+     * it throws. The spliced links are remembered as the name's <em>region</em>: a
+     * later {@code replace} with the same name swaps the whole segment again, and
+     * {@code remove} takes all of it out — the idiom for one long-lived instance
+     * serving an evolving set of flows. Versioning semantics are those of
+     * {@link #remove(String)}.
+     *
+     * <pre>{@code
+     * flow.replace("routes", f -> f.match()
+     *         .is(v -> isBilling(v), lane -> lane.handle(v -> billing(v)))
+     *         .is(v -> isAudit(v),   lane -> lane.handle(v -> audit(v))));
+     * }</pre>
+     *
+     * @param name    the name of the stage the segment replaces
+     * @param segment declares the replacement links on a detached view of this type
+     * @return this nio-flow, for chaining
+     * @throws IllegalArgumentException when no stage is named {@code name}
+     * @throws IllegalStateException    when the nio-flow is sealed
+     */
+    NioFlow<T> replace(String name, UnaryOperator<NioFlow<T>> segment);
+
+    /**
+     * Structural edit: starts a new version of the chain with the segment's links
+     * spliced right before the first stage named {@code anchor}. The spliced links
+     * inherit the anchor's lane, so editing inside a fork stays inside that fork.
+     * Versioning and segment semantics are those of {@link #replace(String, UnaryOperator)}.
+     *
+     * @param anchor  the name of the stage the segment goes before
+     * @param segment declares the links to insert on a detached view of this type
+     * @return this nio-flow, for chaining
+     * @throws IllegalArgumentException when no stage is named {@code anchor}
+     * @throws IllegalStateException    when the nio-flow is sealed
+     */
+    NioFlow<T> insertBefore(String anchor, UnaryOperator<NioFlow<T>> segment);
+
+    /**
+     * Structural edit: starts a new version of the chain with the segment's links
+     * spliced right after the first stage named {@code anchor}. The spliced links
+     * inherit the anchor's lane, so editing inside a fork stays inside that fork.
+     * Versioning and segment semantics are those of {@link #replace(String, UnaryOperator)}.
+     *
+     * @param anchor  the name of the stage the segment goes after
+     * @param segment declares the links to insert on a detached view of this type
+     * @return this nio-flow, for chaining
+     * @throws IllegalArgumentException when no stage is named {@code anchor}
+     * @throws IllegalStateException    when the nio-flow is sealed
+     */
+    NioFlow<T> insertAfter(String anchor, UnaryOperator<NioFlow<T>> segment);
+
+    /**
+     * An ephemeral, caller-private scope over this nio-flow: the returned view
+     * starts from a snapshot of the current chain and every link declared on it is
+     * the scope's own — the shared chain never changes, and concurrent scopes never
+     * see each other. Injections on the scope are buffered, so links and values may
+     * be declared in any order; {@code join()} then processes the buffered values
+     * through the scope's chain and waits for those values only, and {@code call}
+     * processes one value immediately. Scope values ride this nio-flow's engine —
+     * threads, executor, backpressure — and are released on finish, keeping memory
+     * flat with no {@code seal()} needed.
+     *
+     * <p>This is the pattern for one empty, long-lived nio-flow shared by many
+     * callers, each declaring its own stages at the call site:
+     *
+     * <pre>{@code
+     * flow.scoped()                                  // the shared bean stays empty
+     *     .just("Hello")
+     *     .handle("greeting", s -> s + ", World!")
+     *     .join();                                   // "Hello, World!", every time
+     * }</pre>
+     *
+     * <p>{@code onComplete}/{@code onError} on the scope observe only the scope's
+     * values. Global concerns stay on the shared nio-flow: structural edits,
+     * {@code metrics} and {@code trace} throw on a scope, and closing a scope never
+     * stops the shared engine. Scopes are single-caller and cheap — create one per
+     * use, let it go.
+     *
+     * @return a detached view declaring an ephemeral private chain over this engine
+     */
+    NioFlow<T> scoped();
+
+    /**
+     * Stops parking finished values: from now on a value reaching the end of the
+     * chain is released — like under {@link #seal()} — but the chain stays open to
+     * appends and structural edits; those simply no longer resume already-finished
+     * values. The switch for a long-lived, request-driven nio-flow that must stay
+     * editable at runtime without retaining every finished value. Idempotent, not
+     * reversible; {@code seal()} additionally freezes the chain.
+     *
+     * @return this nio-flow, for chaining
+     */
+    NioFlow<T> release();
+
+    /**
      * Freezes the chain: declaring any further link ({@code handle}, {@code submit},
-     * {@code filter}, {@code when}, {@code adapt}, {@code onErrorResume}) throws
-     * {@code IllegalStateException}. Values keep flowing, and {@code onError}/
+     * {@code filter}, {@code when}, {@code adapt}, {@code onErrorResume}) or
+     * structural edit ({@code remove}, {@code replace}, {@code insertBefore},
+     * {@code insertAfter}) throws {@code IllegalStateException}. Values keep flowing, and {@code onError}/
      * {@code onComplete} observers may still be registered. Sealing also releases
      * finished values instead of parking them — nothing can resume them — so a
      * sealed, long-running nio-flow does not retain completed values. Seal every

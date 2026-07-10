@@ -9,6 +9,7 @@ import dev.nioflow.core.model.Diagnostics;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -80,6 +81,26 @@ final class MatchCases<T> implements NioFlow.Cases<T> {
     @Override
     public NioFlow<T> justAll(Iterable<T> inputs) {
         return mainLine.justAll(inputs);
+    }
+
+    @Override
+    public <R> CompletableFuture<R> call(T input) {
+        return mainLine.call(input);
+    }
+
+    @Override
+    public <R> CompletableFuture<R> call(T input, Map<String, Object> context) {
+        return mainLine.call(input, context);
+    }
+
+    @Override
+    public <R> CompletableFuture<R> call(T input, Duration timeout) {
+        return mainLine.call(input, timeout);
+    }
+
+    @Override
+    public <R> CompletableFuture<R> call(T input, Map<String, Object> context, Duration timeout) {
+        return mainLine.call(input, context, timeout);
     }
 
     @Override
@@ -175,6 +196,36 @@ final class MatchCases<T> implements NioFlow.Cases<T> {
     @Override
     public Diagnostics diagnostics() {
         return mainLine.diagnostics();
+    }
+
+    @Override
+    public NioFlow<T> scoped() {
+        return mainLine.scoped();
+    }
+
+    @Override
+    public NioFlow<T> release() {
+        return mainLine.release();
+    }
+
+    @Override
+    public NioFlow<T> remove(String name) {
+        return mainLine.remove(name);
+    }
+
+    @Override
+    public NioFlow<T> replace(String name, UnaryOperator<NioFlow<T>> segment) {
+        return mainLine.replace(name, segment);
+    }
+
+    @Override
+    public NioFlow<T> insertBefore(String anchor, UnaryOperator<NioFlow<T>> segment) {
+        return mainLine.insertBefore(anchor, segment);
+    }
+
+    @Override
+    public NioFlow<T> insertAfter(String anchor, UnaryOperator<NioFlow<T>> segment) {
+        return mainLine.insertAfter(anchor, segment);
     }
 
     @Override

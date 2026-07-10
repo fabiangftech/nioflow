@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * A value flowing through the nio-flow: its current payload, the index of the next
@@ -20,6 +21,8 @@ public final class FlowValue {
     private final long sequence;
     private Object value;
     private int cursor;
+    private List<Link> chain;
+    private CompletableFuture<Object> reply;
 
     /**
      * A freshly injected value, starting at the first link of the chain.
@@ -84,6 +87,48 @@ public final class FlowValue {
     }
 
     /**
+     * The chain version this value walks, captured at injection. Structural edits
+     * start a new version for values injected later; this value keeps its own, so
+     * its cursor stays valid whatever happens to the current chain.
+     *
+     * @return the links this value's cursor indexes into
+     */
+    public List<Link> chain() {
+        return chain;
+    }
+
+    /**
+     * Captures the chain version this value will walk — set once at injection,
+     * before the value is handed to the engine's queues.
+     *
+     * @param chain the links this value's cursor indexes into
+     */
+    public void chain(List<Link> chain) {
+        this.chain = chain;
+    }
+
+    /**
+     * The future a {@code call} caller waits on, or null for plain {@code just}
+     * injections. Completed with this value's own end-of-chain result, failed on
+     * terminal error, cancelled when the value leaves deliberately (filter, empty
+     * fan-out, dropped by backpressure).
+     *
+     * @return the caller's future, or null when nobody asked for a reply
+     */
+    public CompletableFuture<Object> reply() {
+        return reply;
+    }
+
+    /**
+     * Attaches the caller's future — set once at injection by {@code call}.
+     *
+     * @param reply the future to resolve with this value's own outcome
+     */
+    public void reply(CompletableFuture<Object> reply) {
+        this.reply = reply;
+    }
+
+    /**
      * Records the outcome of a fork's predicate, deciding once and for all which
      * lane of that fork this value takes.
      *
@@ -117,6 +162,8 @@ public final class FlowValue {
         child.decisions.putAll(decisions);
         child.context.putAll(context);
         child.cursor = cursor + 1;
+        child.chain = chain;
+        child.reply = reply; // siblings share it: the first to finish replies
         return child;
     }
 

@@ -26,6 +26,12 @@ import java.util.function.Consumer;
  * resumes every parked value. {@code when} forks record the predicate outcome on the
  * value, and the value skips links whose guards don't match its recorded decisions.
  *
+ * <p>The chain is versioned copy-on-write for structural edits: every value captures
+ * the current version at injection and walks it to the end, so {@link #splice} never
+ * disturbs a value in flight — it starts a new version that only values injected
+ * afterwards walk. Appends mutate the current version in place, keeping the original
+ * semantics: values still flowing on it, parked ones included, see the new link.
+ *
  * <p>The two loops run on dedicated daemon threads and never borrow executor threads,
  * so any executor shape works: fixed, cached, single-threaded or virtual-thread-per-task.
  */
@@ -45,9 +51,12 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
     private final AtomicInteger decisionIds = new AtomicInteger();
 
     private final Object lock = new Object();
-    private final List<Link> chain = new ArrayList<>();
+    /** The current chain version; {@link #splice} replaces it, {@link #append} grows it. */
+    private List<Link> chain = new ArrayList<>();
     private final List<FlowValue> parked = new ArrayList<>();
     private final Map<Batch, BatchBuffer> batches = new HashMap<>();
+    /** REPLACE-spliced segments by anchor name, so re-editing swaps whole regions. */
+    private final Map<String, Region> regions = new HashMap<>();
     private long injected;
     private long lastResultSequence = -1;
     private Object lastResult;
@@ -55,6 +64,7 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
     private int active;
     private boolean closed;
     private boolean sealed;
+    private boolean released;
 
     /** Replay history for late onError handlers — bounded, or a failure-prone
      *  long-running nio-flow would retain every throwable it ever saw. */
@@ -120,12 +130,48 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
 
     @Override
     public void inject(Object input, Map<String, Object> context) {
+        enqueue(input, context, null, null);
+    }
+
+    @Override
+    public CompletableFuture<Object> call(Object input, Map<String, Object> context) {
+        return call(input, context, null);
+    }
+
+    @Override
+    public CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain) {
+        CompletableFuture<Object> reply = new CompletableFuture<>();
+        try {
+            enqueue(input, context, reply, chain);
+        } catch (RuntimeException rejected) {
+            // a caller holding a future expects its outcome there, not a throw
+            reply.completeExceptionally(rejected);
+        }
+        return reply;
+    }
+
+    @Override
+    public List<Link> chain() {
+        synchronized (lock) {
+            return List.copyOf(chain);
+        }
+    }
+
+    /**
+     * Shared admission path: a {@code call} attaches the caller's reply future, a
+     * scoped call its private chain — null walks the shared one.
+     */
+    private void enqueue(Object input, Map<String, Object> context, CompletableFuture<Object> reply,
+                         List<Link> version) {
         FlowValue flow;
         synchronized (lock) {
             rejectWhenClosed();
             while (active >= backpressure.capacity()) {
                 switch (backpressure.policy()) {
                     case DROP -> {
+                        if (reply != null) {
+                            reply.cancel(false); // dropped on admission: nobody will reply
+                        }
                         return;
                     }
                     case FAIL -> throw new RejectedExecutionException(
@@ -143,6 +189,8 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
             }
             flow = new FlowValue(input, injected++);
             flow.context().putAll(context);
+            flow.chain(version != null ? version : chain);
+            flow.reply(reply);
             active++;
         }
         NioFlowMetrics sink = metrics;
@@ -235,6 +283,136 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
         synchronized (lock) {
             sealed = true;
         }
+    }
+
+    @Override
+    public void release() {
+        synchronized (lock) {
+            released = true;
+        }
+    }
+
+    @Override
+    public void splice(String anchor, Splice position, List<Link> links) {
+        synchronized (lock) {
+            if (sealed) {
+                throw new IllegalStateException("nio-flow is sealed: the chain can no longer change");
+            }
+            List<Link> next = new ArrayList<>(chain);
+            List<Guard> laneGuards;
+            int index;
+            Region region = regions.get(anchor);
+            if (region != null) {
+                laneGuards = region.laneGuards();
+                index = spliceRegion(next, region, position);
+            } else {
+                index = indexOfStage(next, anchor);
+                if (index >= 0) {
+                    laneGuards = next.get(index).guards();
+                    if (position == Splice.REPLACE) {
+                        next.remove(index);
+                    } else if (position == Splice.AFTER) {
+                        index++;
+                    }
+                } else {
+                    laneGuards = null;
+                }
+            }
+            if (index < 0) {
+                throw new IllegalArgumentException("no stage or region named '" + anchor + "' in the chain");
+            }
+            List<Link> guarded = links.stream().map(link -> inLane(link, laneGuards)).toList();
+            next.addAll(index, guarded);
+            if (position == Splice.REPLACE) {
+                // remember the spliced links as the anchor's region, so the next
+                // REPLACE with the same name swaps the whole segment, not one link
+                if (guarded.isEmpty()) {
+                    regions.remove(anchor);
+                } else {
+                    regions.put(anchor, new Region(laneGuards, guarded));
+                }
+            }
+            chain = next;
+            // values parked at the end of the previous version can never resume —
+            // appends only grow the new version — so stop retaining them; their
+            // completion was already delivered when they parked
+            parked.clear();
+        }
+    }
+
+    /** A REPLACE-spliced segment, remembered so later edits target the whole of it. */
+    private record Region(List<Guard> laneGuards, List<Link> links) {
+    }
+
+    /**
+     * Locates the edit point of a region in the next version — and, for REPLACE,
+     * takes the region's links out. Region links are matched by identity: value
+     * equality would confuse two segments declaring equal records.
+     *
+     * @return the insertion index, or -1 when none of the region's links remain
+     */
+    private static int spliceRegion(List<Link> next, Region region, Splice position) {
+        int first = -1;
+        int last = -1;
+        for (Link link : region.links()) {
+            for (int i = 0; i < next.size(); i++) {
+                if (next.get(i) == link) {
+                    if (first < 0 || i < first) {
+                        first = i;
+                    }
+                    if (i > last) {
+                        last = i;
+                    }
+                    break;
+                }
+            }
+        }
+        if (first < 0) {
+            return -1;
+        }
+        return switch (position) {
+            case BEFORE -> first;
+            case AFTER -> last + 1;
+            case REPLACE -> {
+                for (Link link : region.links()) {
+                    next.removeIf(candidate -> candidate == link);
+                }
+                yield first;
+            }
+        };
+    }
+
+    /** The index of the first stage so named, or -1. */
+    private static int indexOfStage(List<Link> links, String anchor) {
+        for (int i = 0; i < links.size(); i++) {
+            if (links.get(i) instanceof Stage stage && anchor.equals(stage.name())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * A copy of the link carrying the anchor's guards on top of its own, so a splice
+     * next to a laned anchor stays inside that lane — including the segment's own
+     * internal forks.
+     */
+    private static Link inLane(Link link, List<Guard> laneGuards) {
+        if (laneGuards.isEmpty()) {
+            return link;
+        }
+        List<Guard> merged = new ArrayList<>(laneGuards);
+        merged.addAll(link.guards());
+        List<Guard> guards = List.copyOf(merged);
+        return switch (link) {
+            case Stage stage -> new Stage(stage.name(), stage.function(), stage.async(),
+                    stage.timeout(), guards);
+            case Decision decision -> new Decision(decision.predicate(), decision.id(), guards);
+            case Recovery recovery -> new Recovery(recovery.function(), guards);
+            case Filter filter -> new Filter(filter.predicate(), guards);
+            case FanOut fanOut -> new FanOut(fanOut.function(), guards);
+            case Batch batch -> new Batch(batch.function(), batch.size(), batch.maxWait(), guards);
+        };
     }
 
     @Override
@@ -399,12 +577,15 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
 
     /** Walks a value through sync links until it hits an async stage, parks or fails. */
     private void advance(FlowValue flow) {
+        List<Link> version = flow.chain();
         while (true) {
             Link link;
             synchronized (lock) {
-                if (flow.cursor() >= chain.size()) {
-                    if (!sealed) {
-                        parked.add(flow); // sealed chains never resume: release instead
+                if (flow.cursor() >= version.size()) {
+                    // sealed or releasing chains and superseded versions never
+                    // resume finished values: release them instead of parking
+                    if (!sealed && !released && version == chain) {
+                        parked.add(flow);
                     }
                     if (flow.sequence() >= lastResultSequence) {
                         lastResult = flow.value();
@@ -412,7 +593,7 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
                     }
                     break;
                 }
-                link = chain.get(flow.cursor());
+                link = version.get(flow.cursor());
             }
             if (!flow.satisfies(link.guards())) {
                 flow.advance();
@@ -490,6 +671,9 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
         // parked: deliver the completion first, then release the value, so join()
         // cannot return while a complete handler is still running
         Object result = flow.value();
+        if (flow.reply() != null) {
+            flow.reply().complete(result); // the caller first, then the observers
+        }
         FlowContext.bound(flow.context(), () -> {
             completeHandlers.forEach(handler -> deliver(handler, result));
             return null;
@@ -548,11 +732,17 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
                 lock.notifyAll(); // the parent vanished; a joiner may be waiting on it
             }
         }
+        if (children.isEmpty() && parent.reply() != null) {
+            parent.reply().cancel(false); // no child left to reply for the parent
+        }
         flows.forEach(submissionQueue::offer);
     }
 
     /** A filtered value leaves the nio-flow: no handlers, it just stops counting. */
     private void discard(FlowValue flow) {
+        if (flow.reply() != null) {
+            flow.reply().cancel(false); // a caller must not wait on a value that left
+        }
         NioFlowMetrics sink = metrics;
         if (sink != null) {
             sink.dropped();
@@ -683,9 +873,10 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
         Throwable current = error;
         while (true) {
             Recovery recovery = null;
+            List<Link> version = flow.chain();
             synchronized (lock) {
-                for (int i = flow.cursor() + 1; i < chain.size(); i++) {
-                    if (chain.get(i) instanceof Recovery candidate
+                for (int i = flow.cursor() + 1; i < version.size(); i++) {
+                    if (version.get(i) instanceof Recovery candidate
                             && flow.satisfies(candidate.guards())) {
                         recovery = candidate;
                         flow.cursor(i);
@@ -721,6 +912,9 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
      * ever taking down the engine loops.
      */
     private void fail(FlowValue flow, Throwable error) {
+        if (flow.reply() != null) {
+            flow.reply().completeExceptionally(error);
+        }
         NioFlowMetrics sink = metrics;
         if (sink != null) {
             sink.failed(error);
