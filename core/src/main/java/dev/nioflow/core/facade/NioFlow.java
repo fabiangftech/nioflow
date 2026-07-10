@@ -250,9 +250,10 @@ public interface NioFlow<T> {
 
     /**
      * Registers a non-blocking handler for terminal failures (recovered values never
-     * reach it). Handlers registered after failures happened get the most recent
-     * ones replayed — a bounded history, so a long-running nio-flow does not retain
-     * every throwable it ever saw.
+     * reach it). The handler runs with the failing value's {@code FlowContext} bound,
+     * so it can tell which value failed. Handlers registered after failures happened
+     * get the most recent ones replayed — a bounded history, so a long-running
+     * nio-flow does not retain every throwable it ever saw; replays run unbound.
      *
      * @param handler receives each terminal failure; must be fast and never throw
      * @return this nio-flow, for chaining

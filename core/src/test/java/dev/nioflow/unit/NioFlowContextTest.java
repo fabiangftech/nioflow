@@ -110,6 +110,26 @@ class NioFlowContextTest {
     }
 
     @Test
+    void onErrorSeesTheFailingValuesContext() {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            List<Object> traces = new CopyOnWriteArrayList<>();
+            nioFlow.handle(x -> {
+                        throw new IllegalStateException("boom");
+                    })
+                    .onError(error -> traces.add(FlowContext.get("traceId")));
+
+            nioFlow.just(1, Map.of("traceId", "t-err"));
+
+            assertThrows(java.util.concurrent.CompletionException.class, nioFlow::join);
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+            while (traces.isEmpty() && System.nanoTime() < deadline) {
+                Thread.onSpinWait(); // delivery happens after the value is released
+            }
+            assertEquals(List.of("t-err"), traces);
+        }
+    }
+
+    @Test
     void outsideAPipelineTheContextIsUnbound() {
         assertNull(FlowContext.get("anything"));
         assertThrows(IllegalStateException.class, () -> FlowContext.put("key", "value"));

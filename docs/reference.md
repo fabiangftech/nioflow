@@ -76,6 +76,28 @@ The one distinction that matters: **`handle` is synchronous, `submit` is asynchr
 | `close()` | Graceful: drains up to 10 s, then stops the engine. Idempotent. Never shuts down your executor. |
 | `close(gracePeriod)` | Custom grace period. |
 
+## Request/response (web)
+
+`NioFlowGateway<T, R>` bridges request-driven callers (Spring WebMVC, WebFlux, RPC) into a running flow: each `call` injects one value and returns a `CompletableFuture` completed with **that value's own result** — unlike `join()`, which waits for the whole flow. Declare and seal the chain once at startup; serve each request with a `call`.
+
+| Method | Description |
+|---|---|
+| `NioFlowGateway.of(flow)` | Bridges a chain that keeps its type (`<T, T>`). |
+| `NioFlowGateway.of(entry, exit)` | Re-typed chain: inject through `entry`, observe results on the final view `exit`. |
+| `call(input)` | Injects and returns the value's own future. Rejected admission fails the future instead of throwing. |
+| `call(input, context)` | Same, with seed metadata for `FlowContext` (`"nioflow.gateway.id"` is reserved). |
+| `call(input, timeout)` | Bounded: `TimeoutException` if the value is slow — or dropped by a `filter`. Prefer this in web handlers. |
+| `pending()` | Calls still waiting for their result. |
+
+Spring adapters (both generic, `compileOnly` dependencies):
+
+| Adapter | Returns | Extra dependency |
+|---|---|---|
+| `NioFlowMvc.deferred(gateway, input[, timeout])` | `DeferredResult<R>` for async WebMVC controllers | `org.springframework:spring-web` |
+| `NioFlowReactive.mono(gateway, input[, timeout])` | cold `Mono<R>` for WebFlux handlers | `io.projectreactor:reactor-core` |
+
+WebMVC controllers may also return the gateway's `CompletableFuture` directly — Spring handles it natively. Register `NioFlow` beans normally: they are `AutoCloseable`, so Spring closes them on context shutdown.
+
 ## Backpressure
 
 `dev.nioflow.core.model.Backpressure` — admission control for `just`:
@@ -94,6 +116,8 @@ The one distinction that matters: **`handle` is synchronous, `submit` is asynchr
 | `Resilience<T>` | `Resilience4j.retry / circuitBreaker / rateLimiter / bulkhead` | `io.github.resilience4j:resilience4j-all` |
 | `NioFlowMetrics` | `OpenTelemetryMetrics.of(meter)` | `io.opentelemetry:opentelemetry-api` |
 | `NioFlowTracer` | `LoggingTracer.debug() / info() / to(logger, level)` | none (JDK `System.Logger`) |
+| `NioFlowGateway<T, R>` | `NioFlowMvc.deferred(...)` (WebMVC) | `org.springframework:spring-web` |
+| `NioFlowGateway<T, R>` | `NioFlowReactive.mono(...)` (WebFlux) | `io.projectreactor:reactor-core` |
 
 All ports are functional or default-method interfaces — implement them with a lambda when an adapter is overkill.
 

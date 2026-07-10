@@ -744,7 +744,12 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
             active--;
             lock.notifyAll();
         }
-        snapshot.forEach(handler -> deliver(handler, error));
+        // like onComplete: handlers run with the failing value's context bound, so
+        // they can tell which value failed (replays run unbound — no value anymore)
+        FlowContext.bound(flow.context(), () -> {
+            snapshot.forEach(handler -> deliver(handler, error));
+            return null;
+        });
     }
 
     /** Runs a user handler, swallowing anything it throws. */

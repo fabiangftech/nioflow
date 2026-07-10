@@ -6,7 +6,8 @@ import java.util.function.Supplier;
 /**
  * Per-value metadata (trace id, tenant, ...) that travels with the value instead of
  * the thread. The engine binds it around every execution of user code for a value —
- * stages, predicates, fan-outs, recoveries and {@code onComplete} handlers — so
+ * stages, predicates, fan-outs, recoveries, {@code onComplete} and {@code onError}
+ * handlers — so
  * {@link #get} and {@link #put} work no matter which worker or virtual thread runs
  * the code. Seed it with {@code just(input, context)}; fan-out children inherit a
  * copy. Batch functions process many values at once and run unbound.
