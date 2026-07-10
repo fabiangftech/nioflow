@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>nio-flow — async flows for Java</title>
   <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-  <meta name="description" content="nio-flow — an io_uring-style asynchronous flow library for Java. Declare the chain once, inject values, and a slow value never blocks the ones behind it.">
+  <meta name="description" content="nio-flow — an asynchronous flow library for Java. Declare the chain once with sync (handle) and async (submit) stages, inject values, and a slow value never blocks the ones behind it.">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -32,9 +32,9 @@
         <p class="hero-eyebrow">Async flow library · Java 25+ · Zero dependencies</p>
         <h1>Many values in flight.<br><span class="accent">None of them waiting.</span></h1>
         <p class="hero-sub">
-          nio-flow runs your pipeline io_uring style: declare the chain once and inject values —
-          a value stuck on slow IO never delays the ones behind it, and a failure stops
-          only the value that failed.
+          Declare the chain once — <code>handle</code> for sync stages, <code>submit</code>
+          for async, both fine for IO — and inject values: a value stuck on a slow stage
+          never delays the ones behind it, and a failure stops only the value that failed.
         </p>
       </div>
 

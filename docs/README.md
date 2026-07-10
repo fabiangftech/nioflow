@@ -2,14 +2,14 @@
 
 nio-flow lets you model a processing flow as a **chain of stages declared once**. Every value you inject walks the chain independently: several values are in flight at the same time, a value blocked on slow IO never delays the values behind it, and an error short-circuits only the value that failed.
 
-The design borrows from Linux's io_uring: a **submission queue** with values ready to run their next stage, and a **completion queue** with reaped async results. A boss event loop hands each value to a virtual-thread handle worker; async stages run on an executor without waiting.
+Every stage is one of two kinds — and that's the heart of the API: **`handle` runs synchronously, `submit` runs asynchronously**. Both take a `Function<T, T>` and both can do IO (JDBC, HTTP, ...). Under the hood the engine keeps a **submission queue** of values ready for their next stage and a **completion queue** of reaped async results: a boss event loop hands each value to a virtual-thread handle worker, and `submit` stages run on an executor without the engine waiting.
 
 ```java
 import dev.nioflow.application.facade.NioFlow;
 
 try (NioFlow<Order> flow = new NioFlow<>()) {
     flow.handle("validate", orders::validate)
-        .submit("enrich", api::enrich)                 // slow IO — never blocks other values
+        .submit("enrich", api::enrich)                 // async stage — never blocks other values
         .when(order -> order.priority())
         .then(lane -> lane
                 .submit(order -> notifier.push(order)))
@@ -46,7 +46,7 @@ Requires **Java 25+** (virtual threads and scoped values). The core has **zero r
 ## Why nio-flow?
 
 - **Multiple values in flight** — the chain is declared once; every injected value walks it concurrently with its own cursor.
-- **Non-blocking by construction** — `submit` stages run on an executor and are reaped asynchronously; a value stuck on JDBC or HTTP never holds up the rest.
+- **Sync or async, per stage** — `handle` runs synchronously on a handle worker; `submit` runs asynchronously on your executor and is reaped later. Both can do IO: a value stuck on JDBC or HTTP never holds up the rest.
 - **Virtual threads by default** — blocking anywhere ties up only that value, not a shared worker.
 - **Per-value error isolation** — a failure short-circuits one value, is delivered to `onError`, and can be recovered in place with `onErrorResume`.
 - **Rich flow shapes** — two-way forks (`when`), switch-style forks (`match`), filtering, fan-out, type adaptation and reusable segments (`via`).

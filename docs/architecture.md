@@ -32,12 +32,12 @@ flowchart TB
 
 - **`core.facade`** — the public API: the fluent `NioFlow<T>` interface, the untyped `NioEngine` contract behind it, and the pluggable ports (`Resilience`, `NioFlowMetrics`, `NioFlowTracer`).
 - **`core.model`** — the chain and value model shared by API and engine. A chain is a list of `Link`s; a `FlowValue` is one in-flight value with its own cursor into that list.
-- **`application`** — the io_uring-style engine and the fluent builder over it.
+- **`application`** — the queue-driven engine and the fluent builder over it.
 - **`infrastructure`** — optional adapters. They are `compileOnly` in the core build: nothing activates unless *you* put Resilience4j or OpenTelemetry on the classpath, and the core stays dependency-free.
 
 ## The engine
 
-The engine keeps two queues and two dedicated daemon threads, io_uring style:
+The engine keeps two queues and two dedicated daemon threads:
 
 ```mermaid
 flowchart LR
@@ -109,7 +109,7 @@ This is why lanes are cheap, why a value only runs its own lane, and why stages 
 
 | Guarantee | Mechanism |
 |---|---|
-| A slow value never delays others | async stages are fire-and-reap; per-value cursors |
+| A slow value never delays others | async stages are fire-and-reap; sync stages get their own virtual worker; per-value cursors |
 | Errors isolate to one value | failure routes through the completion queue to recovery or `onError` |
 | Per-value stage order | one cursor per value, one place at a time |
 | Flat memory when long-running | `seal()` releases finished values; bounded failure history |

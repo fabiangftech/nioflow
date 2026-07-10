@@ -24,12 +24,14 @@ Entry point: `dev.nioflow.application.facade.NioFlow<T>` — implements the `dev
 
 ## Stages
 
+The one distinction that matters: **`handle` is synchronous, `submit` is asynchronous**. Both accept a `Function<T, T>` and both can do IO (JDBC, HTTP, ...).
+
 | Operator | Runs on | Description |
 |---|---|---|
-| `handle(fn)` | handle worker | Sync transformation. Blocking is fine on the default virtual workers. |
+| `handle(fn)` | handle worker | Sync: runs to completion before the value moves on. Blocking (IO included) is fine on the default virtual workers. |
 | `handle(name, fn)` | handle worker | Named: failures arrive wrapped in `StageException`. |
 | `handle(fn, resilience)` | handle worker | Decorated by a `Resilience` policy. |
-| `submit(fn)` | executor | Async: engine fires and moves on; result reaped later. |
+| `submit(fn)` | executor | Async: the engine fires and moves on without waiting; the result is reaped later. |
 | `submit(name, fn)` | executor | Named async stage. |
 | `submit(fn, timeout)` | executor | Bounded: on expiry the worker is interrupted, the value fails with `TimeoutException`. |
 | `submit(fn, resilience)` | executor | Decorated async stage. |

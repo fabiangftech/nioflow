@@ -39,8 +39,8 @@ import dev.nioflow.application.facade.NioFlow;
 try (NioFlow<Integer> flow = new NioFlow<>()) {
 
     // 1. Declare the chain — once, before injecting values
-    flow.handle(x -> x * 2)              // sync stage: fast transformation
-        .submit(x -> slowLookup(x))      // async stage: blocking IO, off the hot path
+    flow.handle(x -> x * 2)              // sync stage: runs on a handle worker
+        .submit(x -> slowLookup(x))      // async stage: runs on the executor, engine moves on
         .handle(x -> x + 1)
         .seal();                         // freeze the chain: no more stages
 
@@ -56,7 +56,7 @@ try (NioFlow<Integer> flow = new NioFlow<>()) {
 
 Key points:
 
-- **`handle` vs `submit`** — both take a `Function<T, T>`. `handle` runs on a handle worker (a virtual thread by default, so blocking is fine); `submit` runs on the flow's executor and the engine *does not wait* — the result is reaped asynchronously, so a value stuck on slow IO never delays the values behind it. Reach for `submit` when a stage needs a timeout with real cancellation or should run on your own executor.
+- **`handle` is sync, `submit` is async** — that is the heart of the API. Both take a `Function<T, T>` and both can do IO (JDBC, HTTP, ...). `handle` runs the stage to completion on a handle worker — a virtual thread by default, so blocking there ties up only that value. `submit` hands the stage to the flow's executor and the engine *does not wait* — the result is reaped asynchronously and the value resumes later. Reach for `submit` when a stage should run on your own executor or needs a timeout with real cancellation.
 - **Order is per value, never across values** — a fast value may overtake a slower one injected earlier. If a value fails, only that value stops.
 - **`join()`** waits until the flow is quiescent and returns the result of the newest injected value that finished.
 - **`seal()`** freezes the chain: declaring more stages throws, and finished values are released instead of retained. Seal every long-running flow.
