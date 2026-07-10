@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -8,12 +8,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-class NioFlowAdaptTest {
+class DefaultNioFlowAdaptTest {
 
     @Test
     void adaptChangesThePipelineType() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            String result = nioFlow.just(21)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            String result = defaultNioFlow.just(21)
                     .submit(x -> x * 2)
                     .adapt(x -> "value=" + x)
                     .handle(String::toUpperCase)
@@ -25,8 +25,8 @@ class NioFlowAdaptTest {
 
     @Test
     void adaptRoundTripsAcrossAsyncStages() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            int result = nioFlow.just(21)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            int result = defaultNioFlow.just(21)
                     .adapt(String::valueOf)
                     .submit(s -> s + "0")
                     .adapt(Integer::parseInt)
@@ -38,13 +38,13 @@ class NioFlowAdaptTest {
 
     @Test
     void onCompleteAfterAdaptReceivesTheAdaptedType() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<String> completed = new CopyOnWriteArrayList<>();
-            nioFlow.adapt(x -> "v" + x)
+            defaultNioFlow.adapt(x -> "v" + x)
                     .onComplete(completed::add);
 
-            nioFlow.just(42);
-            nioFlow.join();
+            defaultNioFlow.just(42);
+            defaultNioFlow.join();
 
             assertEquals(List.of("v42"), completed);
         }

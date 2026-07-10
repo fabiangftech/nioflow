@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.model.Backpressure;
 import org.junit.jupiter.api.Test;
 
@@ -12,25 +12,25 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowBackpressureTest {
+class DefaultNioFlowBackpressureTest {
 
     @Test
     void failPolicyRejectsInjectionsAtCapacity() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.failing(2))) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>(Backpressure.failing(2))) {
             CountDownLatch release = new CountDownLatch(1);
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         await(release);
                         return x;
                     })
                     .onComplete(completed::add);
 
-            nioFlow.just(1);
-            nioFlow.just(2);
-            assertThrows(RejectedExecutionException.class, () -> nioFlow.just(3));
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
+            assertThrows(RejectedExecutionException.class, () -> defaultNioFlow.just(3));
 
             release.countDown();
-            nioFlow.join();
+            defaultNioFlow.join();
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of(1, 2)));
         }
@@ -38,21 +38,21 @@ class NioFlowBackpressureTest {
 
     @Test
     void dropPolicyDiscardsInjectionsAtCapacity() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.dropping(2))) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>(Backpressure.dropping(2))) {
             CountDownLatch release = new CountDownLatch(1);
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         await(release);
                         return x;
                     })
                     .onComplete(completed::add);
 
-            nioFlow.just(1);
-            nioFlow.just(2);
-            nioFlow.just(3); // silently dropped
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
+            defaultNioFlow.just(3); // silently dropped
 
             release.countDown();
-            nioFlow.join();
+            defaultNioFlow.join();
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of(1, 2)));
         }
@@ -60,11 +60,11 @@ class NioFlowBackpressureTest {
 
     @Test
     void blockPolicyMakesTheProducerWaitForAFreeSlot() throws InterruptedException {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.blocking(1))) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>(Backpressure.blocking(1))) {
             CountDownLatch releaseFirst = new CountDownLatch(1);
             CountDownLatch secondInjected = new CountDownLatch(1);
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         if (x == 1) {
                             await(releaseFirst);
                         }
@@ -72,9 +72,9 @@ class NioFlowBackpressureTest {
                     })
                     .onComplete(completed::add);
 
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
             Thread producer = new Thread(() -> {
-                nioFlow.just(2);
+                defaultNioFlow.just(2);
                 secondInjected.countDown();
             });
             producer.start();
@@ -85,7 +85,7 @@ class NioFlowBackpressureTest {
             releaseFirst.countDown(); // value 1 finishes and frees the slot
             assertTrue(secondInjected.await(2, TimeUnit.SECONDS));
 
-            nioFlow.join();
+            defaultNioFlow.join();
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of(1, 2)));
         }
@@ -93,14 +93,14 @@ class NioFlowBackpressureTest {
 
     @Test
     void capacityFreesAsValuesFinishNotJustAtTheEnd() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.failing(1))) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>(Backpressure.failing(1))) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> x * 10)
+            defaultNioFlow.handle(x -> x * 10)
                     .onComplete(completed::add);
 
             for (int i = 1; i <= 5; i++) {
-                nioFlow.just(i);
-                nioFlow.join(); // one at a time: the slot is free again for the next
+                defaultNioFlow.just(i);
+                defaultNioFlow.join(); // one at a time: the slot is free again for the next
             }
 
             assertEquals(5, completed.size());
@@ -110,28 +110,28 @@ class NioFlowBackpressureTest {
 
     @Test
     void aFilteredValueFreesItsSlot() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.failing(1))) {
-            nioFlow.filter(x -> false);
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>(Backpressure.failing(1))) {
+            defaultNioFlow.filter(x -> false);
 
-            nioFlow.just(1);
-            assertNull(nioFlow.join()); // discarded
+            defaultNioFlow.just(1);
+            assertNull(defaultNioFlow.join()); // discarded
 
-            nioFlow.just(2); // must not throw: the slot was freed by the drop
-            assertNull(nioFlow.join());
+            defaultNioFlow.just(2); // must not throw: the slot was freed by the drop
+            assertNull(defaultNioFlow.join());
         }
     }
 
     @Test
     void blockPolicyPacesABulkInjection() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.blocking(2))) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>(Backpressure.blocking(2))) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> x * 2)
+            defaultNioFlow.handle(x -> x * 2)
                     .onComplete(completed::add);
 
             for (int i = 1; i <= 50; i++) {
-                nioFlow.just(i); // blocks whenever 2 values are in flight
+                defaultNioFlow.just(i); // blocks whenever 2 values are in flight
             }
-            nioFlow.join();
+            defaultNioFlow.join();
 
             assertEquals(50, completed.size());
         }

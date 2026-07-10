@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -10,13 +10,13 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowOrderingTest {
+class DefaultNioFlowOrderingTest {
 
     @Test
     void runsStagesInDeclarationOrder() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<String> order = new CopyOnWriteArrayList<>();
-            int result = nioFlow.just(1)
+            int result = defaultNioFlow.just(1)
                     .handle(x -> {
                         order.add("handle-1");
                         return x + 1;
@@ -47,10 +47,10 @@ class NioFlowOrderingTest {
 
     @Test
     void submitDoesNotBlockTheCallerThread() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             AtomicReference<String> submitThread = new AtomicReference<>();
             long start = System.nanoTime();
-            nioFlow.just(1).submit(x -> {
+            defaultNioFlow.just(1).submit(x -> {
                 submitThread.set(Thread.currentThread().getName());
                 sleep(200);
                 return x;
@@ -58,7 +58,7 @@ class NioFlowOrderingTest {
             long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
 
             assertTrue(elapsedMillis < 150, "submit blocked the caller for " + elapsedMillis + "ms");
-            nioFlow.join();
+            defaultNioFlow.join();
             assertNotEquals(Thread.currentThread().getName(), submitThread.get());
         }
     }

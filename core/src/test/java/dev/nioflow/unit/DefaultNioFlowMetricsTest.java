@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.unit.utils.RecordingMetrics;
 import org.junit.jupiter.api.Test;
 
@@ -9,13 +9,13 @@ import java.util.concurrent.CompletionException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowMetricsTest {
+class DefaultNioFlowMetricsTest {
 
     @Test
     void lifecycleCountersTrackEveryOutcome() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            nioFlow.metrics(metrics)
+            defaultNioFlow.metrics(metrics)
                     .filter(x -> x != 2)
                     .submit(x -> {
                         if (x == 3) {
@@ -24,8 +24,8 @@ class NioFlowMetricsTest {
                         return x * 10;
                     });
 
-            nioFlow.justAll(List.of(1, 2, 3));
-            assertThrows(CompletionException.class, nioFlow::join);
+            defaultNioFlow.justAll(List.of(1, 2, 3));
+            assertThrows(CompletionException.class, defaultNioFlow::join);
 
             assertEquals(3, metrics.injected.get());
             assertEquals(1, metrics.completed.get()); // value 1
@@ -36,16 +36,16 @@ class NioFlowMetricsTest {
 
     @Test
     void recoveredValuesCountAsCompletedNotFailed() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            nioFlow.metrics(metrics)
+            defaultNioFlow.metrics(metrics)
                     .submit(x -> {
                         throw new IllegalStateException("boom");
                     })
                     .onErrorResume(error -> -1);
 
-            nioFlow.just(1);
-            nioFlow.join();
+            defaultNioFlow.just(1);
+            defaultNioFlow.join();
 
             assertEquals(1, metrics.completed.get());
             assertEquals(0, metrics.failed.get());
@@ -54,15 +54,15 @@ class NioFlowMetricsTest {
 
     @Test
     void perStageLatencyCarriesNameKindAndOutcome() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            nioFlow.metrics(metrics)
+            defaultNioFlow.metrics(metrics)
                     .handle("validate", x -> x + 1)
                     .submit("save", x -> x * 10)
                     .handle(x -> x); // unnamed
 
-            nioFlow.just(1);
-            nioFlow.join();
+            defaultNioFlow.just(1);
+            defaultNioFlow.join();
 
             assertEquals(3, metrics.stages.size());
             assertTrue(metrics.stages.contains("validate:handle:success:timed"));
@@ -73,15 +73,15 @@ class NioFlowMetricsTest {
 
     @Test
     void failingStagesReportTheErrorOutcome() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            nioFlow.metrics(metrics)
+            defaultNioFlow.metrics(metrics)
                     .submit("flaky", x -> {
                         throw new IllegalStateException("boom");
                     });
 
-            nioFlow.just(1);
-            assertThrows(CompletionException.class, nioFlow::join);
+            defaultNioFlow.just(1);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
 
             assertEquals(List.of("flaky:submit:error:timed"), metrics.stages);
         }
@@ -89,13 +89,13 @@ class NioFlowMetricsTest {
 
     @Test
     void fanOutReportsTheNumberOfChildren() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            nioFlow.metrics(metrics)
+            defaultNioFlow.metrics(metrics)
                     .fanOut(x -> List.of(x, x + 1, x + 2));
 
-            nioFlow.just(1);
-            nioFlow.join();
+            defaultNioFlow.just(1);
+            defaultNioFlow.join();
 
             assertEquals(List.of(3), metrics.fanOuts);
             assertEquals(1, metrics.injected.get());

@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -9,19 +9,19 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowOnCompleteTest {
+class DefaultNioFlowOnCompleteTest {
 
     @Test
     void everyFinishedValueIsDelivered() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> x * 10)
+            defaultNioFlow.submit(x -> x * 10)
                     .onComplete(completed::add);
 
-            nioFlow.just(1);
-            nioFlow.just(2);
-            nioFlow.just(3);
-            nioFlow.join();
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
+            defaultNioFlow.just(3);
+            defaultNioFlow.join();
 
             assertEquals(3, completed.size());
             assertTrue(completed.containsAll(List.of(10, 20, 30)));
@@ -30,9 +30,9 @@ class NioFlowOnCompleteTest {
 
     @Test
     void failedValuesAreNotDelivered() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         if (x == 2) {
                             throw new IllegalStateException("value 2 boom");
                         }
@@ -40,11 +40,11 @@ class NioFlowOnCompleteTest {
                     })
                     .onComplete(completed::add);
 
-            nioFlow.just(1);
-            nioFlow.just(2);
-            nioFlow.just(3);
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
+            defaultNioFlow.just(3);
 
-            assertThrows(CompletionException.class, nioFlow::join);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of(10, 30)));
         }
@@ -52,19 +52,19 @@ class NioFlowOnCompleteTest {
 
     @Test
     void everyHandlerReceivesTheValueEvenIfOneThrows() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> first = new CopyOnWriteArrayList<>();
             List<Integer> second = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> x + 1)
+            defaultNioFlow.handle(x -> x + 1)
                     .onComplete(x -> {
                         first.add(x);
                         throw new RuntimeException("misbehaving handler");
                     })
                     .onComplete(second::add);
 
-            nioFlow.just(1);
-            nioFlow.just(2);
-            nioFlow.join();
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
+            defaultNioFlow.join();
 
             assertEquals(2, first.size());
             assertTrue(first.containsAll(List.of(2, 3)));
@@ -75,16 +75,16 @@ class NioFlowOnCompleteTest {
 
     @Test
     void joinNeverReturnsBeforeCompleteHandlersFinished() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> x)
+            defaultNioFlow.submit(x -> x)
                     .onComplete(x -> {
                         sleep(100); // a slow handler must still finish before join returns
                         completed.add(x);
                     });
 
-            nioFlow.just(7);
-            nioFlow.join();
+            defaultNioFlow.just(7);
+            defaultNioFlow.join();
 
             assertEquals(List.of(7), completed);
         }

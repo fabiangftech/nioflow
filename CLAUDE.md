@@ -18,8 +18,8 @@ The Gradle project lives in `core/` — run all Gradle commands from there, not 
 cd core
 ./gradlew build                                          # compile + test
 ./gradlew test                                           # all tests
-./gradlew test --tests 'dev.nioflow.unit.NioFlowBatchTest'                 # one class
-./gradlew test --tests 'dev.nioflow.unit.NioFlowBatchTest.someTestMethod'  # one method
+./gradlew test --tests 'dev.nioflow.unit.DefaultNioFlowBatchTest'                 # one class
+./gradlew test --tests 'dev.nioflow.unit.DefaultNioFlowBatchTest.someTestMethod'  # one method
 ```
 
 Requires a modern JDK (uses virtual threads; developed on JDK 25). Tests are JUnit 6 (Jupiter).
@@ -33,7 +33,7 @@ Three layers under `core/src/main/java/dev/nioflow/`, dependency direction stric
 - **`application/facade`** — the implementations. `NioEngine` (the ~750-line heart): a boss thread drains a submission queue and hands each value to a handle worker (virtual thread per dispatch by default, optional fixed pool); async `submit` stages launch on the executor without waiting; a completer thread reaps results from a completion queue and re-enqueues the value for its next stage. `NioFlow` (impl) wraps the engine; `ForkBranch`, `MatchCases`, `BatchBuffer` support forks and batching; `NioFlowGateway` (impl) correlates each `call` to its value via a reserved `FlowContext` key and one `onComplete`/`onError` pair on the exit view.
 - **`infrastructure`** — optional adapters: `OpenTelemetryMetrics`, `LoggingTracer` (trace), `Resilience4j` (resilience policies), `spring` (`NioFlowMvc` → `DeferredResult` for WebMVC, `NioFlowReactive` → `Mono` for WebFlux, both over `NioFlowGateway`).
 
-Naming gotcha: the interface and implementation share simple names (`dev.nioflow.core.facade.NioFlow` vs `dev.nioflow.application.facade.NioFlow`, same for `NioEngine`) — implementations reference the interfaces fully qualified.
+Naming gotcha: the interface and implementation share simple names (`dev.nioflow.core.facade.NioFlow` vs `dev.nioflow.application.facade.DefaultNioFlow`, same for `NioEngine`) — implementations reference the interfaces fully qualified.
 
 ### Core semantics (invariants the tests enforce)
 

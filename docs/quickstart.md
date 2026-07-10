@@ -34,7 +34,7 @@ implementation("dev.nioflow:core:1.0.0")
 A nio-flow is built in three steps: **declare** the chain, **inject** values, **join**.
 
 ```java
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 
 try (NioFlow<Integer> flow = new NioFlow<>()) {
 

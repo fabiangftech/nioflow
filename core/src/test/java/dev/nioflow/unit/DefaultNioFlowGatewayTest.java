@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.application.facade.NioFlowGateway;
 import dev.nioflow.core.model.Backpressure;
 import dev.nioflow.core.model.FlowContext;
@@ -13,16 +13,16 @@ import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowGatewayTest {
+class DefaultNioFlowGatewayTest {
 
     private static final Duration PATIENCE = Duration.ofSeconds(5);
 
     @Test
     void eachCallResolvesToItsOwnResult() throws Exception {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.handle(x -> x * 10);
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.handle(x -> x * 10);
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             CompletableFuture<Integer> first = gateway.call(1);
             CompletableFuture<Integer> second = gateway.call(2);
@@ -34,16 +34,16 @@ class NioFlowGatewayTest {
 
     @Test
     void aSlowCallDoesNotCrossResultsWithAFastOne() throws Exception {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             CountDownLatch release = new CountDownLatch(1);
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                 if (x == 1) {
                     await(release);
                 }
                 return x * 10;
             });
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             CompletableFuture<Integer> slow = gateway.call(1);
             CompletableFuture<Integer> fast = gateway.call(2);
@@ -57,12 +57,12 @@ class NioFlowGatewayTest {
 
     @Test
     void aReTypedChainDeliversTheExitViewsType() throws Exception {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            var exit = nioFlow
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            var exit = defaultNioFlow
                     .submit(x -> x + 1)
                     .adapt(x -> "value-" + x);
-            NioFlowGateway<Integer, String> gateway = NioFlowGateway.of(nioFlow, exit);
-            nioFlow.seal();
+            NioFlowGateway<Integer, String> gateway = NioFlowGateway.of(defaultNioFlow, exit);
+            defaultNioFlow.seal();
 
             assertEquals("value-8",
                     gateway.call(7).get(PATIENCE.toMillis(), TimeUnit.MILLISECONDS));
@@ -71,15 +71,15 @@ class NioFlowGatewayTest {
 
     @Test
     void aFailingValueFailsOnlyItsOwnFuture() throws Exception {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.handle(x -> {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.handle(x -> {
                 if (x < 0) {
                     throw new IllegalStateException("negative");
                 }
                 return x;
             });
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             CompletableFuture<Integer> bad = gateway.call(-1);
             CompletableFuture<Integer> good = gateway.call(1);
@@ -94,10 +94,10 @@ class NioFlowGatewayTest {
 
     @Test
     void aFilteredValueTimesOutAndIsForgotten() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.filter(x -> x > 0);
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.filter(x -> x > 0);
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             CompletableFuture<Integer> dropped = gateway.call(-1, Duration.ofMillis(100));
 
@@ -110,10 +110,10 @@ class NioFlowGatewayTest {
 
     @Test
     void seededContextTravelsWithTheCall() throws Exception {
-        try (NioFlow<String> nioFlow = new NioFlow<>()) {
-            nioFlow.submit(x -> x + "/" + FlowContext.get("tenant"));
-            NioFlowGateway<String, String> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+        try (DefaultNioFlow<String> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.submit(x -> x + "/" + FlowContext.get("tenant"));
+            NioFlowGateway<String, String> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             assertEquals("payload/acme", gateway.call("payload", Map.of("tenant", "acme"))
                     .get(PATIENCE.toMillis(), TimeUnit.MILLISECONDS));
@@ -122,14 +122,14 @@ class NioFlowGatewayTest {
 
     @Test
     void rejectedAdmissionFailsTheFutureInsteadOfThrowing() throws Exception {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.failing(1))) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>(Backpressure.failing(1))) {
             CountDownLatch release = new CountDownLatch(1);
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                 await(release);
                 return x;
             });
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             CompletableFuture<Integer> admitted = gateway.call(1);
             CompletableFuture<Integer> rejected = gateway.call(2);
@@ -145,31 +145,31 @@ class NioFlowGatewayTest {
 
     @Test
     void aFanOutCompletesTheCallWithTheFirstResult() throws Exception {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            var exit = nioFlow.fanOut(x -> List.of(x, x + 1));
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow, exit);
-            nioFlow.seal();
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            var exit = defaultNioFlow.fanOut(x -> List.of(x, x + 1));
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow, exit);
+            defaultNioFlow.seal();
 
             int result = gateway.call(1).get(PATIENCE.toMillis(), TimeUnit.MILLISECONDS);
 
             assertTrue(result == 1 || result == 2);
-            nioFlow.join();
+            defaultNioFlow.join();
             assertEquals(0, gateway.pending());
         }
     }
 
     @Test
     void anUntypedGatewayAcceptsAnyInputAndRoutesByRuntimeType() throws Exception {
-        try (NioFlow<Object> nioFlow = new NioFlow<>()) {
-            var exit = nioFlow.match()
+        try (DefaultNioFlow<Object> defaultNioFlow = new DefaultNioFlow<>()) {
+            var exit = defaultNioFlow.match()
                     .is(v -> v instanceof Integer, lane -> lane
                             .handle(v -> (Integer) v * 10))
                     .is(v -> v instanceof String, lane -> lane
                             .handle(v -> ((String) v).toUpperCase()))
                     .otherwise(lane -> lane
                             .handle(v -> "unsupported:" + v.getClass().getSimpleName()));
-            NioFlowGateway<Object, Object> gateway = NioFlowGateway.of(nioFlow, exit);
-            nioFlow.seal();
+            NioFlowGateway<Object, Object> gateway = NioFlowGateway.of(defaultNioFlow, exit);
+            defaultNioFlow.seal();
 
             assertEquals(70, gateway.call(7).get(PATIENCE.toMillis(), TimeUnit.MILLISECONDS));
             assertEquals("ACME", gateway.call("acme").get(PATIENCE.toMillis(), TimeUnit.MILLISECONDS));
@@ -180,16 +180,16 @@ class NioFlowGatewayTest {
 
     @Test
     void plainlyInjectedValuesAreIgnoredByTheGateway() throws Exception {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.handle(x -> x * 10);
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.handle(x -> x * 10);
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
-            nioFlow.just(5); // around the gateway: no correlation id
+            defaultNioFlow.just(5); // around the gateway: no correlation id
             CompletableFuture<Integer> called = gateway.call(1);
 
             assertEquals(10, called.get(PATIENCE.toMillis(), TimeUnit.MILLISECONDS));
-            nioFlow.join();
+            defaultNioFlow.join();
             assertEquals(0, gateway.pending());
         }
     }

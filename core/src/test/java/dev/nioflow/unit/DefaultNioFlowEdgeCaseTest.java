@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -11,19 +11,19 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowEdgeCaseTest {
+class DefaultNioFlowEdgeCaseTest {
 
     @Test
     void aPipelineWithNoStagesReturnsTheInputFromJoin() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            assertEquals(42, nioFlow.just(42).join());
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            assertEquals(42, defaultNioFlow.just(42).join());
         }
     }
 
     @Test
     void nullInputsFlowThroughAsyncStages() {
-        try (NioFlow<String> nioFlow = new NioFlow<>()) {
-            String result = nioFlow.just(null)
+        try (DefaultNioFlow<String> defaultNioFlow = new DefaultNioFlow<>()) {
+            String result = defaultNioFlow.just(null)
                     .submit(x -> x == null ? "was-null" : x)
                     .join();
 
@@ -33,8 +33,8 @@ class NioFlowEdgeCaseTest {
 
     @Test
     void aStageReturningNullPropagatesTheNull() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            int result = nioFlow.just(1)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            int result = defaultNioFlow.just(1)
                     .handle(x -> null)
                     .submit(x -> x == null ? -1 : x)
                     .join();
@@ -45,18 +45,18 @@ class NioFlowEdgeCaseTest {
 
     @Test
     void errorsLikeAssertionErrorAreCapturedToo() throws InterruptedException {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             AssertionError boom = new AssertionError("fatal");
             AtomicReference<Throwable> captured = new AtomicReference<>();
             CountDownLatch notified = new CountDownLatch(1);
-            nioFlow.onError(error -> {
+            defaultNioFlow.onError(error -> {
                 captured.set(error);
                 notified.countDown();
             });
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                 throw boom;
             });
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
 
             assertTrue(notified.await(1, TimeUnit.SECONDS));
             assertSame(boom, captured.get());
@@ -65,17 +65,17 @@ class NioFlowEdgeCaseTest {
 
     @Test
     void aPipelineKeepsWorkingAfterJoin() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            assertEquals(2, nioFlow.just(1).handle(x -> x + 1).join());
+            assertEquals(2, defaultNioFlow.just(1).handle(x -> x + 1).join());
 
-            nioFlow.handle(x -> x * 10);
-            nioFlow.handle(x -> {
+            defaultNioFlow.handle(x -> x * 10);
+            defaultNioFlow.handle(x -> {
                 results.add(x);
                 return x;
             });
-            nioFlow.just(5);
-            nioFlow.join();
+            defaultNioFlow.just(5);
+            defaultNioFlow.join();
 
             // the value parked by the first join resumes through the stages added later
             assertEquals(2, results.size());

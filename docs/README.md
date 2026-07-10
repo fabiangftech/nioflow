@@ -5,7 +5,7 @@ nio-flow lets you model a processing flow as a **chain of stages declared once**
 Every stage is one of two kinds — and that's the heart of the API: **`handle` runs synchronously, `submit` runs asynchronously**. Both take a `Function<T, T>` and both can do IO (JDBC, HTTP, ...). Under the hood the engine keeps a **submission queue** of values ready for their next stage and a **completion queue** of reaped async results: a boss event loop hands each value to a virtual-thread handle worker, and `submit` stages run on an executor without the engine waiting.
 
 ```java
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 
 try (NioFlow<Order> flow = new NioFlow<>()) {
     flow.handle("validate", orders::validate)

@@ -1,9 +1,9 @@
 package dev.nioflow.unit;
 
+import dev.nioflow.application.facade.DefaultNioFlow;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import dev.nioflow.application.facade.NioFlow;
 import dev.nioflow.core.facade.Resilience;
 import dev.nioflow.infrastructure.resilience.Resilience4j;
 import org.junit.jupiter.api.Test;
@@ -16,32 +16,32 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowResilienceTest {
+class DefaultNioFlowResilienceTest {
 
     @Test
     void aFlakyStageIsRetriedUntilItSucceeds() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             AtomicInteger attempts = new AtomicInteger();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                 if (attempts.incrementAndGet() < 3) {
                     throw new IllegalStateException("flaky");
                 }
                 return x * 10;
             }, Resilience4j.retry(3, Duration.ofMillis(10)));
 
-            nioFlow.just(4);
+            defaultNioFlow.just(4);
 
-            assertEquals(40, nioFlow.join());
+            assertEquals(40, defaultNioFlow.join());
             assertEquals(3, attempts.get());
         }
     }
 
     @Test
     void exhaustedRetriesFailOnlyThatValue() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             AtomicInteger attempts = new AtomicInteger();
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         if (x == 1) {
                             attempts.incrementAndGet();
                             throw new IllegalStateException("always failing");
@@ -50,10 +50,10 @@ class NioFlowResilienceTest {
                     }, Resilience4j.retry(2, Duration.ofMillis(10)))
                     .onComplete(completed::add);
 
-            nioFlow.just(1);
-            nioFlow.just(2);
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
 
-            assertThrows(CompletionException.class, nioFlow::join);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
             assertEquals(2, attempts.get());
             assertEquals(List.of(20), completed);
         }
@@ -61,7 +61,7 @@ class NioFlowResilienceTest {
 
     @Test
     void anOpenCircuitBreakerFailsFastWithoutCallingTheStage() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             CircuitBreaker breaker = CircuitBreaker.of("io-nioFlow-test",
                     CircuitBreakerConfig.custom()
                             .slidingWindowSize(2)
@@ -71,20 +71,20 @@ class NioFlowResilienceTest {
                             .build());
             AtomicInteger calls = new AtomicInteger();
             List<Throwable> errors = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         calls.incrementAndGet();
                         throw new IllegalStateException("downstream is down");
                     }, Resilience4j.circuitBreaker(breaker))
                     .onError(errors::add);
 
-            nioFlow.just(1);
-            assertThrows(CompletionException.class, nioFlow::join);
-            nioFlow.just(2);
-            assertThrows(CompletionException.class, nioFlow::join);
+            defaultNioFlow.just(1);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
+            defaultNioFlow.just(2);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
 
             // two failures opened the breaker: the third value never reaches the stage
-            nioFlow.just(3);
-            assertThrows(CompletionException.class, nioFlow::join);
+            defaultNioFlow.just(3);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
             assertEquals(2, calls.get());
             assertInstanceOf(CallNotPermittedException.class, errors.getLast());
         }
@@ -92,7 +92,7 @@ class NioFlowResilienceTest {
 
     @Test
     void aHandleAcceptsNonBlockingPolicies() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             CircuitBreaker breaker = CircuitBreaker.of("io-nioFlow-handle",
                     CircuitBreakerConfig.custom()
                             .slidingWindowSize(2)
@@ -102,19 +102,19 @@ class NioFlowResilienceTest {
                             .build());
             AtomicInteger calls = new AtomicInteger();
             List<Throwable> errors = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> {
+            defaultNioFlow.handle(x -> {
                         calls.incrementAndGet();
                         throw new IllegalStateException("bad mapping");
                     }, Resilience4j.circuitBreaker(breaker))
                     .onError(errors::add);
 
-            nioFlow.just(1);
-            assertThrows(CompletionException.class, nioFlow::join);
-            nioFlow.just(2);
-            assertThrows(CompletionException.class, nioFlow::join);
+            defaultNioFlow.just(1);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
+            defaultNioFlow.just(2);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
 
-            nioFlow.just(3);
-            assertThrows(CompletionException.class, nioFlow::join);
+            defaultNioFlow.just(3);
+            assertThrows(CompletionException.class, defaultNioFlow::join);
             assertEquals(2, calls.get());
             assertInstanceOf(CallNotPermittedException.class, errors.getLast());
         }
@@ -122,21 +122,21 @@ class NioFlowResilienceTest {
 
     @Test
     void andThenWrapsThisPolicyWithTheOuterOne() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             Resilience<Integer> plusOneAfter = function -> x -> function.apply(x) + 1;
             Resilience<Integer> timesTwoAfter = function -> x -> function.apply(x) * 2;
 
             // timesTwo wraps plusOne: (x + 1) * 2
-            nioFlow.submit(x -> x, plusOneAfter.andThen(timesTwoAfter));
+            defaultNioFlow.submit(x -> x, plusOneAfter.andThen(timesTwoAfter));
 
-            nioFlow.just(5);
-            assertEquals(12, nioFlow.join());
+            defaultNioFlow.just(5);
+            assertEquals(12, defaultNioFlow.join());
         }
     }
 
     @Test
     void thePortWorksWithoutResilience4j() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             AtomicInteger attempts = new AtomicInteger();
             // hand-rolled one-retry policy: the port has no library coupling
             Resilience<Integer> retryOnce = function -> x -> {
@@ -146,16 +146,16 @@ class NioFlowResilienceTest {
                     return function.apply(x);
                 }
             };
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                 if (attempts.incrementAndGet() == 1) {
                     throw new IllegalStateException("first attempt fails");
                 }
                 return x + 1;
             }, retryOnce);
 
-            nioFlow.just(41);
+            defaultNioFlow.just(41);
 
-            assertEquals(42, nioFlow.join());
+            assertEquals(42, defaultNioFlow.join());
             assertEquals(2, attempts.get());
         }
     }

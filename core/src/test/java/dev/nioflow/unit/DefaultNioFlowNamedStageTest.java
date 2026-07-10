@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.model.StageException;
 import org.junit.jupiter.api.Test;
 
@@ -11,22 +11,22 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowNamedStageTest {
+class DefaultNioFlowNamedStageTest {
 
     @Test
     void aNamedSyncStageFailureCarriesItsName() throws InterruptedException {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             IllegalStateException boom = new IllegalStateException("bad input");
             AtomicReference<Throwable> captured = new AtomicReference<>();
             CountDownLatch notified = new CountDownLatch(1);
-            nioFlow.onError(error -> {
+            defaultNioFlow.onError(error -> {
                 captured.set(error);
                 notified.countDown();
             });
-            nioFlow.handle("validate", x -> {
+            defaultNioFlow.handle("validate", x -> {
                 throw boom;
             });
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
 
             assertTrue(notified.await(1, TimeUnit.SECONDS));
             StageException failure = assertInstanceOf(StageException.class, captured.get());
@@ -37,17 +37,17 @@ class NioFlowNamedStageTest {
 
     @Test
     void aNamedAsyncStageFailureCarriesItsName() throws InterruptedException {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             AtomicReference<Throwable> captured = new AtomicReference<>();
             CountDownLatch notified = new CountDownLatch(1);
-            nioFlow.onError(error -> {
+            defaultNioFlow.onError(error -> {
                 captured.set(error);
                 notified.countDown();
             });
-            nioFlow.submit("save", x -> {
+            defaultNioFlow.submit("save", x -> {
                 throw new IllegalStateException("db down");
             });
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
 
             assertTrue(notified.await(1, TimeUnit.SECONDS));
             StageException failure = assertInstanceOf(StageException.class, captured.get());
@@ -58,13 +58,13 @@ class NioFlowNamedStageTest {
 
     @Test
     void joinRethrowsTheNamedFailure() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.submit("enrich", x -> {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.submit("enrich", x -> {
                 throw new IllegalStateException("api down");
             });
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
 
-            CompletionException thrown = assertThrows(CompletionException.class, nioFlow::join);
+            CompletionException thrown = assertThrows(CompletionException.class, defaultNioFlow::join);
             StageException failure = assertInstanceOf(StageException.class, thrown.getCause());
             assertEquals("enrich", failure.stage());
         }
@@ -72,24 +72,24 @@ class NioFlowNamedStageTest {
 
     @Test
     void aRecoveryCanInspectTheFailingStage() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.submit("flaky", x -> {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.submit("flaky", x -> {
                         throw new IllegalStateException("boom");
                     })
                     .onErrorResume(error ->
                             error instanceof StageException failure && failure.stage().equals("flaky")
                                     ? -1
                                     : -2);
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
 
-            assertEquals(-1, nioFlow.join());
+            assertEquals(-1, defaultNioFlow.join());
         }
     }
 
     @Test
     void namedStagesComputeNormallyOnSuccess() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            int result = nioFlow.just(5)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            int result = defaultNioFlow.just(5)
                     .handle("double", x -> x * 2)
                     .submit("increment", x -> x + 1)
                     .join();

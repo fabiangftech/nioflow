@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -10,15 +10,15 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowFlowTest {
+class DefaultNioFlowFlowTest {
 
     @Test
     void aSlowValueDoesNotBlockTheValuesBehindIt() throws InterruptedException {
-        try (NioFlow<String> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<String> defaultNioFlow = new DefaultNioFlow<>()) {
             CountDownLatch slowRelease = new CountDownLatch(1);
             CountDownLatch fastFinished = new CountDownLatch(1);
             List<String> finished = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         if (x.equals("slow")) {
                             await(slowRelease);
                         }
@@ -32,24 +32,24 @@ class NioFlowFlowTest {
                         return x;
                     });
 
-            nioFlow.just("slow");
-            nioFlow.just("fast");
+            defaultNioFlow.just("slow");
+            defaultNioFlow.just("fast");
 
             // fast overtakes slow, which is still parked inside its submit stage
             assertTrue(fastFinished.await(2, TimeUnit.SECONDS));
             assertEquals(List.of("fast"), finished);
 
             slowRelease.countDown();
-            nioFlow.join();
+            defaultNioFlow.join();
             assertEquals(List.of("fast", "slow"), finished);
         }
     }
 
     @Test
     void everyInjectedValueWalksTheWholeChain() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> x * 10)
+            defaultNioFlow.handle(x -> x * 10)
                     .submit(x -> x + 1)
                     .handle(x -> {
                         results.add(x);
@@ -57,9 +57,9 @@ class NioFlowFlowTest {
                     });
 
             for (int i = 1; i <= 5; i++) {
-                nioFlow.just(i);
+                defaultNioFlow.just(i);
             }
-            nioFlow.join();
+            defaultNioFlow.join();
 
             assertEquals(5, results.size());
             assertTrue(results.containsAll(List.of(11, 21, 31, 41, 51)));
@@ -68,10 +68,10 @@ class NioFlowFlowTest {
 
     @Test
     void aFailingValueDoesNotStopTheOthers() throws InterruptedException {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             CountDownLatch failed = new CountDownLatch(1);
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         if (x == 2) {
                             throw new IllegalStateException("value 2 boom");
                         }
@@ -83,9 +83,9 @@ class NioFlowFlowTest {
                     })
                     .onError(error -> failed.countDown());
 
-            nioFlow.just(1);
-            nioFlow.just(2);
-            nioFlow.just(3);
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
+            defaultNioFlow.just(3);
 
             assertTrue(failed.await(2, TimeUnit.SECONDS));
             awaitSize(results, 2);
@@ -95,9 +95,9 @@ class NioFlowFlowTest {
 
     @Test
     void manyValuesAllCompleteThroughSlowStages() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                         sleep(x % 5);
                         return x * 2;
                     })
@@ -107,9 +107,9 @@ class NioFlowFlowTest {
                     });
 
             for (int i = 1; i <= 50; i++) {
-                nioFlow.just(i);
+                defaultNioFlow.just(i);
             }
-            nioFlow.join();
+            defaultNioFlow.join();
 
             assertEquals(50, results.size());
             assertEquals(2550, results.stream().mapToInt(Integer::intValue).sum());
@@ -118,11 +118,11 @@ class NioFlowFlowTest {
 
     @Test
     void aStageCanInjectNewValuesWithoutDeadlocking() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> {
+            defaultNioFlow.handle(x -> {
                         if (x < 3) {
-                            nioFlow.just(x + 1);
+                            defaultNioFlow.just(x + 1);
                         }
                         return x;
                     })
@@ -131,8 +131,8 @@ class NioFlowFlowTest {
                         return x;
                     });
 
-            nioFlow.just(1);
-            nioFlow.join();
+            defaultNioFlow.just(1);
+            defaultNioFlow.join();
 
             assertEquals(3, results.size());
             assertTrue(results.containsAll(List.of(1, 2, 3)));
@@ -141,12 +141,12 @@ class NioFlowFlowTest {
 
     @Test
     void aSlowHandleDoesNotBlockTheValuesBehindIt() throws InterruptedException {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             CountDownLatch slowEntered = new CountDownLatch(1);
             CountDownLatch slowRelease = new CountDownLatch(1);
             CountDownLatch fastFinished = new CountDownLatch(1);
             List<Integer> finished = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> {
+            defaultNioFlow.handle(x -> {
                         if (x == 1) {
                             slowEntered.countDown();
                             await(slowRelease);
@@ -161,31 +161,31 @@ class NioFlowFlowTest {
                         return x;
                     });
 
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
             assertTrue(slowEntered.await(2, TimeUnit.SECONDS));
-            nioFlow.just(2);
+            defaultNioFlow.just(2);
 
             // value 2 finishes while value 1 is still stuck inside its handle
             assertTrue(fastFinished.await(2, TimeUnit.SECONDS));
             assertEquals(List.of(2), finished);
 
             slowRelease.countDown();
-            nioFlow.join();
+            defaultNioFlow.join();
             assertEquals(List.of(2, 1), finished);
         }
     }
 
     @Test
     void justAllInjectsEveryValueInIterationOrder() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> x * 10)
+            defaultNioFlow.handle(x -> x * 10)
                     .onComplete(completed::add);
 
-            nioFlow.justAll(List.of(1, 2, 3, 4, 5));
+            defaultNioFlow.justAll(List.of(1, 2, 3, 4, 5));
 
             // join returns the newest injected value's result: the last of the iterable
-            assertEquals(50, nioFlow.join());
+            assertEquals(50, defaultNioFlow.join());
             assertEquals(5, completed.size());
             assertTrue(completed.containsAll(List.of(10, 20, 30, 40, 50)));
         }
@@ -193,30 +193,30 @@ class NioFlowFlowTest {
 
     @Test
     void justAllWithAnEmptyIterableDoesNothing() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.handle(x -> x * 10);
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.handle(x -> x * 10);
 
-            nioFlow.justAll(List.of());
+            defaultNioFlow.justAll(List.of());
 
-            assertNull(nioFlow.join());
+            assertNull(defaultNioFlow.join());
         }
     }
 
     @Test
     void joinReturnsTheResultOfTheNewestInjectedValue() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.submit(x -> {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.submit(x -> {
                 if (x == 1) {
                     sleep(150); // the older value finishes last
                 }
                 return x * 10;
             });
 
-            nioFlow.just(1);
-            nioFlow.just(2);
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
 
             // deterministic: injection order decides, not completion order
-            assertEquals(20, nioFlow.join());
+            assertEquals(20, defaultNioFlow.join());
         }
     }
 

@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.model.FlowContext;
 import org.junit.jupiter.api.Test;
 
@@ -10,12 +10,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowContextTest {
+class DefaultNioFlowContextTest {
 
     @Test
     void seededContextIsVisibleInSyncStages() {
-        try (NioFlow<String> nioFlow = new NioFlow<>()) {
-            String result = nioFlow.just("payload", Map.of("traceId", "abc-123"))
+        try (DefaultNioFlow<String> defaultNioFlow = new DefaultNioFlow<>()) {
+            String result = defaultNioFlow.just("payload", Map.of("traceId", "abc-123"))
                     .handle(x -> x + "/" + FlowContext.get("traceId"))
                     .join();
 
@@ -25,8 +25,8 @@ class NioFlowContextTest {
 
     @Test
     void contextCrossesAsyncBoundaries() {
-        try (NioFlow<String> nioFlow = new NioFlow<>()) {
-            String result = nioFlow.just("payload", Map.of("tenant", "acme"))
+        try (DefaultNioFlow<String> defaultNioFlow = new DefaultNioFlow<>()) {
+            String result = defaultNioFlow.just("payload", Map.of("tenant", "acme"))
                     .submit(x -> x + "/" + FlowContext.get("tenant")) // runs on a virtual thread
                     .join();
 
@@ -36,8 +36,8 @@ class NioFlowContextTest {
 
     @Test
     void stagesCanWriteContextForLaterStages() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            int result = nioFlow.just(5)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            int result = defaultNioFlow.just(5)
                     .handle(x -> {
                         FlowContext.put("original", x);
                         return x * 100;
@@ -51,14 +51,14 @@ class NioFlowContextTest {
 
     @Test
     void eachValueCarriesItsOwnContext() {
-        try (NioFlow<String> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<String> defaultNioFlow = new DefaultNioFlow<>()) {
             List<String> completed = new CopyOnWriteArrayList<>();
-            nioFlow.submit(x -> x + "/" + FlowContext.get("traceId"))
+            defaultNioFlow.submit(x -> x + "/" + FlowContext.get("traceId"))
                     .onComplete(completed::add);
 
-            nioFlow.just("a", Map.of("traceId", "t-1"));
-            nioFlow.just("b", Map.of("traceId", "t-2"));
-            nioFlow.join();
+            defaultNioFlow.just("a", Map.of("traceId", "t-1"));
+            defaultNioFlow.just("b", Map.of("traceId", "t-2"));
+            defaultNioFlow.join();
 
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of("a/t-1", "b/t-2")));
@@ -67,14 +67,14 @@ class NioFlowContextTest {
 
     @Test
     void fanOutChildrenInheritTheParentsContext() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<String> completed = new CopyOnWriteArrayList<>();
-            nioFlow.fanOut(x -> List.of(x, x + 1))
+            defaultNioFlow.fanOut(x -> List.of(x, x + 1))
                     .adapt(x -> x + "/" + FlowContext.get("traceId"))
                     .onComplete(completed::add);
 
-            nioFlow.just(1, Map.of("traceId", "parent"));
-            nioFlow.join();
+            defaultNioFlow.just(1, Map.of("traceId", "parent"));
+            defaultNioFlow.join();
 
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of("1/parent", "2/parent")));
@@ -83,27 +83,27 @@ class NioFlowContextTest {
 
     @Test
     void aRecoveryRunsWithTheValuesContext() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.submit(x -> {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.submit(x -> {
                         throw new IllegalStateException("boom");
                     })
                     .onErrorResume(error -> (Integer) FlowContext.get("fallback"));
 
-            nioFlow.just(1, Map.of("fallback", 42));
+            defaultNioFlow.just(1, Map.of("fallback", 42));
 
-            assertEquals(42, nioFlow.join());
+            assertEquals(42, defaultNioFlow.join());
         }
     }
 
     @Test
     void onCompleteSeesTheValuesContext() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Object> traces = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> x * 2)
+            defaultNioFlow.handle(x -> x * 2)
                     .onComplete(value -> traces.add(FlowContext.get("traceId")));
 
-            nioFlow.just(1, Map.of("traceId", "t-9"));
-            nioFlow.join();
+            defaultNioFlow.just(1, Map.of("traceId", "t-9"));
+            defaultNioFlow.join();
 
             assertEquals(List.of("t-9"), traces);
         }
@@ -111,16 +111,16 @@ class NioFlowContextTest {
 
     @Test
     void onErrorSeesTheFailingValuesContext() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Object> traces = new CopyOnWriteArrayList<>();
-            nioFlow.handle(x -> {
+            defaultNioFlow.handle(x -> {
                         throw new IllegalStateException("boom");
                     })
                     .onError(error -> traces.add(FlowContext.get("traceId")));
 
-            nioFlow.just(1, Map.of("traceId", "t-err"));
+            defaultNioFlow.just(1, Map.of("traceId", "t-err"));
 
-            assertThrows(java.util.concurrent.CompletionException.class, nioFlow::join);
+            assertThrows(java.util.concurrent.CompletionException.class, defaultNioFlow::join);
             long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
             while (traces.isEmpty() && System.nanoTime() < deadline) {
                 Thread.onSpinWait(); // delivery happens after the value is released

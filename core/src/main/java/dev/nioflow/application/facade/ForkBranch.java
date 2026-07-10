@@ -27,14 +27,14 @@ import java.util.function.UnaryOperator;
  */
 final class ForkBranch<T> implements dev.nioflow.core.facade.NioFlow.Branch<T> {
 
-    private final NioFlow<T> mainLine;
+    private final DefaultNioFlow<T> mainLine;
     private final int decision;
 
     /**
      * @param mainLine the view the fork was declared on, resumed after the lanes
      * @param decision the fork's decision id, guarding the links of both lanes
      */
-    ForkBranch(NioFlow<T> mainLine, int decision) {
+    ForkBranch(DefaultNioFlow<T> mainLine, int decision) {
         this.mainLine = mainLine;
         this.decision = decision;
     }

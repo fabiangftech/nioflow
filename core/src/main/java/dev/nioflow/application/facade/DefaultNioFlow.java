@@ -24,7 +24,7 @@ import java.util.function.Predicate;
  * boss event loop hands each value to a virtual handle worker, and async stages run on
  * the executor. Reach for {@code submit} when a stage needs a timeout with real
  * cancellation or should run on your own executor; a fixed handle-worker pool
- * ({@link #NioFlow(ExecutorService, int)}) is the knob for bounding CPU-heavy
+ * ({@link #DefaultNioFlow(ExecutorService, int)}) is the knob for bounding CPU-heavy
  * chains, and only there must handles stay fast.
  *
  * <p>{@code when(predicate).then(lane -> ...)} forks the chain: each branch builds its
@@ -40,23 +40,23 @@ import java.util.function.Predicate;
  * @param <T> the type of the values flowing at this point of the chain; {@code adapt}
  *            and {@code fanOut} hand out a differently-typed view over the same engine
  */
-public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, AutoCloseable {
+public final class DefaultNioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, AutoCloseable {
 
     private final dev.nioflow.core.facade.NioEngine nioEngine;
     private final List<Guard> guards;
 
     /** All stages on virtual threads: blocking anywhere ties up only that value. */
-    public NioFlow() {
+    public DefaultNioFlow() {
         this(Backpressure.unbounded());
     }
 
     /**
-     * Like {@link #NioFlow()} with admission control: {@code just} applies the
+     * Like {@link #DefaultNioFlow()} with admission control: {@code just} applies the
      * backpressure policy once {@code capacity} values are in flight.
      *
      * @param backpressure the admission policy applied by {@code just} at capacity
      */
-    public NioFlow(Backpressure backpressure) {
+    public DefaultNioFlow(Backpressure backpressure) {
         this(new NioEngine(Executors.newVirtualThreadPerTaskExecutor(), true,
                 VIRTUAL_HANDLE_WORKERS, backpressure), List.of());
     }
@@ -68,12 +68,12 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
      * @param executor runs every {@code submit} stage; any shape works — fixed,
      *                 cached, single-threaded or virtual-thread-per-task
      */
-    public NioFlow(ExecutorService executor) {
+    public DefaultNioFlow(ExecutorService executor) {
         this(new NioEngine(executor, false, VIRTUAL_HANDLE_WORKERS, Backpressure.unbounded()), List.of());
     }
 
     /**
-     * Like {@link #NioFlow(ExecutorService)} with a fixed handle-worker pool of
+     * Like {@link #DefaultNioFlow(ExecutorService)} with a fixed handle-worker pool of
      * the given size, bounding sync parallelism — the tuning knob for CPU-heavy
      * chains. Blocking handles then tie up shared workers; the virtual default
      * (other constructors) has no such limit.
@@ -83,7 +83,7 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
      * @param handleWorkers size of the fixed pool walking sync stages; keep handles
      *                      fast once bounded
      */
-    public NioFlow(ExecutorService executor, int handleWorkers) {
+    public DefaultNioFlow(ExecutorService executor, int handleWorkers) {
         this(new NioEngine(executor, false, handleWorkers, Backpressure.unbounded()), List.of());
     }
 
@@ -96,7 +96,7 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
      * @param handleWorkers size of the fixed pool walking sync stages
      * @param backpressure  the admission policy applied by {@code just} at capacity
      */
-    public NioFlow(ExecutorService executor, int handleWorkers, Backpressure backpressure) {
+    public DefaultNioFlow(ExecutorService executor, int handleWorkers, Backpressure backpressure) {
         this(new NioEngine(executor, false, handleWorkers, backpressure), List.of());
     }
 
@@ -108,7 +108,7 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
      * declared through this view carry {@code guards} — how lanes and {@code adapt}
      * hand out scoped views without copying anything.
      */
-    private NioFlow(dev.nioflow.core.facade.NioEngine nioEngine, List<Guard> guards) {
+    private DefaultNioFlow(dev.nioflow.core.facade.NioEngine nioEngine, List<Guard> guards) {
         this.nioEngine = nioEngine;
         this.guards = guards;
     }
@@ -182,13 +182,13 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
     @Override
     public <N> dev.nioflow.core.facade.NioFlow<N> adapt(Function<T, N> function) {
         nioEngine.append(new Stage(null, untyped(function), false, null, guards));
-        return new NioFlow<>(nioEngine, guards);
+        return new DefaultNioFlow<>(nioEngine, guards);
     }
 
     @Override
     public <N> dev.nioflow.core.facade.NioFlow<N> fanOut(Function<T, List<N>> function) {
         nioEngine.append(new FanOut(untypedFanOut(function), guards));
-        return new NioFlow<>(nioEngine, guards);
+        return new DefaultNioFlow<>(nioEngine, guards);
     }
 
     @Override
@@ -306,10 +306,10 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
      * view's guards plus one for the given decision outcome, so those links only
      * run for values that took the lane.
      */
-    NioFlow<T> lane(int decision, boolean expected) {
+    DefaultNioFlow<T> lane(int decision, boolean expected) {
         List<Guard> laneGuards = new ArrayList<>(guards);
         laneGuards.add(new Guard(decision, expected));
-        return new NioFlow<>(nioEngine, List.copyOf(laneGuards));
+        return new DefaultNioFlow<>(nioEngine, List.copyOf(laneGuards));
     }
 
     // The engine is untyped on purpose (adapt re-types the view over the same

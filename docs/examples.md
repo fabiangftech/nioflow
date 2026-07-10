@@ -3,7 +3,7 @@
 All examples assume:
 
 ```java
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 ```
 
 ## Branching with `when`

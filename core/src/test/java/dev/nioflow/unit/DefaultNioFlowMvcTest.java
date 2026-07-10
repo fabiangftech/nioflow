@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.application.facade.NioFlowGateway;
 import dev.nioflow.infrastructure.spring.NioFlowMvc;
 import org.junit.jupiter.api.Test;
@@ -11,18 +11,18 @@ import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowMvcTest {
+class DefaultNioFlowMvcTest {
 
     private static final Duration PATIENCE = Duration.ofSeconds(5);
 
     @Test
     void aDeferredResultResolvesWithTheValuesOwnResult() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            var exit = nioFlow
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            var exit = defaultNioFlow
                     .submit(x -> x + 1)
                     .adapt(x -> "value-" + x);
-            NioFlowGateway<Integer, String> gateway = NioFlowGateway.of(nioFlow, exit);
-            nioFlow.seal();
+            NioFlowGateway<Integer, String> gateway = NioFlowGateway.of(defaultNioFlow, exit);
+            defaultNioFlow.seal();
 
             DeferredResult<String> deferred = NioFlowMvc.deferred(gateway, 7);
 
@@ -32,12 +32,12 @@ class NioFlowMvcTest {
 
     @Test
     void aFailingValueErrorsTheDeferredResult() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.handle(x -> {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.handle(x -> {
                 throw new IllegalStateException("boom");
             });
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             DeferredResult<Integer> deferred = NioFlowMvc.deferred(gateway, 1);
 
@@ -49,16 +49,16 @@ class NioFlowMvcTest {
 
     @Test
     void aDroppedValueErrorsTheDeferredResultOnTimeout() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.filter(x -> x > 0);
-            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(nioFlow);
-            nioFlow.seal();
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.filter(x -> x > 0);
+            NioFlowGateway<Integer, Integer> gateway = NioFlowGateway.of(defaultNioFlow);
+            defaultNioFlow.seal();
 
             DeferredResult<Integer> deferred =
                     NioFlowMvc.deferred(gateway, -1, Duration.ofMillis(100));
 
             assertInstanceOf(TimeoutException.class, settledResult(deferred));
-            NioFlowGatewayTest.awaitForgotten(gateway);
+            DefaultNioFlowGatewayTest.awaitForgotten(gateway);
         }
     }
 

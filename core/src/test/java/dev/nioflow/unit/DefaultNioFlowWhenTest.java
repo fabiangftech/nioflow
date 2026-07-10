@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -10,12 +10,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class NioFlowWhenTest {
+class DefaultNioFlowWhenTest {
 
     @Test
     void thenLaneRunsWhenThePredicateHolds() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            int result = nioFlow.just(20)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            int result = defaultNioFlow.just(20)
                     .when(x -> x > 10)
                     .then(lane -> lane
                             .handle(x -> x * 2))
@@ -29,8 +29,8 @@ class NioFlowWhenTest {
 
     @Test
     void otherwiseLaneRunsWhenThePredicateFails() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            int result = nioFlow.just(5)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            int result = defaultNioFlow.just(5)
                     .when(x -> x > 10)
                     .then(lane -> lane
                             .handle(x -> x * 2))
@@ -44,10 +44,10 @@ class NioFlowWhenTest {
 
     @Test
     void lanesHoldSeveralStagesAndStayIsolated() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> thenLane = new CopyOnWriteArrayList<>();
             List<Integer> otherwiseLane = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 10)
+            defaultNioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .handle(x -> x * 2)
                             .handle(x -> x + 1)
@@ -63,9 +63,9 @@ class NioFlowWhenTest {
                                 return x;
                             }));
 
-            nioFlow.just(20);
-            nioFlow.just(5);
-            nioFlow.join();
+            defaultNioFlow.just(20);
+            defaultNioFlow.just(5);
+            defaultNioFlow.join();
 
             assertEquals(List.of(42), thenLane);
             assertEquals(List.of(4), otherwiseLane);
@@ -74,9 +74,9 @@ class NioFlowWhenTest {
 
     @Test
     void mainLineContinuesForBothLanesAfterTheFork() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> merged = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 10)
+            defaultNioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .handle(x -> x * 2))
                     .otherwise(lane -> lane
@@ -86,9 +86,9 @@ class NioFlowWhenTest {
                         return x;
                     });
 
-            nioFlow.just(20);
-            nioFlow.just(5);
-            nioFlow.join();
+            defaultNioFlow.just(20);
+            defaultNioFlow.just(5);
+            defaultNioFlow.join();
 
             assertEquals(2, merged.size());
             assertTrue(merged.containsAll(List.of(40, 4)));
@@ -97,9 +97,9 @@ class NioFlowWhenTest {
 
     @Test
     void withoutOtherwiseFalseValuesPassThroughUnchanged() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 10)
+            defaultNioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .handle(x -> x * 2)
                             .handle(x -> x + 1))
@@ -108,9 +108,9 @@ class NioFlowWhenTest {
                         return x;
                     });
 
-            nioFlow.just(20);
-            nioFlow.just(5);
-            nioFlow.join();
+            defaultNioFlow.just(20);
+            defaultNioFlow.just(5);
+            defaultNioFlow.join();
 
             assertEquals(2, results.size());
             assertTrue(results.containsAll(List.of(41, 5)));
@@ -119,9 +119,9 @@ class NioFlowWhenTest {
 
     @Test
     void forksCanBeNestedInsideALane() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 0)
+            defaultNioFlow.when(x -> x > 0)
                     .then(outer -> outer
                             .when(x -> x > 10)
                             .then(inner -> inner
@@ -135,10 +135,10 @@ class NioFlowWhenTest {
                         return x;
                     });
 
-            nioFlow.just(20);  // outer true, inner true  -> 40
-            nioFlow.just(5);   // outer true, inner false -> 6
-            nioFlow.just(-3);  // outer false             -> 0
-            nioFlow.join();
+            defaultNioFlow.just(20);  // outer true, inner true  -> 40
+            defaultNioFlow.just(5);   // outer true, inner false -> 6
+            defaultNioFlow.just(-3);  // outer false             -> 0
+            defaultNioFlow.join();
 
             assertEquals(3, results.size());
             assertTrue(results.containsAll(List.of(40, 6, 0)));
@@ -147,9 +147,9 @@ class NioFlowWhenTest {
 
     @Test
     void sequentialForksDecideIndependently() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 0)
+            defaultNioFlow.when(x -> x > 0)
                     .then(lane -> lane
                             .handle(x -> x + 10))
                     .when(x -> x % 2 == 0)
@@ -160,9 +160,9 @@ class NioFlowWhenTest {
                         return x;
                     });
 
-            nioFlow.just(5);   // positive -> 15, odd -> stays 15
-            nioFlow.just(-4);  // skips +10, even -> -8
-            nioFlow.join();
+            defaultNioFlow.just(5);   // positive -> 15, odd -> stays 15
+            defaultNioFlow.just(-4);  // skips +10, even -> -8
+            defaultNioFlow.join();
 
             assertEquals(2, results.size());
             assertTrue(results.containsAll(List.of(15, -8)));
@@ -171,9 +171,9 @@ class NioFlowWhenTest {
 
     @Test
     void emptyLanesPassValuesThroughUnchanged() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 10)
+            defaultNioFlow.when(x -> x > 10)
                     .then(lane -> lane)
                     .otherwise(lane -> lane)
                     .handle(x -> {
@@ -181,9 +181,9 @@ class NioFlowWhenTest {
                         return x;
                     });
 
-            nioFlow.just(20);
-            nioFlow.just(5);
-            nioFlow.join();
+            defaultNioFlow.just(20);
+            defaultNioFlow.just(5);
+            defaultNioFlow.join();
 
             assertEquals(2, results.size());
             assertTrue(results.containsAll(List.of(20, 5)));
@@ -192,12 +192,12 @@ class NioFlowWhenTest {
 
     @Test
     void aForkDeclaredAfterInjectionStillRoutesParkedValues() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            nioFlow.just(20);
-            nioFlow.just(5);
+            defaultNioFlow.just(20);
+            defaultNioFlow.just(5);
 
-            nioFlow.when(x -> x > 10)
+            defaultNioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .handle(x -> x * 2))
                     .otherwise(lane -> lane
@@ -206,7 +206,7 @@ class NioFlowWhenTest {
                         results.add(x);
                         return x;
                     });
-            nioFlow.join();
+            defaultNioFlow.join();
 
             assertEquals(2, results.size());
             assertTrue(results.containsAll(List.of(40, 4)));
@@ -215,11 +215,11 @@ class NioFlowWhenTest {
 
     @Test
     void thePredicateIsEvaluatedExactlyOncePerValue() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             AtomicInteger evaluations = new AtomicInteger();
-            nioFlow.just(20); // parks and re-parks across the appends below
+            defaultNioFlow.just(20); // parks and re-parks across the appends below
 
-            nioFlow.when(x -> {
+            defaultNioFlow.when(x -> {
                         evaluations.incrementAndGet();
                         return x > 10;
                     })
@@ -229,16 +229,16 @@ class NioFlowWhenTest {
                             .handle(x -> x - 1))
                     .handle(x -> x);
 
-            assertEquals(40, nioFlow.join());
+            assertEquals(40, defaultNioFlow.join());
             assertEquals(1, evaluations.get(), "the decision must be recorded once, not re-evaluated");
         }
     }
 
     @Test
     void adaptInsideALaneKeepsItsGuards() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<Integer> laneResults = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 10)
+            defaultNioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .adapt(x -> x + 1000)
                             .handle(x -> {
@@ -248,9 +248,9 @@ class NioFlowWhenTest {
                     .otherwise(lane -> lane
                             .handle(x -> x));
 
-            nioFlow.just(20); // true lane: adapted and collected
-            nioFlow.just(5);  // false lane: must never reach the lane collector
-            nioFlow.join();
+            defaultNioFlow.just(20); // true lane: adapted and collected
+            defaultNioFlow.just(5);  // false lane: must never reach the lane collector
+            defaultNioFlow.join();
 
             assertEquals(List.of(1020), laneResults);
         }
@@ -258,9 +258,9 @@ class NioFlowWhenTest {
 
     @Test
     void lanesRunTheirOwnSubmitStages() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             List<String> lanes = new CopyOnWriteArrayList<>();
-            nioFlow.when(x -> x > 10)
+            defaultNioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .submit(x -> {
                                 lanes.add("then-" + x);
@@ -272,9 +272,9 @@ class NioFlowWhenTest {
                                 return x;
                             }));
 
-            nioFlow.just(20);
-            nioFlow.just(5);
-            nioFlow.join();
+            defaultNioFlow.just(20);
+            defaultNioFlow.just(5);
+            defaultNioFlow.join();
 
             assertEquals(2, lanes.size());
             assertTrue(lanes.contains("then-20"));

@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.model.Diagnostics;
 import org.junit.jupiter.api.Test;
 
@@ -11,12 +11,12 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class NioFlowDiagnosticsTest {
+class DefaultNioFlowDiagnosticsTest {
 
     @Test
     void theDumpDescribesTheChainShape() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.handle("validate", x -> x)
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.handle("validate", x -> x)
                     .submit(x -> x, Duration.ofSeconds(2))
                     .when(x -> x > 10)
                     .then(lane -> lane
@@ -26,7 +26,7 @@ class NioFlowDiagnosticsTest {
                     .onErrorResume(error -> -1)
                     .batch(3, Duration.ofSeconds(1), group -> group);
 
-            List<String> chain = nioFlow.diagnostics().chain();
+            List<String> chain = defaultNioFlow.diagnostics().chain();
 
             assertEquals("handle[validate]", chain.get(0));
             assertEquals("submit timeout=PT2S", chain.get(1));
@@ -40,10 +40,10 @@ class NioFlowDiagnosticsTest {
 
     @Test
     void countsReflectTheRuntimeState() throws InterruptedException {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
             CountDownLatch entered = new CountDownLatch(1);
             CountDownLatch release = new CountDownLatch(1);
-            nioFlow.submit(x -> {
+            defaultNioFlow.submit(x -> {
                 entered.countDown();
                 try {
                     release.await(5, TimeUnit.SECONDS);
@@ -53,18 +53,18 @@ class NioFlowDiagnosticsTest {
                 return x;
             });
 
-            nioFlow.just(1);
+            defaultNioFlow.just(1);
             assertTrue(entered.await(2, TimeUnit.SECONDS));
 
-            Diagnostics whileRunning = nioFlow.diagnostics();
+            Diagnostics whileRunning = defaultNioFlow.diagnostics();
             assertEquals(1, whileRunning.active());
             assertEquals(1, whileRunning.injected());
             assertEquals(0, whileRunning.parked());
 
             release.countDown();
-            nioFlow.join();
+            defaultNioFlow.join();
 
-            Diagnostics afterJoin = nioFlow.diagnostics();
+            Diagnostics afterJoin = defaultNioFlow.diagnostics();
             assertEquals(0, afterJoin.active());
             assertEquals(1, afterJoin.parked());
         }
@@ -72,36 +72,36 @@ class NioFlowDiagnosticsTest {
 
     @Test
     void batchedCountsValuesWaitingInBuffers() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.batch(10, Duration.ofSeconds(5), group -> group);
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.batch(10, Duration.ofSeconds(5), group -> group);
 
-            nioFlow.just(1);
-            nioFlow.just(2);
-            awaitBatched(nioFlow, 2);
+            defaultNioFlow.just(1);
+            defaultNioFlow.just(2);
+            awaitBatched(defaultNioFlow, 2);
 
-            assertEquals(2, nioFlow.diagnostics().batched());
+            assertEquals(2, defaultNioFlow.diagnostics().batched());
         }
     }
 
     @Test
     void sealedAndClosedShowInTheDump() {
-        NioFlow<Integer> nioFlow = new NioFlow<>();
-        nioFlow.handle(x -> x).seal();
-        assertTrue(nioFlow.diagnostics().sealed());
-        assertFalse(nioFlow.diagnostics().closed());
+        DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>();
+        defaultNioFlow.handle(x -> x).seal();
+        assertTrue(defaultNioFlow.diagnostics().sealed());
+        assertFalse(defaultNioFlow.diagnostics().closed());
 
-        nioFlow.close();
-        assertTrue(nioFlow.diagnostics().closed());
+        defaultNioFlow.close();
+        assertTrue(defaultNioFlow.diagnostics().closed());
     }
 
     @Test
     void toStringRendersTheFullDump() {
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.handle("validate", x -> x);
-            nioFlow.just(1);
-            nioFlow.join();
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.handle("validate", x -> x);
+            defaultNioFlow.just(1);
+            defaultNioFlow.join();
 
-            String dump = nioFlow.toString();
+            String dump = defaultNioFlow.toString();
             assertTrue(dump.startsWith("NioFlow["));
             assertTrue(dump.contains("active=0"));
             assertTrue(dump.contains("parked=1"));
@@ -110,9 +110,9 @@ class NioFlowDiagnosticsTest {
         }
     }
 
-    private static void awaitBatched(NioFlow<Integer> nioFlow, int expected) {
+    private static void awaitBatched(DefaultNioFlow<Integer> defaultNioFlow, int expected) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (nioFlow.diagnostics().batched() < expected && System.nanoTime() < deadline) {
+        while (defaultNioFlow.diagnostics().batched() < expected && System.nanoTime() < deadline) {
             Thread.onSpinWait();
         }
     }

@@ -1,11 +1,11 @@
 package dev.nioflow.unit;
 
+import dev.nioflow.application.facade.DefaultNioFlow;
 import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
 import io.opentelemetry.sdk.metrics.data.LongPointData;
 import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.testing.exporter.InMemoryMetricReader;
-import dev.nioflow.application.facade.NioFlow;
 import dev.nioflow.infrastructure.metrics.OpenTelemetryMetrics;
 import org.junit.jupiter.api.Test;
 
@@ -23,8 +23,8 @@ class OpenTelemetryMetricsTest {
         try (SdkMeterProvider provider = SdkMeterProvider.builder().registerMetricReader(reader).build()) {
             Meter meter = provider.get("dev.nioflow.test");
 
-            try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-                nioFlow.metrics(OpenTelemetryMetrics.of(meter))
+            try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+                defaultNioFlow.metrics(OpenTelemetryMetrics.of(meter))
                         .handle("validate", x -> x + 1)
                         .submit("save", x -> {
                             if (x == 3) {
@@ -33,9 +33,9 @@ class OpenTelemetryMetricsTest {
                             return x * 10;
                         });
 
-                nioFlow.justAll(List.of(1, 5));
-                nioFlow.just(2); // becomes 3 after validate and fails in save
-                assertThrows(CompletionException.class, nioFlow::join);
+                defaultNioFlow.justAll(List.of(1, 5));
+                defaultNioFlow.just(2); // becomes 3 after validate and fails in save
+                assertThrows(CompletionException.class, defaultNioFlow::join);
             }
 
             Collection<MetricData> metrics = reader.collectAllMetrics();

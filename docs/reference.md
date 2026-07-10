@@ -2,7 +2,7 @@
 
 The authoritative reference is the Javadoc (`./gradlew javadoc` from `core/`). This page is the map.
 
-Entry point: `dev.nioflow.application.facade.NioFlow<T>` — implements the `dev.nioflow.core.facade.NioFlow<T>` contract and `AutoCloseable`.
+Entry point: `dev.nioflow.application.facade.DefaultNioFlow<T>` — implements the `dev.nioflow.core.facade.NioFlow<T>` contract and `AutoCloseable`.
 
 ## Constructors
 

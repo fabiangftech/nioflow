@@ -28,15 +28,15 @@ import java.util.function.UnaryOperator;
  */
 final class MatchCases<T> implements dev.nioflow.core.facade.NioFlow.Cases<T> {
 
-    private final NioFlow<T> mainLine;
-    private NioFlow<T> remaining;
+    private final DefaultNioFlow<T> mainLine;
+    private DefaultNioFlow<T> remaining;
 
     /**
      * @param mainLine the view the fork was declared on, resumed after the lanes;
      *                 also the initial {@code remaining} — before any case, every
      *                 value is still unmatched
      */
-    MatchCases(NioFlow<T> mainLine) {
+    MatchCases(DefaultNioFlow<T> mainLine) {
         this.mainLine = mainLine;
         this.remaining = mainLine;
     }

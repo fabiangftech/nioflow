@@ -1,6 +1,6 @@
 package dev.nioflow.unit;
 
-import dev.nioflow.application.facade.NioFlow;
+import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.infrastructure.trace.LoggingTracer;
 import dev.nioflow.unit.utils.CapturingLogger;
 import org.junit.jupiter.api.Test;
@@ -15,12 +15,12 @@ class LoggingTracerTest {
     void transitionsEndUpInTheLogger() {
         CapturingLogger logger = new CapturingLogger();
 
-        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
-            nioFlow.trace(LoggingTracer.to(logger, Level.INFO))
+        try (DefaultNioFlow<Integer> defaultNioFlow = new DefaultNioFlow<>()) {
+            defaultNioFlow.trace(LoggingTracer.to(logger, Level.INFO))
                     .handle("double", x -> x * 2);
 
-            nioFlow.just(21);
-            nioFlow.join();
+            defaultNioFlow.just(21);
+            defaultNioFlow.join();
         }
 
         assertTrue(logger.lines.stream().anyMatch(line -> line.contains("value 0 injected: 21")));
