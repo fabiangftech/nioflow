@@ -10,6 +10,13 @@ repositories {
 }
 
 dependencies {
+    compileOnly 'io.github.resilience4j:resilience4j-all:2.4.0'
+    testImplementation 'io.github.resilience4j:resilience4j-all:2.4.0'
+
+    compileOnly 'io.opentelemetry:opentelemetry-api:1.63.0'
+    testImplementation 'io.opentelemetry:opentelemetry-api:1.63.0'
+    testImplementation 'io.opentelemetry:opentelemetry-sdk-testing:1.63.0'
+
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
