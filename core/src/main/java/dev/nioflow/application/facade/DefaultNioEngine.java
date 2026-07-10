@@ -29,7 +29,7 @@ import java.util.function.Consumer;
  * <p>The two loops run on dedicated daemon threads and never borrow executor threads,
  * so any executor shape works: fixed, cached, single-threaded or virtual-thread-per-task.
  */
-public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
+public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine {
 
     private static final long POLL_MILLIS = 100;
 
@@ -81,8 +81,8 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
      *                      default, where a blocking handle ties up only its own value
      * @param backpressure  admission control applied by {@link #inject(Object)}
      */
-    public NioEngine(ExecutorService executor, boolean ownsExecutor, int handleWorkers,
-                     Backpressure backpressure) {
+    public DefaultNioEngine(ExecutorService executor, boolean ownsExecutor, int handleWorkers,
+                            Backpressure backpressure) {
         this.executor = executor;
         this.ownsExecutor = ownsExecutor;
         this.backpressure = backpressure;
@@ -170,7 +170,7 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
     public Diagnostics diagnostics() {
         synchronized (lock) {
             return new Diagnostics(
-                    chain.stream().map(NioEngine::describe).toList(),
+                    chain.stream().map(DefaultNioEngine::describe).toList(),
                     submissionQueue.size(),
                     completionQueue.size(),
                     active,

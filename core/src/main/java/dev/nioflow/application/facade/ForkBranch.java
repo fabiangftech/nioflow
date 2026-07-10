@@ -176,4 +176,14 @@ final class ForkBranch<T> implements NioFlow.Branch<T> {
     public T join(Duration timeout) {
         return mainLine.join(timeout);
     }
+
+    @Override
+    public void close() {
+        mainLine.close();
+    }
+
+    @Override
+    public void close(Duration gracePeriod) {
+        mainLine.close(gracePeriod);
+    }
 }

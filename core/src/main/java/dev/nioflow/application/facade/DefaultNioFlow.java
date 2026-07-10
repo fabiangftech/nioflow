@@ -40,9 +40,9 @@ import java.util.function.Predicate;
  * @param <T> the type of the values flowing at this point of the chain; {@code adapt}
  *            and {@code fanOut} hand out a differently-typed view over the same engine
  */
-public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
+public final class DefaultNioFlow<T> implements NioFlow<T> {
 
-    private final NioEngine nioEngine;
+    private final DefaultNioEngine defaultNioEngine;
     private final List<Guard> guards;
 
     /** All stages on virtual threads: blocking anywhere ties up only that value. */
@@ -57,7 +57,7 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
      * @param backpressure the admission policy applied by {@code just} at capacity
      */
     public DefaultNioFlow(Backpressure backpressure) {
-        this(new NioEngine(Executors.newVirtualThreadPerTaskExecutor(), true,
+        this(new DefaultNioEngine(Executors.newVirtualThreadPerTaskExecutor(), true,
                 VIRTUAL_HANDLE_WORKERS, backpressure), List.of());
     }
 
@@ -69,7 +69,7 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
      *                 cached, single-threaded or virtual-thread-per-task
      */
     public DefaultNioFlow(ExecutorService executor) {
-        this(new NioEngine(executor, false, VIRTUAL_HANDLE_WORKERS, Backpressure.unbounded()), List.of());
+        this(new DefaultNioEngine(executor, false, VIRTUAL_HANDLE_WORKERS, Backpressure.unbounded()), List.of());
     }
 
     /**
@@ -84,7 +84,7 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
      *                      fast once bounded
      */
     public DefaultNioFlow(ExecutorService executor, int handleWorkers) {
-        this(new NioEngine(executor, false, handleWorkers, Backpressure.unbounded()), List.of());
+        this(new DefaultNioEngine(executor, false, handleWorkers, Backpressure.unbounded()), List.of());
     }
 
     /**
@@ -97,7 +97,7 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
      * @param backpressure  the admission policy applied by {@code just} at capacity
      */
     public DefaultNioFlow(ExecutorService executor, int handleWorkers, Backpressure backpressure) {
-        this(new NioEngine(executor, false, handleWorkers, backpressure), List.of());
+        this(new DefaultNioEngine(executor, false, handleWorkers, backpressure), List.of());
     }
 
     /** Sentinel for the engine: one virtual thread per dispatch, no fixed pool. */
@@ -108,92 +108,92 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
      * declared through this view carry {@code guards} — how lanes and {@code adapt}
      * hand out scoped views without copying anything.
      */
-    private DefaultNioFlow(NioEngine nioEngine, List<Guard> guards) {
-        this.nioEngine = nioEngine;
+    private DefaultNioFlow(DefaultNioEngine defaultNioEngine, List<Guard> guards) {
+        this.defaultNioEngine = defaultNioEngine;
         this.guards = guards;
     }
 
     @Override
     public NioFlow<T> just(T input) {
-        nioEngine.inject(input);
+        defaultNioEngine.inject(input);
         return this;
     }
 
     @Override
     public NioFlow<T> just(T input, Map<String, Object> context) {
-        nioEngine.inject(input, context);
+        defaultNioEngine.inject(input, context);
         return this;
     }
 
     @Override
     public NioFlow<T> justAll(Iterable<T> inputs) {
-        inputs.forEach(nioEngine::inject);
+        inputs.forEach(defaultNioEngine::inject);
         return this;
     }
 
     @Override
     public NioFlow<T> handle(Function<T, T> function) {
-        nioEngine.append(new Stage(null, untyped(function), false, null, guards));
+        defaultNioEngine.append(new Stage(null, untyped(function), false, null, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> handle(String name, Function<T, T> function) {
-        nioEngine.append(new Stage(name, untyped(function), false, null, guards));
+        defaultNioEngine.append(new Stage(name, untyped(function), false, null, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> handle(Function<T, T> function, Resilience<T> resilience) {
-        nioEngine.append(new Stage(null, untyped(resilience.decorate(function)), false, null, guards));
+        defaultNioEngine.append(new Stage(null, untyped(resilience.decorate(function)), false, null, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> submit(Function<T, T> function) {
-        nioEngine.append(new Stage(null, untyped(function), true, null, guards));
+        defaultNioEngine.append(new Stage(null, untyped(function), true, null, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> submit(String name, Function<T, T> function) {
-        nioEngine.append(new Stage(name, untyped(function), true, null, guards));
+        defaultNioEngine.append(new Stage(name, untyped(function), true, null, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> submit(Function<T, T> function, Duration timeout) {
-        nioEngine.append(new Stage(null, untyped(function), true, timeout, guards));
+        defaultNioEngine.append(new Stage(null, untyped(function), true, timeout, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> submit(Function<T, T> function, Resilience<T> resilience) {
-        nioEngine.append(new Stage(null, untyped(resilience.decorate(function)), true, null, guards));
+        defaultNioEngine.append(new Stage(null, untyped(resilience.decorate(function)), true, null, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
-        nioEngine.append(new Batch(untypedBatch(function), size, maxWait, guards));
+        defaultNioEngine.append(new Batch(untypedBatch(function), size, maxWait, guards));
         return this;
     }
 
     @Override
     public <N> NioFlow<N> adapt(Function<T, N> function) {
-        nioEngine.append(new Stage(null, untyped(function), false, null, guards));
-        return new DefaultNioFlow<>(nioEngine, guards);
+        defaultNioEngine.append(new Stage(null, untyped(function), false, null, guards));
+        return new DefaultNioFlow<>(defaultNioEngine, guards);
     }
 
     @Override
     public <N> NioFlow<N> fanOut(Function<T, List<N>> function) {
-        nioEngine.append(new FanOut(untypedFanOut(function), guards));
-        return new DefaultNioFlow<>(nioEngine, guards);
+        defaultNioEngine.append(new FanOut(untypedFanOut(function), guards));
+        return new DefaultNioFlow<>(defaultNioEngine, guards);
     }
 
     @Override
     public NioFlow<T> filter(Predicate<T> predicate) {
-        nioEngine.append(new Filter(untypedPredicate(predicate), guards));
+        defaultNioEngine.append(new Filter(untypedPredicate(predicate), guards));
         return this;
     }
 
@@ -216,69 +216,69 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
      * the shared first step of {@code when} and every {@code match} case.
      */
     int decision(Predicate<T> predicate) {
-        int decision = nioEngine.nextDecision();
-        nioEngine.append(new Decision(untypedPredicate(predicate), decision, guards));
+        int decision = defaultNioEngine.nextDecision();
+        defaultNioEngine.append(new Decision(untypedPredicate(predicate), decision, guards));
         return decision;
     }
 
     @Override
     public NioFlow<T> onError(Consumer<Throwable> handler) {
-        nioEngine.addErrorHandler(handler);
+        defaultNioEngine.addErrorHandler(handler);
         return this;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public NioFlow<T> onComplete(Consumer<T> handler) {
-        nioEngine.addCompleteHandler(value -> handler.accept((T) value));
+        defaultNioEngine.addCompleteHandler(value -> handler.accept((T) value));
         return this;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public NioFlow<T> onErrorResume(Function<Throwable, T> fallback) {
-        nioEngine.append(new Recovery((Function<Throwable, Object>) fallback, guards));
+        defaultNioEngine.append(new Recovery((Function<Throwable, Object>) fallback, guards));
         return this;
     }
 
     @Override
     public NioFlow<T> metrics(NioFlowMetrics metrics) {
-        nioEngine.metrics(metrics);
+        defaultNioEngine.metrics(metrics);
         return this;
     }
 
     @Override
     public NioFlow<T> trace(NioFlowTracer tracer) {
-        nioEngine.trace(tracer);
+        defaultNioEngine.trace(tracer);
         return this;
     }
 
     @Override
     public Diagnostics diagnostics() {
-        return nioEngine.diagnostics();
+        return defaultNioEngine.diagnostics();
     }
 
     @Override
     public String toString() {
-        return nioEngine.diagnostics().toString();
+        return defaultNioEngine.diagnostics().toString();
     }
 
     @Override
     public NioFlow<T> seal() {
-        nioEngine.seal();
+        defaultNioEngine.seal();
         return this;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public T join() {
-        return (T) nioEngine.await();
+        return (T) defaultNioEngine.await();
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public T join(Duration timeout) {
-        return (T) nioEngine.await(timeout);
+        return (T) defaultNioEngine.await(timeout);
     }
 
     /**
@@ -297,8 +297,9 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
      *
      * @param gracePeriod how long to let in-flight values finish before stopping
      */
+    @Override
     public void close(Duration gracePeriod) {
-        nioEngine.shutdown(gracePeriod);
+        defaultNioEngine.shutdown(gracePeriod);
     }
 
     /**
@@ -309,7 +310,7 @@ public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
     DefaultNioFlow<T> lane(int decision, boolean expected) {
         List<Guard> laneGuards = new ArrayList<>(guards);
         laneGuards.add(new Guard(decision, expected));
-        return new DefaultNioFlow<>(nioEngine, List.copyOf(laneGuards));
+        return new DefaultNioFlow<>(defaultNioEngine, List.copyOf(laneGuards));
     }
 
     // The engine is untyped on purpose (adapt re-types the view over the same

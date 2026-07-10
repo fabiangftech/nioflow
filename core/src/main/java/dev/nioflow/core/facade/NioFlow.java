@@ -31,7 +31,7 @@ import java.util.function.UnaryOperator;
  *            {@link #adapt(Function)} and {@link #fanOut(Function)} hand out a
  *            differently-typed view over the same running chain
  */
-public interface NioFlow<T> {
+public interface NioFlow<T> extends AutoCloseable {
 
     /**
      * Injects a value: it starts walking the declared chain immediately, concurrent
@@ -344,6 +344,24 @@ public interface NioFlow<T> {
      * @return the result of the newest injected value that finished the chain
      */
     T join(Duration timeout);
+
+    /**
+     * Graceful close: drains in-flight values for a default grace period, then
+     * stops the engine and releases its own resources — never an externally
+     * supplied executor. Idempotent; declared without checked exceptions so
+     * try-with-resources needs no catch. All views over the same running chain
+     * (forks, {@code adapt}, {@code fanOut}) close the same engine.
+     */
+    @Override
+    void close();
+
+    /**
+     * Like {@link #close()} with an explicit grace period: in-flight values get up
+     * to {@code gracePeriod} to finish before the engine stops its loops.
+     *
+     * @param gracePeriod how long to let in-flight values finish before stopping
+     */
+    void close(Duration gracePeriod);
 
     /**
      * Fork with visually nested lanes: each branch receives its own sub-chain, so the
