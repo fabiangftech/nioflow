@@ -1,0 +1,107 @@
+# API reference
+
+The authoritative reference is the Javadoc (`./gradlew javadoc` from `core/`). This page is the map.
+
+Entry point: `dev.nioflow.application.facade.NioFlow<T>` — implements the `dev.nioflow.core.facade.NioFlow<T>` contract and `AutoCloseable`.
+
+## Constructors
+
+| Constructor | Use when |
+|---|---|
+| `new NioFlow<>()` | Default: everything on virtual threads, unbounded admission. |
+| `new NioFlow<>(Backpressure bp)` | Virtual threads + admission control. |
+| `new NioFlow<>(ExecutorService ex)` | Your executor for `submit` stages; you keep its lifecycle. |
+| `new NioFlow<>(ExecutorService ex, int handleWorkers)` | Plus a fixed handle-worker pool bounding sync parallelism (CPU-heavy chains). |
+| `new NioFlow<>(ExecutorService ex, int handleWorkers, Backpressure bp)` | Fully tuned. |
+
+## Injecting values
+
+| Operator | Description |
+|---|---|
+| `just(input)` | Injects one value; it starts walking the chain immediately. |
+| `just(input, context)` | Same, with seed metadata for `FlowContext`. |
+| `justAll(inputs)` | Injects every value in iteration order, honoring backpressure per value. |
+
+## Stages
+
+| Operator | Runs on | Description |
+|---|---|---|
+| `handle(fn)` | handle worker | Sync transformation. Blocking is fine on the default virtual workers. |
+| `handle(name, fn)` | handle worker | Named: failures arrive wrapped in `StageException`. |
+| `handle(fn, resilience)` | handle worker | Decorated by a `Resilience` policy. |
+| `submit(fn)` | executor | Async: engine fires and moves on; result reaped later. |
+| `submit(name, fn)` | executor | Named async stage. |
+| `submit(fn, timeout)` | executor | Bounded: on expiry the worker is interrupted, the value fails with `TimeoutException`. |
+| `submit(fn, resilience)` | executor | Decorated async stage. |
+| `batch(size, maxWait, fn)` | executor | Groups values; one async call per group; one result per input, matched by index. |
+| `adapt(fn)` | handle worker | Changes the value type; returns a re-typed view of the same flow. |
+| `fanOut(fn)` | handle worker | Splits one value into many independent ones; empty list drops it. |
+| `via(segment)` | — | Splices a reusable sub-flow (`Function<NioFlow<T>, NioFlow<N>>`) at this point. |
+
+## Routing
+
+| Operator | Description |
+|---|---|
+| `filter(predicate)` | Deliberate drop: no handlers fire, `join()` stops counting it, backpressure slot freed. |
+| `when(predicate).then(lane)` | Two-way fork; lane runs only for matching values. |
+| `...otherwise(lane)` | Optional false lane. Stages after the fork are main line again. |
+| `match().is(predicate, lane)...` | Switch-style fork: first matching case wins, in declaration order. |
+| `...otherwise(lane)` | Default lane for unmatched values; without it they pass through unchanged. |
+
+## Errors
+
+| Operator | Description |
+|---|---|
+| `onErrorResume(fallback)` | Recovery link: turns an upstream failure into a replacement value; flow resumes from here. Only catches failures of links declared before it. |
+| `onError(handler)` | Observes terminal failures (after all recoveries). Recent failures are replayed to late registrations — bounded history. |
+
+## Observability
+
+| Operator | Description |
+|---|---|
+| `metrics(sink)` | Registers the `NioFlowMetrics` sink (lifecycle counters + per-stage latency). Second call replaces the first. |
+| `trace(tracer)` | Opt-in `NioFlowTracer`: every transition of every value. Zero cost unregistered. |
+| `diagnostics()` | Point-in-time snapshot: chain shape, queue depths, counters. `toString()` renders the dump. |
+| `onComplete(handler)` | Runs each time a value finishes the chain. Register on the final view, after any `adapt`. |
+
+## Lifecycle
+
+| Operator | Description |
+|---|---|
+| `seal()` | Freezes the chain (further links throw) and releases finished values. Seal every stream-style flow. |
+| `join()` | Waits for quiescence; returns the newest injected value's result; rethrows a recorded failure once. |
+| `join(timeout)` | Same, bounded by a timeout (`CompletionException` wrapping `TimeoutException`). |
+| `close()` | Graceful: drains up to 10 s, then stops the engine. Idempotent. Never shuts down your executor. |
+| `close(gracePeriod)` | Custom grace period. |
+
+## Backpressure
+
+`dev.nioflow.core.model.Backpressure` — admission control for `just`:
+
+| Factory | At capacity, `just`... |
+|---|---|
+| `Backpressure.unbounded()` | never limits (default). |
+| `Backpressure.blocking(n)` | blocks the producer until a slot frees. |
+| `Backpressure.dropping(n)` | silently discards the new value. |
+| `Backpressure.failing(n)` | throws `RejectedExecutionException`. |
+
+## Ports & adapters
+
+| Port | Adapter | Extra dependency |
+|---|---|---|
+| `Resilience<T>` | `Resilience4j.retry / circuitBreaker / rateLimiter / bulkhead` | `io.github.resilience4j:resilience4j-all` |
+| `NioFlowMetrics` | `OpenTelemetryMetrics.of(meter)` | `io.opentelemetry:opentelemetry-api` |
+| `NioFlowTracer` | `LoggingTracer.debug() / info() / to(logger, level)` | none (JDK `System.Logger`) |
+
+All ports are functional or default-method interfaces — implement them with a lambda when an adapter is overkill.
+
+## Context
+
+`dev.nioflow.core.model.FlowContext` — static access to the current value's metadata, bound around every execution of user code:
+
+| Method | Description |
+|---|---|
+| `FlowContext.get(key)` | The current value's metadata, or `null` when absent/unbound. |
+| `FlowContext.put(key, value)` | Adds metadata visible to every later stage of this value. Throws outside a bound execution. |
+
+Seed it with `just(input, context)`; fan-out children inherit a copy; batch functions run unbound.
