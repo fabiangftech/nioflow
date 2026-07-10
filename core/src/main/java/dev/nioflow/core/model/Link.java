@@ -10,5 +10,11 @@ import java.util.List;
  */
 public sealed interface Link permits Stage, Decision, Recovery, Filter, Batch, FanOut {
 
+    /**
+     * The lane markers deciding which values run this link — empty for a main-line
+     * link, one guard per enclosing fork for a link inside lanes.
+     *
+     * @return the guards a value must satisfy for this link to run
+     */
     List<Guard> guards();
 }

@@ -12,8 +12,8 @@ class NioFlowAdaptTest {
 
     @Test
     void adaptChangesThePipelineType() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            String result = pipeline.just(21)
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            String result = nioFlow.just(21)
                     .submit(x -> x * 2)
                     .adapt(x -> "value=" + x)
                     .handle(String::toUpperCase)
@@ -25,8 +25,8 @@ class NioFlowAdaptTest {
 
     @Test
     void adaptRoundTripsAcrossAsyncStages() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            int result = pipeline.just(21)
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            int result = nioFlow.just(21)
                     .adapt(String::valueOf)
                     .submit(s -> s + "0")
                     .adapt(Integer::parseInt)
@@ -38,13 +38,13 @@ class NioFlowAdaptTest {
 
     @Test
     void onCompleteAfterAdaptReceivesTheAdaptedType() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<String> completed = new CopyOnWriteArrayList<>();
-            pipeline.adapt(x -> "v" + x)
+            nioFlow.adapt(x -> "v" + x)
                     .onComplete(completed::add);
 
-            pipeline.just(42);
-            pipeline.join();
+            nioFlow.just(42);
+            nioFlow.join();
 
             assertEquals(List.of("v42"), completed);
         }

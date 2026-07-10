@@ -49,6 +49,15 @@ public final class OpenTelemetryMetrics implements NioFlowMetrics {
                 .setDescription("Stage execution time").setUnit("ms").build();
     }
 
+    /**
+     * Builds the adapter, registering its instruments on the given meter. Create it
+     * once per nio-flow and register with {@code NioFlow.metrics(...)} before
+     * injecting values.
+     *
+     * @param meter the OpenTelemetry meter the instruments are created on, typically
+     *              scoped to your application
+     * @return a metrics sink reporting to that meter
+     */
     public static OpenTelemetryMetrics of(Meter meter) {
         return new OpenTelemetryMetrics(meter);
     }

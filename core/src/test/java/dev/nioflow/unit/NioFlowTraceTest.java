@@ -13,9 +13,9 @@ class NioFlowTraceTest {
 
     @Test
     void everyTransitionOfAValueIsTracedInOrder() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingTracer tracer = new RecordingTracer();
-            pipeline.trace(tracer)
+            nioFlow.trace(tracer)
                     .handle("double", x -> x * 2)
                     .when(x -> x > 5)
                     .then(lane -> lane
@@ -23,8 +23,8 @@ class NioFlowTraceTest {
                     .otherwise(lane -> lane
                             .handle(x -> x));
 
-            pipeline.just(4);
-            pipeline.join();
+            nioFlow.just(4);
+            nioFlow.join();
 
             assertEquals(List.of(
                     "0:injected:4",
@@ -37,14 +37,14 @@ class NioFlowTraceTest {
 
     @Test
     void dropsAndFanOutsAreTraced() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingTracer tracer = new RecordingTracer();
-            pipeline.trace(tracer)
+            nioFlow.trace(tracer)
                     .fanOut(x -> List.of(x, x + 1))
                     .filter(x -> x % 2 == 0);
 
-            pipeline.just(2); // splits into 2 and 3; 3 gets filtered
-            pipeline.join();
+            nioFlow.just(2); // splits into 2 and 3; 3 gets filtered
+            nioFlow.join();
 
             assertTrue(tracer.events.contains("0:fannedOut:2"));
             assertTrue(tracer.events.contains("0:dropped:3"));
@@ -54,16 +54,16 @@ class NioFlowTraceTest {
 
     @Test
     void recoveriesAreTracedInsteadOfFailures() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingTracer tracer = new RecordingTracer();
-            pipeline.trace(tracer)
+            nioFlow.trace(tracer)
                     .submit("flaky", x -> {
                         throw new IllegalStateException("boom");
                     })
                     .onErrorResume(error -> -1);
 
-            pipeline.just(1);
-            pipeline.join();
+            nioFlow.just(1);
+            nioFlow.join();
 
             assertTrue(tracer.events.contains("0:stage:flaky:1->error"));
             assertTrue(tracer.events.contains("0:recovered:-1"));
@@ -74,15 +74,15 @@ class NioFlowTraceTest {
 
     @Test
     void terminalFailuresAreTraced() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingTracer tracer = new RecordingTracer();
-            pipeline.trace(tracer)
+            nioFlow.trace(tracer)
                     .handle(x -> {
                         throw new IllegalStateException("sync boom");
                     });
 
-            pipeline.just(1);
-            assertThrows(CompletionException.class, pipeline::join);
+            nioFlow.just(1);
+            assertThrows(CompletionException.class, nioFlow::join);
 
             assertTrue(tracer.events.contains("0:failed:sync boom"));
             assertTrue(tracer.events.stream().noneMatch(event -> event.contains(":completed:")));
@@ -91,14 +91,14 @@ class NioFlowTraceTest {
 
     @Test
     void eachValueTracesUnderItsOwnSequence() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingTracer tracer = new RecordingTracer();
-            pipeline.trace(tracer)
+            nioFlow.trace(tracer)
                     .handle(x -> x * 10);
 
-            pipeline.just(1);
-            pipeline.just(2);
-            pipeline.join();
+            nioFlow.just(1);
+            nioFlow.just(2);
+            nioFlow.join();
 
             assertTrue(tracer.events.contains("0:completed:10"));
             assertTrue(tracer.events.contains("1:completed:20"));

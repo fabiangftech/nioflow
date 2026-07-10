@@ -21,17 +21,33 @@ public final class LoggingTracer implements NioFlowTracer {
         this.level = level;
     }
 
-    /** Logs at DEBUG on the {@code dev.nioflow.trace} logger. */
+    /**
+     * Logs at DEBUG on the {@code dev.nioflow.trace} logger — the usual choice:
+     * silent in production until that logger is turned up.
+     *
+     * @return a tracer logging every transition at DEBUG
+     */
     public static LoggingTracer debug() {
         return new LoggingTracer(System.getLogger("dev.nioflow.trace"), Level.DEBUG);
     }
 
-    /** Logs at INFO on the {@code dev.nioflow.trace} logger. */
+    /**
+     * Logs at INFO on the {@code dev.nioflow.trace} logger — for short-lived
+     * diagnostics where DEBUG output would be filtered away.
+     *
+     * @return a tracer logging every transition at INFO
+     */
     public static LoggingTracer info() {
         return new LoggingTracer(System.getLogger("dev.nioflow.trace"), Level.INFO);
     }
 
-    /** Full control over destination and level. */
+    /**
+     * Full control over destination and level.
+     *
+     * @param logger the logger every transition is written to
+     * @param level  the level every transition is logged at
+     * @return a tracer logging to that logger at that level
+     */
     public static LoggingTracer to(Logger logger, Level level) {
         return new LoggingTracer(logger, level);
     }

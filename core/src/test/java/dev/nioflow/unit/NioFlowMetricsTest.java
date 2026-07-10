@@ -13,9 +13,9 @@ class NioFlowMetricsTest {
 
     @Test
     void lifecycleCountersTrackEveryOutcome() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            pipeline.metrics(metrics)
+            nioFlow.metrics(metrics)
                     .filter(x -> x != 2)
                     .submit(x -> {
                         if (x == 3) {
@@ -24,8 +24,8 @@ class NioFlowMetricsTest {
                         return x * 10;
                     });
 
-            pipeline.justAll(List.of(1, 2, 3));
-            assertThrows(CompletionException.class, pipeline::join);
+            nioFlow.justAll(List.of(1, 2, 3));
+            assertThrows(CompletionException.class, nioFlow::join);
 
             assertEquals(3, metrics.injected.get());
             assertEquals(1, metrics.completed.get()); // value 1
@@ -36,16 +36,16 @@ class NioFlowMetricsTest {
 
     @Test
     void recoveredValuesCountAsCompletedNotFailed() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            pipeline.metrics(metrics)
+            nioFlow.metrics(metrics)
                     .submit(x -> {
                         throw new IllegalStateException("boom");
                     })
                     .onErrorResume(error -> -1);
 
-            pipeline.just(1);
-            pipeline.join();
+            nioFlow.just(1);
+            nioFlow.join();
 
             assertEquals(1, metrics.completed.get());
             assertEquals(0, metrics.failed.get());
@@ -54,15 +54,15 @@ class NioFlowMetricsTest {
 
     @Test
     void perStageLatencyCarriesNameKindAndOutcome() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            pipeline.metrics(metrics)
+            nioFlow.metrics(metrics)
                     .handle("validate", x -> x + 1)
                     .submit("save", x -> x * 10)
                     .handle(x -> x); // unnamed
 
-            pipeline.just(1);
-            pipeline.join();
+            nioFlow.just(1);
+            nioFlow.join();
 
             assertEquals(3, metrics.stages.size());
             assertTrue(metrics.stages.contains("validate:handle:success:timed"));
@@ -73,15 +73,15 @@ class NioFlowMetricsTest {
 
     @Test
     void failingStagesReportTheErrorOutcome() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            pipeline.metrics(metrics)
+            nioFlow.metrics(metrics)
                     .submit("flaky", x -> {
                         throw new IllegalStateException("boom");
                     });
 
-            pipeline.just(1);
-            assertThrows(CompletionException.class, pipeline::join);
+            nioFlow.just(1);
+            assertThrows(CompletionException.class, nioFlow::join);
 
             assertEquals(List.of("flaky:submit:error:timed"), metrics.stages);
         }
@@ -89,13 +89,13 @@ class NioFlowMetricsTest {
 
     @Test
     void fanOutReportsTheNumberOfChildren() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             RecordingMetrics metrics = new RecordingMetrics();
-            pipeline.metrics(metrics)
+            nioFlow.metrics(metrics)
                     .fanOut(x -> List.of(x, x + 1, x + 2));
 
-            pipeline.just(1);
-            pipeline.join();
+            nioFlow.just(1);
+            nioFlow.join();
 
             assertEquals(List.of(3), metrics.fanOuts);
             assertEquals(1, metrics.injected.get());

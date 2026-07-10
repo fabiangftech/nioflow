@@ -8,6 +8,9 @@ import java.util.function.Predicate;
  * fire neither completion nor error handlers and stop counting as in flight, which
  * also frees their backpressure slot. A throwing predicate is a normal stage
  * failure instead.
+ *
+ * @param predicate decides which values keep flowing
+ * @param guards    the lane markers deciding which values reach this link
  */
 public record Filter(Predicate<Object> predicate, List<Guard> guards) implements Link {
 }

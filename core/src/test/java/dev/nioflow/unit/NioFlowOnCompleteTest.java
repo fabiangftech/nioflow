@@ -13,15 +13,15 @@ class NioFlowOnCompleteTest {
 
     @Test
     void everyFinishedValueIsDelivered() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            pipeline.submit(x -> x * 10)
+            nioFlow.submit(x -> x * 10)
                     .onComplete(completed::add);
 
-            pipeline.just(1);
-            pipeline.just(2);
-            pipeline.just(3);
-            pipeline.join();
+            nioFlow.just(1);
+            nioFlow.just(2);
+            nioFlow.just(3);
+            nioFlow.join();
 
             assertEquals(3, completed.size());
             assertTrue(completed.containsAll(List.of(10, 20, 30)));
@@ -30,9 +30,9 @@ class NioFlowOnCompleteTest {
 
     @Test
     void failedValuesAreNotDelivered() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            pipeline.submit(x -> {
+            nioFlow.submit(x -> {
                         if (x == 2) {
                             throw new IllegalStateException("value 2 boom");
                         }
@@ -40,11 +40,11 @@ class NioFlowOnCompleteTest {
                     })
                     .onComplete(completed::add);
 
-            pipeline.just(1);
-            pipeline.just(2);
-            pipeline.just(3);
+            nioFlow.just(1);
+            nioFlow.just(2);
+            nioFlow.just(3);
 
-            assertThrows(CompletionException.class, pipeline::join);
+            assertThrows(CompletionException.class, nioFlow::join);
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of(10, 30)));
         }
@@ -52,19 +52,19 @@ class NioFlowOnCompleteTest {
 
     @Test
     void everyHandlerReceivesTheValueEvenIfOneThrows() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> first = new CopyOnWriteArrayList<>();
             List<Integer> second = new CopyOnWriteArrayList<>();
-            pipeline.handle(x -> x + 1)
+            nioFlow.handle(x -> x + 1)
                     .onComplete(x -> {
                         first.add(x);
                         throw new RuntimeException("misbehaving handler");
                     })
                     .onComplete(second::add);
 
-            pipeline.just(1);
-            pipeline.just(2);
-            pipeline.join();
+            nioFlow.just(1);
+            nioFlow.just(2);
+            nioFlow.join();
 
             assertEquals(2, first.size());
             assertTrue(first.containsAll(List.of(2, 3)));
@@ -75,16 +75,16 @@ class NioFlowOnCompleteTest {
 
     @Test
     void joinNeverReturnsBeforeCompleteHandlersFinished() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            pipeline.submit(x -> x)
+            nioFlow.submit(x -> x)
                     .onComplete(x -> {
                         sleep(100); // a slow handler must still finish before join returns
                         completed.add(x);
                     });
 
-            pipeline.just(7);
-            pipeline.join();
+            nioFlow.just(7);
+            nioFlow.join();
 
             assertEquals(List.of(7), completed);
         }

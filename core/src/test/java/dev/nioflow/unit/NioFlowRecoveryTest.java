@@ -14,10 +14,10 @@ class NioFlowRecoveryTest {
 
     @Test
     void aFailingValueRecoversWithTheFallbackInsteadOfDropping() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
             List<Throwable> errors = new CopyOnWriteArrayList<>();
-            pipeline.submit(x -> {
+            nioFlow.submit(x -> {
                         if (x == 2) {
                             throw new IllegalStateException("value 2 boom");
                         }
@@ -27,10 +27,10 @@ class NioFlowRecoveryTest {
                     .onComplete(completed::add)
                     .onError(errors::add);
 
-            pipeline.just(1);
-            pipeline.just(2);
-            pipeline.just(3);
-            pipeline.join(); // no throw: the failure was recovered
+            nioFlow.just(1);
+            nioFlow.just(2);
+            nioFlow.just(3);
+            nioFlow.join(); // no throw: the failure was recovered
 
             assertEquals(3, completed.size());
             assertTrue(completed.containsAll(List.of(10, -1, 30)));
@@ -40,9 +40,9 @@ class NioFlowRecoveryTest {
 
     @Test
     void aRecoveredValueContinuesDownTheChain() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             // the recovery must be declared before the value fails, so build first
-            pipeline.handle(x -> {
+            nioFlow.handle(x -> {
                         if (true) {
                             throw new IllegalStateException("boom");
                         }
@@ -51,31 +51,31 @@ class NioFlowRecoveryTest {
                     .onErrorResume(error -> 0)
                     .handle(x -> x + 5);
 
-            pipeline.just(1);
-            assertEquals(5, pipeline.join());
+            nioFlow.just(1);
+            assertEquals(5, nioFlow.join());
         }
     }
 
     @Test
     void recoveryOnlyCatchesUpstreamFailures() throws InterruptedException {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             CountDownLatch failed = new CountDownLatch(1);
-            pipeline.onErrorResume(error -> -1) // upstream of the failure: must not catch it
+            nioFlow.onErrorResume(error -> -1) // upstream of the failure: must not catch it
                     .handle(x -> {
                         throw new IllegalStateException("late boom");
                     })
                     .onError(error -> failed.countDown());
-            pipeline.just(1);
+            nioFlow.just(1);
 
             assertTrue(failed.await(1, TimeUnit.SECONDS));
-            assertThrows(CompletionException.class, pipeline::join);
+            assertThrows(CompletionException.class, nioFlow::join);
         }
     }
 
     @Test
     void aThrowingFallbackHandsTheErrorToTheNextRecovery() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            pipeline.handle(x -> {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            nioFlow.handle(x -> {
                         if (true) {
                             throw new IllegalStateException("boom");
                         }
@@ -86,16 +86,16 @@ class NioFlowRecoveryTest {
                     })
                     .onErrorResume(error -> -2);
 
-            pipeline.just(1);
-            assertEquals(-2, pipeline.join());
+            nioFlow.just(1);
+            assertEquals(-2, nioFlow.join());
         }
     }
 
     @Test
     void recoveryInsideALaneOnlyCatchesItsOwnLane() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            pipeline.when(x -> x > 10)
+            nioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .submit(x -> {
                                 throw new IllegalStateException("lane boom");
@@ -105,9 +105,9 @@ class NioFlowRecoveryTest {
                             .handle(x -> x))
                     .onComplete(completed::add);
 
-            pipeline.just(20); // fails in the true lane, recovers to -1
-            pipeline.just(5);  // false lane, untouched by the recovery
-            pipeline.join();
+            nioFlow.just(20); // fails in the true lane, recovers to -1
+            nioFlow.just(5);  // false lane, untouched by the recovery
+            nioFlow.join();
 
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of(-1, 5)));
@@ -116,8 +116,8 @@ class NioFlowRecoveryTest {
 
     @Test
     void aTimedOutValueCanRecover() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            int result = pipeline.just(1)
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            int result = nioFlow.just(1)
                     .submit(x -> {
                         sleep(5_000);
                         return x;
@@ -131,10 +131,10 @@ class NioFlowRecoveryTest {
 
     @Test
     void theFallbackReceivesTheExactThrownException() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             IllegalStateException boom = new IllegalStateException("original");
             AtomicReference<Throwable> seen = new AtomicReference<>();
-            pipeline.handle(x -> {
+            nioFlow.handle(x -> {
                         if (true) {
                             throw boom;
                         }
@@ -145,18 +145,18 @@ class NioFlowRecoveryTest {
                         return -1;
                     });
 
-            pipeline.just(1);
+            nioFlow.just(1);
 
-            assertEquals(-1, pipeline.join());
+            assertEquals(-1, nioFlow.join());
             assertSame(boom, seen.get());
         }
     }
 
     @Test
     void aMainLineRecoveryCatchesLaneFailures() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
-            pipeline.when(x -> x > 10)
+            nioFlow.when(x -> x > 10)
                     .then(lane -> lane
                             .submit(x -> {
                                 throw new IllegalStateException("lane boom");
@@ -166,9 +166,9 @@ class NioFlowRecoveryTest {
                     .onErrorResume(error -> -1)
                     .onComplete(completed::add);
 
-            pipeline.just(20); // fails in the true lane, recovered on the main line
-            pipeline.just(5);  // false lane, flows through untouched
-            pipeline.join();
+            nioFlow.just(20); // fails in the true lane, recovered on the main line
+            nioFlow.just(5);  // false lane, flows through untouched
+            nioFlow.join();
 
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of(-1, 5)));

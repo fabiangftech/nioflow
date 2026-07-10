@@ -14,9 +14,9 @@ class NioFlowOrderingTest {
 
     @Test
     void runsStagesInDeclarationOrder() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<String> order = new CopyOnWriteArrayList<>();
-            int result = pipeline.just(1)
+            int result = nioFlow.just(1)
                     .handle(x -> {
                         order.add("handle-1");
                         return x + 1;
@@ -47,10 +47,10 @@ class NioFlowOrderingTest {
 
     @Test
     void submitDoesNotBlockTheCallerThread() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             AtomicReference<String> submitThread = new AtomicReference<>();
             long start = System.nanoTime();
-            pipeline.just(1).submit(x -> {
+            nioFlow.just(1).submit(x -> {
                 submitThread.set(Thread.currentThread().getName());
                 sleep(200);
                 return x;
@@ -58,7 +58,7 @@ class NioFlowOrderingTest {
             long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
 
             assertTrue(elapsedMillis < 150, "submit blocked the caller for " + elapsedMillis + "ms");
-            pipeline.join();
+            nioFlow.join();
             assertNotEquals(Thread.currentThread().getName(), submitThread.get());
         }
     }

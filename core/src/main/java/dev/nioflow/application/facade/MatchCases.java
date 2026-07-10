@@ -14,21 +14,39 @@ import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
- * A multi-way fork under construction. Every {@code is} appends a decision guarded
- * by "all previous cases were false", so cases short-circuit in declaration order
- * like a switch; {@code remaining} always views the values no case has taken yet.
- * Any other call falls through to the fork's parent view — the main line.
+ * A {@code match} fork under construction. Every {@link #is} appends a decision
+ * guarded by "all previous cases were false", so cases short-circuit in declaration
+ * order like a switch; {@code remaining} always views the values no case has taken
+ * yet. Any other call falls through to the fork's parent view — the main line —
+ * which is what lets unmatched values pass through unchanged when no
+ * {@code otherwise} is declared.
+ *
+ * <p>All delegating overrides inherit their contract from
+ * {@link dev.nioflow.core.facade.NioFlow}; only the fork mechanics live here.
+ *
+ * @param <T> the type of the values flowing through the fork
  */
 final class MatchCases<T> implements dev.nioflow.core.facade.NioFlow.Cases<T> {
 
     private final NioFlow<T> mainLine;
     private NioFlow<T> remaining;
 
+    /**
+     * @param mainLine the view the fork was declared on, resumed after the lanes;
+     *                 also the initial {@code remaining} — before any case, every
+     *                 value is still unmatched
+     */
     MatchCases(NioFlow<T> mainLine) {
         this.mainLine = mainLine;
         this.remaining = mainLine;
     }
 
+    /**
+     * Declares the next case: its decision link is appended on the {@code remaining}
+     * view, so only values no earlier case took even evaluate the predicate. The
+     * lane builds on the decision's true side; {@code remaining} narrows to its
+     * false side, ready for the next case.
+     */
     @Override
     public dev.nioflow.core.facade.NioFlow.Cases<T> is(Predicate<T> predicate, UnaryOperator<dev.nioflow.core.facade.NioFlow<T>> lane) {
         int decision = remaining.decision(predicate);
@@ -37,6 +55,11 @@ final class MatchCases<T> implements dev.nioflow.core.facade.NioFlow.Cases<T> {
         return this;
     }
 
+    /**
+     * Builds the default lane directly on the {@code remaining} view — the values
+     * no case matched — and returns the main line, whose stages run for every
+     * value again.
+     */
     @Override
     public dev.nioflow.core.facade.NioFlow<T> otherwise(UnaryOperator<dev.nioflow.core.facade.NioFlow<T>> lane) {
         lane.apply(remaining);

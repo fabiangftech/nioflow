@@ -15,15 +15,15 @@ class NioFlowEdgeCaseTest {
 
     @Test
     void aPipelineWithNoStagesReturnsTheInputFromJoin() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            assertEquals(42, pipeline.just(42).join());
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            assertEquals(42, nioFlow.just(42).join());
         }
     }
 
     @Test
     void nullInputsFlowThroughAsyncStages() {
-        try (NioFlow<String> pipeline = new NioFlow<>()) {
-            String result = pipeline.just(null)
+        try (NioFlow<String> nioFlow = new NioFlow<>()) {
+            String result = nioFlow.just(null)
                     .submit(x -> x == null ? "was-null" : x)
                     .join();
 
@@ -33,8 +33,8 @@ class NioFlowEdgeCaseTest {
 
     @Test
     void aStageReturningNullPropagatesTheNull() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            int result = pipeline.just(1)
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            int result = nioFlow.just(1)
                     .handle(x -> null)
                     .submit(x -> x == null ? -1 : x)
                     .join();
@@ -45,18 +45,18 @@ class NioFlowEdgeCaseTest {
 
     @Test
     void errorsLikeAssertionErrorAreCapturedToo() throws InterruptedException {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             AssertionError boom = new AssertionError("fatal");
             AtomicReference<Throwable> captured = new AtomicReference<>();
             CountDownLatch notified = new CountDownLatch(1);
-            pipeline.onError(error -> {
+            nioFlow.onError(error -> {
                 captured.set(error);
                 notified.countDown();
             });
-            pipeline.submit(x -> {
+            nioFlow.submit(x -> {
                 throw boom;
             });
-            pipeline.just(1);
+            nioFlow.just(1);
 
             assertTrue(notified.await(1, TimeUnit.SECONDS));
             assertSame(boom, captured.get());
@@ -65,17 +65,17 @@ class NioFlowEdgeCaseTest {
 
     @Test
     void aPipelineKeepsWorkingAfterJoin() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> results = new CopyOnWriteArrayList<>();
-            assertEquals(2, pipeline.just(1).handle(x -> x + 1).join());
+            assertEquals(2, nioFlow.just(1).handle(x -> x + 1).join());
 
-            pipeline.handle(x -> x * 10);
-            pipeline.handle(x -> {
+            nioFlow.handle(x -> x * 10);
+            nioFlow.handle(x -> {
                 results.add(x);
                 return x;
             });
-            pipeline.just(5);
-            pipeline.join();
+            nioFlow.just(5);
+            nioFlow.join();
 
             // the value parked by the first join resumes through the stages added later
             assertEquals(2, results.size());

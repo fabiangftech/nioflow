@@ -14,20 +14,37 @@ import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
- * A fork whose true lane is already built. {@code otherwise} builds the false lane;
- * every other call falls through to the fork's parent view — the main line — whose
- * stages run for both lanes.
+ * A {@code when} fork whose true lane is already built. {@link #otherwise} builds
+ * the false lane; every other call falls through to the fork's parent view — the
+ * main line — whose stages run for both lanes. That fall-through is what makes
+ * {@code otherwise} optional: chaining any stage directly on the branch simply
+ * resumes the main line, and false values skip the true lane unchanged.
+ *
+ * <p>All delegating overrides inherit their contract from
+ * {@link dev.nioflow.core.facade.NioFlow}; only the fork mechanics live here.
+ *
+ * @param <T> the type of the values flowing through the fork
  */
 final class ForkBranch<T> implements dev.nioflow.core.facade.NioFlow.Branch<T> {
 
     private final NioFlow<T> mainLine;
     private final int decision;
 
+    /**
+     * @param mainLine the view the fork was declared on, resumed after the lanes
+     * @param decision the fork's decision id, guarding the links of both lanes
+     */
     ForkBranch(NioFlow<T> mainLine, int decision) {
         this.mainLine = mainLine;
         this.decision = decision;
     }
 
+    /**
+     * Builds the false lane: the builder receives a view whose links are guarded by
+     * this fork's decision being false, so they only run for values the predicate
+     * rejected. Returns the main line — stages declared after this run for every
+     * value again.
+     */
     @Override
     public dev.nioflow.core.facade.NioFlow<T> otherwise(UnaryOperator<dev.nioflow.core.facade.NioFlow<T>> lane) {
         lane.apply(mainLine.lane(decision, false));

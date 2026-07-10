@@ -70,7 +70,11 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
     private volatile NioFlowTracer tracer;
 
     /**
-     * @param ownsExecutor  when true the executor is shut down on {@link #shutdown()};
+     * Builds the engine and starts its boss and completer loops immediately.
+     *
+     * @param executor      runs async (submit) stages and batch calls; any shape
+     *                      works — the engine's loops never borrow its threads
+     * @param ownsExecutor  when true the executor is shut down on {@link #shutdown};
      *                      externally supplied executors stay under the caller's control
      * @param handleWorkers size of the engine-owned fixed pool that walks sync stages,
      *                      or {@code <= 0} for one virtual thread per dispatch — the
@@ -87,6 +91,7 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
         this.completer = startLoop("nio-flow-completer", this::completionLoop);
     }
 
+    /** Starts an engine loop on its own named daemon thread. */
     private static Thread startLoop(String name, Runnable loop) {
         Thread thread = new Thread(loop, name);
         thread.setDaemon(true);
@@ -94,6 +99,7 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
         return thread;
     }
 
+    /** The handle workers: a fixed daemon pool, or virtual-per-dispatch for {@code <= 0}. */
     private static ExecutorService workerPool(int workers) {
         if (workers <= 0) {
             return Executors.newThreadPerTaskExecutor(
@@ -632,6 +638,7 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
         }
     }
 
+    /** Strips the {@code CompletionException} shell futures add around stage errors. */
     private static Throwable unwrap(Throwable error) {
         return error instanceof CompletionException && error.getCause() != null
                 ? error.getCause()
@@ -646,6 +653,10 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
         return error;
     }
 
+    /**
+     * Completer loop: reaps async results, resuming successful values on the
+     * submission queue and routing failed ones to recovery.
+     */
     private void completionLoop() {
         while (running) {
             Completion completion = poll(completionQueue);
@@ -704,6 +715,11 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
         }
     }
 
+    /**
+     * Terminal failure of one value: recorded for the next {@code await}, added to
+     * the bounded replay history and delivered to every error handler — without
+     * ever taking down the engine loops.
+     */
     private void fail(FlowValue flow, Throwable error) {
         NioFlowMetrics sink = metrics;
         if (sink != null) {
@@ -731,6 +747,7 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
         snapshot.forEach(handler -> deliver(handler, error));
     }
 
+    /** Runs a user handler, swallowing anything it throws. */
     private static <V> void deliver(Consumer<V> handler, V payload) {
         try {
             handler.accept(payload);
@@ -739,6 +756,11 @@ public final class NioEngine implements dev.nioflow.core.facade.NioEngine {
         }
     }
 
+    /**
+     * Bounded poll shared by both loops: returns null on timeout or interrupt, so
+     * the loop re-checks {@code running} (and batch deadlines) at least every
+     * {@code POLL_MILLIS}.
+     */
     private <E> E poll(BlockingQueue<E> queue) {
         try {
             return queue.poll(POLL_MILLIS, TimeUnit.MILLISECONDS);

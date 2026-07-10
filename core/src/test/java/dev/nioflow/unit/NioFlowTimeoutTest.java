@@ -13,11 +13,11 @@ class NioFlowTimeoutTest {
 
     @Test
     void aSlowSubmitTimesOutAndFailsOnlyThatValue() throws InterruptedException {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Integer> completed = new CopyOnWriteArrayList<>();
             List<Throwable> errors = new CopyOnWriteArrayList<>();
             CountDownLatch failed = new CountDownLatch(1);
-            pipeline.submit(x -> {
+            nioFlow.submit(x -> {
                         if (x == 1) {
                             sleep(5_000);
                         }
@@ -29,21 +29,21 @@ class NioFlowTimeoutTest {
                         failed.countDown();
                     });
 
-            pipeline.just(1);
-            pipeline.just(2);
+            nioFlow.just(1);
+            nioFlow.just(2);
 
             assertTrue(failed.await(2, TimeUnit.SECONDS));
             assertInstanceOf(TimeoutException.class, errors.getFirst());
 
-            assertThrows(CompletionException.class, pipeline::join);
+            assertThrows(CompletionException.class, nioFlow::join);
             assertEquals(List.of(20), completed);
         }
     }
 
     @Test
     void aSubmitWithinItsTimeoutSucceeds() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            int result = pipeline.just(2)
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            int result = nioFlow.just(2)
                     .submit(x -> x * 10, Duration.ofSeconds(5))
                     .join();
 
@@ -53,9 +53,9 @@ class NioFlowTimeoutTest {
 
     @Test
     void joinWithTimeoutThrowsWhileValuesAreStillRunning() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             CountDownLatch release = new CountDownLatch(1);
-            pipeline.submit(x -> {
+            nioFlow.submit(x -> {
                 try {
                     release.await(5, TimeUnit.SECONDS);
                 } catch (InterruptedException e) {
@@ -63,22 +63,22 @@ class NioFlowTimeoutTest {
                 }
                 return x;
             });
-            pipeline.just(7);
+            nioFlow.just(7);
 
             CompletionException thrown = assertThrows(CompletionException.class,
-                    () -> pipeline.join(Duration.ofMillis(200)));
+                    () -> nioFlow.join(Duration.ofMillis(200)));
             assertInstanceOf(TimeoutException.class, thrown.getCause());
 
             // the value kept running: releasing it lets a later join finish normally
             release.countDown();
-            assertEquals(7, pipeline.join());
+            assertEquals(7, nioFlow.join());
         }
     }
 
     @Test
     void joinWithTimeoutReturnsNormallyWhenWorkFinishesInTime() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            int result = pipeline.just(3)
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            int result = nioFlow.just(3)
                     .submit(x -> x + 39)
                     .join(Duration.ofSeconds(5));
 

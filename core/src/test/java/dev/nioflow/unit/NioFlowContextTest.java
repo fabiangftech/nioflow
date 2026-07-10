@@ -14,8 +14,8 @@ class NioFlowContextTest {
 
     @Test
     void seededContextIsVisibleInSyncStages() {
-        try (NioFlow<String> pipeline = new NioFlow<>()) {
-            String result = pipeline.just("payload", Map.of("traceId", "abc-123"))
+        try (NioFlow<String> nioFlow = new NioFlow<>()) {
+            String result = nioFlow.just("payload", Map.of("traceId", "abc-123"))
                     .handle(x -> x + "/" + FlowContext.get("traceId"))
                     .join();
 
@@ -25,8 +25,8 @@ class NioFlowContextTest {
 
     @Test
     void contextCrossesAsyncBoundaries() {
-        try (NioFlow<String> pipeline = new NioFlow<>()) {
-            String result = pipeline.just("payload", Map.of("tenant", "acme"))
+        try (NioFlow<String> nioFlow = new NioFlow<>()) {
+            String result = nioFlow.just("payload", Map.of("tenant", "acme"))
                     .submit(x -> x + "/" + FlowContext.get("tenant")) // runs on a virtual thread
                     .join();
 
@@ -36,8 +36,8 @@ class NioFlowContextTest {
 
     @Test
     void stagesCanWriteContextForLaterStages() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            int result = pipeline.just(5)
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            int result = nioFlow.just(5)
                     .handle(x -> {
                         FlowContext.put("original", x);
                         return x * 100;
@@ -51,14 +51,14 @@ class NioFlowContextTest {
 
     @Test
     void eachValueCarriesItsOwnContext() {
-        try (NioFlow<String> pipeline = new NioFlow<>()) {
+        try (NioFlow<String> nioFlow = new NioFlow<>()) {
             List<String> completed = new CopyOnWriteArrayList<>();
-            pipeline.submit(x -> x + "/" + FlowContext.get("traceId"))
+            nioFlow.submit(x -> x + "/" + FlowContext.get("traceId"))
                     .onComplete(completed::add);
 
-            pipeline.just("a", Map.of("traceId", "t-1"));
-            pipeline.just("b", Map.of("traceId", "t-2"));
-            pipeline.join();
+            nioFlow.just("a", Map.of("traceId", "t-1"));
+            nioFlow.just("b", Map.of("traceId", "t-2"));
+            nioFlow.join();
 
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of("a/t-1", "b/t-2")));
@@ -67,14 +67,14 @@ class NioFlowContextTest {
 
     @Test
     void fanOutChildrenInheritTheParentsContext() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<String> completed = new CopyOnWriteArrayList<>();
-            pipeline.fanOut(x -> List.of(x, x + 1))
+            nioFlow.fanOut(x -> List.of(x, x + 1))
                     .adapt(x -> x + "/" + FlowContext.get("traceId"))
                     .onComplete(completed::add);
 
-            pipeline.just(1, Map.of("traceId", "parent"));
-            pipeline.join();
+            nioFlow.just(1, Map.of("traceId", "parent"));
+            nioFlow.join();
 
             assertEquals(2, completed.size());
             assertTrue(completed.containsAll(List.of("1/parent", "2/parent")));
@@ -83,27 +83,27 @@ class NioFlowContextTest {
 
     @Test
     void aRecoveryRunsWithTheValuesContext() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            pipeline.submit(x -> {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            nioFlow.submit(x -> {
                         throw new IllegalStateException("boom");
                     })
                     .onErrorResume(error -> (Integer) FlowContext.get("fallback"));
 
-            pipeline.just(1, Map.of("fallback", 42));
+            nioFlow.just(1, Map.of("fallback", 42));
 
-            assertEquals(42, pipeline.join());
+            assertEquals(42, nioFlow.join());
         }
     }
 
     @Test
     void onCompleteSeesTheValuesContext() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             List<Object> traces = new CopyOnWriteArrayList<>();
-            pipeline.handle(x -> x * 2)
+            nioFlow.handle(x -> x * 2)
                     .onComplete(value -> traces.add(FlowContext.get("traceId")));
 
-            pipeline.just(1, Map.of("traceId", "t-9"));
-            pipeline.join();
+            nioFlow.just(1, Map.of("traceId", "t-9"));
+            nioFlow.join();
 
             assertEquals(List.of("t-9"), traces);
         }

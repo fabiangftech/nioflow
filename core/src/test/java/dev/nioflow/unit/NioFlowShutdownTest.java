@@ -15,9 +15,9 @@ class NioFlowShutdownTest {
 
     @Test
     void closeDrainsInFlightValues() {
-        NioFlow<Integer> pipeline = new NioFlow<>();
+        NioFlow<Integer> nioFlow = new NioFlow<>();
         List<Integer> results = new CopyOnWriteArrayList<>();
-        pipeline.submit(x -> {
+        nioFlow.submit(x -> {
                     sleep(200);
                     return x * 10;
                 })
@@ -26,18 +26,18 @@ class NioFlowShutdownTest {
                     return x;
                 });
 
-        pipeline.just(1);
-        pipeline.close(); // no join: close itself must wait for the in-flight value
+        nioFlow.just(1);
+        nioFlow.close(); // no join: close itself must wait for the in-flight value
 
         assertEquals(List.of(10), results);
     }
 
     @Test
     void closeGivesUpAfterTheGracePeriod() {
-        NioFlow<Integer> pipeline = new NioFlow<>();
+        NioFlow<Integer> nioFlow = new NioFlow<>();
         CountDownLatch never = new CountDownLatch(1);
         List<Integer> results = new CopyOnWriteArrayList<>();
-        pipeline.submit(x -> {
+        nioFlow.submit(x -> {
                     try {
                         never.await(5, TimeUnit.SECONDS);
                     } catch (InterruptedException e) {
@@ -50,9 +50,9 @@ class NioFlowShutdownTest {
                     return x;
                 });
 
-        pipeline.just(1);
+        nioFlow.just(1);
         long start = System.nanoTime();
-        pipeline.close(Duration.ofMillis(200));
+        nioFlow.close(Duration.ofMillis(200));
         long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
 
         assertTrue(elapsedMillis >= 200, "close returned before the grace period");
@@ -63,27 +63,27 @@ class NioFlowShutdownTest {
 
     @Test
     void closeIsIdempotent() {
-        NioFlow<Integer> pipeline = new NioFlow<>();
-        assertEquals(2, pipeline.just(1).handle(x -> x + 1).join());
+        NioFlow<Integer> nioFlow = new NioFlow<>();
+        assertEquals(2, nioFlow.just(1).handle(x -> x + 1).join());
 
-        pipeline.close();
-        pipeline.close(); // second close returns immediately, no exception
+        nioFlow.close();
+        nioFlow.close(); // second close returns immediately, no exception
     }
 
     @Test
     void justAfterCloseIsRejected() {
-        NioFlow<Integer> pipeline = new NioFlow<>();
-        assertEquals(2, pipeline.just(1).handle(x -> x + 1).join());
-        pipeline.close();
+        NioFlow<Integer> nioFlow = new NioFlow<>();
+        assertEquals(2, nioFlow.just(1).handle(x -> x + 1).join());
+        nioFlow.close();
 
-        assertThrows(RejectedExecutionException.class, () -> pipeline.just(2));
+        assertThrows(RejectedExecutionException.class, () -> nioFlow.just(2));
     }
 
     @Test
     void aProducerBlockedByBackpressureIsReleasedWhenThePipelineCloses() throws InterruptedException {
-        NioFlow<Integer> pipeline = new NioFlow<>(Backpressure.blocking(1));
+        NioFlow<Integer> nioFlow = new NioFlow<>(Backpressure.blocking(1));
         CountDownLatch never = new CountDownLatch(1);
-        pipeline.submit(x -> {
+        nioFlow.submit(x -> {
             try {
                 never.await(5, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
@@ -91,13 +91,13 @@ class NioFlowShutdownTest {
             }
             return x;
         });
-        pipeline.just(1); // occupies the only slot forever
+        nioFlow.just(1); // occupies the only slot forever
 
         AtomicReference<Throwable> producerFailure = new AtomicReference<>();
         CountDownLatch producerDone = new CountDownLatch(1);
         Thread producer = new Thread(() -> {
             try {
-                pipeline.just(2);
+                nioFlow.just(2);
             } catch (Throwable t) {
                 producerFailure.set(t);
             }
@@ -105,7 +105,7 @@ class NioFlowShutdownTest {
         });
         producer.start();
 
-        pipeline.close(Duration.ofMillis(200));
+        nioFlow.close(Duration.ofMillis(200));
 
         assertTrue(producerDone.await(2, TimeUnit.SECONDS), "the producer stayed blocked after close");
         assertInstanceOf(RejectedExecutionException.class, producerFailure.get());
@@ -114,9 +114,9 @@ class NioFlowShutdownTest {
 
     @Test
     void joinAfterAForcedCloseThrowsInsteadOfHanging() {
-        NioFlow<Integer> pipeline = new NioFlow<>();
+        NioFlow<Integer> nioFlow = new NioFlow<>();
         CountDownLatch never = new CountDownLatch(1);
-        pipeline.submit(x -> {
+        nioFlow.submit(x -> {
             try {
                 never.await(5, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
@@ -124,10 +124,10 @@ class NioFlowShutdownTest {
             }
             return x;
         });
-        pipeline.just(1);
-        pipeline.close(Duration.ofMillis(100)); // gives up on the stuck value
+        nioFlow.just(1);
+        nioFlow.close(Duration.ofMillis(100)); // gives up on the stuck value
 
-        CompletionException thrown = assertThrows(CompletionException.class, pipeline::join);
+        CompletionException thrown = assertThrows(CompletionException.class, nioFlow::join);
         assertInstanceOf(IllegalStateException.class, thrown.getCause());
         never.countDown();
     }

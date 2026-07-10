@@ -23,8 +23,8 @@ class OpenTelemetryMetricsTest {
         try (SdkMeterProvider provider = SdkMeterProvider.builder().registerMetricReader(reader).build()) {
             Meter meter = provider.get("dev.nioflow.test");
 
-            try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-                pipeline.metrics(OpenTelemetryMetrics.of(meter))
+            try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+                nioFlow.metrics(OpenTelemetryMetrics.of(meter))
                         .handle("validate", x -> x + 1)
                         .submit("save", x -> {
                             if (x == 3) {
@@ -33,9 +33,9 @@ class OpenTelemetryMetricsTest {
                             return x * 10;
                         });
 
-                pipeline.justAll(List.of(1, 5));
-                pipeline.just(2); // becomes 3 after validate and fails in save
-                assertThrows(CompletionException.class, pipeline::join);
+                nioFlow.justAll(List.of(1, 5));
+                nioFlow.just(2); // becomes 3 after validate and fails in save
+                assertThrows(CompletionException.class, nioFlow::join);
             }
 
             Collection<MetricData> metrics = reader.collectAllMetrics();

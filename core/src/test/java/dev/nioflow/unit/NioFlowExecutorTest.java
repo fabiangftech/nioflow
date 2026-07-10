@@ -14,10 +14,10 @@ class NioFlowExecutorTest {
     @Test
     void blockingHandlesScaleBeyondCpuCoresByDefault() throws InterruptedException {
         int concurrency = 32; // well above any CI core count
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             CountDownLatch allEntered = new CountDownLatch(concurrency);
             CountDownLatch release = new CountDownLatch(1);
-            pipeline.handle(x -> {
+            nioFlow.handle(x -> {
                 allEntered.countDown();
                 try {
                     release.await(5, TimeUnit.SECONDS);
@@ -28,7 +28,7 @@ class NioFlowExecutorTest {
             });
 
             for (int i = 0; i < concurrency; i++) {
-                pipeline.just(i);
+                nioFlow.just(i);
             }
 
             // every value blocks inside its handle at the same time: business IO in
@@ -36,18 +36,18 @@ class NioFlowExecutorTest {
             assertTrue(allEntered.await(3, TimeUnit.SECONDS),
                     "blocking handles must run on virtual workers, not a core-bound pool");
             release.countDown();
-            pipeline.join();
+            nioFlow.join();
         }
     }
 
     @Test
     void aFixedHandlePoolBoundsSyncParallelism() throws InterruptedException {
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-        try (NioFlow<Integer> pipeline = new NioFlow<>(executor, 2)) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>(executor, 2)) {
             CountDownLatch firstTwoEntered = new CountDownLatch(2);
             CountDownLatch thirdEntered = new CountDownLatch(3);
             CountDownLatch release = new CountDownLatch(1);
-            pipeline.handle(x -> {
+            nioFlow.handle(x -> {
                 firstTwoEntered.countDown();
                 thirdEntered.countDown();
                 try {
@@ -58,7 +58,7 @@ class NioFlowExecutorTest {
                 return x;
             });
 
-            pipeline.justAll(List.of(1, 2, 3, 4));
+            nioFlow.justAll(List.of(1, 2, 3, 4));
 
             assertTrue(firstTwoEntered.await(2, TimeUnit.SECONDS));
             // both workers are occupied: a third handle cannot start
@@ -66,7 +66,7 @@ class NioFlowExecutorTest {
                     "a fixed pool of 2 must not run a third handle concurrently");
 
             release.countDown();
-            pipeline.join();
+            nioFlow.join();
         } finally {
             executor.shutdown();
         }
@@ -74,9 +74,9 @@ class NioFlowExecutorTest {
 
     @Test
     void defaultConstructorRunsAsyncStagesOnVirtualThreads() {
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
             AtomicBoolean virtual = new AtomicBoolean();
-            int result = pipeline.just(20)
+            int result = nioFlow.just(20)
                     .submit(x -> {
                         virtual.set(Thread.currentThread().isVirtual());
                         return x + 22;
@@ -91,9 +91,9 @@ class NioFlowExecutorTest {
     @Test
     void acceptsAVirtualThreadPerTaskExecutor() {
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-             NioFlow<Integer> pipeline = new NioFlow<>(executor)) {
+             NioFlow<Integer> nioFlow = new NioFlow<>(executor)) {
             AtomicBoolean virtual = new AtomicBoolean();
-            int result = pipeline.just(1)
+            int result = nioFlow.just(1)
                     .submit(x -> {
                         virtual.set(Thread.currentThread().isVirtual());
                         return x * 2;
@@ -108,9 +108,9 @@ class NioFlowExecutorTest {
     @Test
     void singleThreadExecutorStillPreservesStageOrder() {
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        try (NioFlow<Integer> pipeline = new NioFlow<>(executor)) {
+        try (NioFlow<Integer> nioFlow = new NioFlow<>(executor)) {
             List<String> order = new CopyOnWriteArrayList<>();
-            int result = pipeline.just(1)
+            int result = nioFlow.just(1)
                     .submit(x -> {
                         order.add("submit-1");
                         return x + 1;
@@ -136,8 +136,8 @@ class NioFlowExecutorTest {
     void closeDoesNotShutDownAnExternallySuppliedExecutor() {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            try (NioFlow<Integer> pipeline = new NioFlow<>(executor)) {
-                assertEquals(2, pipeline.just(1).submit(x -> x + 1).join());
+            try (NioFlow<Integer> nioFlow = new NioFlow<>(executor)) {
+                assertEquals(2, nioFlow.just(1).submit(x -> x + 1).join());
             }
             assertFalse(executor.isShutdown());
         } finally {

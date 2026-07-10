@@ -24,7 +24,7 @@ import java.util.function.Predicate;
  * boss event loop hands each value to a virtual handle worker, and async stages run on
  * the executor. Reach for {@code submit} when a stage needs a timeout with real
  * cancellation or should run on your own executor; a fixed handle-worker pool
- * ({@code IOPipeline(executor, handleWorkers)}) is the knob for bounding CPU-heavy
+ * ({@link #NioFlow(ExecutorService, int)}) is the knob for bounding CPU-heavy
  * chains, and only there must handles stay fast.
  *
  * <p>{@code when(predicate).then(lane -> ...)} forks the chain: each branch builds its
@@ -36,6 +36,9 @@ import java.util.function.Predicate;
  * until every injected value finished and returns the newest injected value's result;
  * a failure is rethrown by the first {@code join()} after it and then cleared, so the
  * nio-flow stays usable. A nio-flow instance is meant to be built from a single thread.
+ *
+ * @param <T> the type of the values flowing at this point of the chain; {@code adapt}
+ *            and {@code fanOut} hand out a differently-typed view over the same engine
  */
 public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, AutoCloseable {
 
@@ -50,6 +53,8 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
     /**
      * Like {@link #NioFlow()} with admission control: {@code just} applies the
      * backpressure policy once {@code capacity} values are in flight.
+     *
+     * @param backpressure the admission policy applied by {@code just} at capacity
      */
     public NioFlow(Backpressure backpressure) {
         this(new NioEngine(Executors.newVirtualThreadPerTaskExecutor(), true,
@@ -59,6 +64,9 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
     /**
      * Runs async stages on the given executor. The caller keeps ownership of its
      * lifecycle: {@link #close()} will not shut it down.
+     *
+     * @param executor runs every {@code submit} stage; any shape works — fixed,
+     *                 cached, single-threaded or virtual-thread-per-task
      */
     public NioFlow(ExecutorService executor) {
         this(new NioEngine(executor, false, VIRTUAL_HANDLE_WORKERS, Backpressure.unbounded()), List.of());
@@ -69,6 +77,11 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
      * the given size, bounding sync parallelism — the tuning knob for CPU-heavy
      * chains. Blocking handles then tie up shared workers; the virtual default
      * (other constructors) has no such limit.
+     *
+     * @param executor      runs every {@code submit} stage; the caller keeps
+     *                      ownership of its lifecycle
+     * @param handleWorkers size of the fixed pool walking sync stages; keep handles
+     *                      fast once bounded
      */
     public NioFlow(ExecutorService executor, int handleWorkers) {
         this(new NioEngine(executor, false, handleWorkers, Backpressure.unbounded()), List.of());
@@ -77,6 +90,11 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
     /**
      * Fully tuned nio-flow: executor for async stages, fixed handle-worker pool size
      * and backpressure admission control.
+     *
+     * @param executor      runs every {@code submit} stage; the caller keeps
+     *                      ownership of its lifecycle
+     * @param handleWorkers size of the fixed pool walking sync stages
+     * @param backpressure  the admission policy applied by {@code just} at capacity
      */
     public NioFlow(ExecutorService executor, int handleWorkers, Backpressure backpressure) {
         this(new NioEngine(executor, false, handleWorkers, backpressure), List.of());
@@ -85,6 +103,11 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
     /** Sentinel for the engine: one virtual thread per dispatch, no fixed pool. */
     private static final int VIRTUAL_HANDLE_WORKERS = 0;
 
+    /**
+     * A view over an already running engine: same chain, same values, but links
+     * declared through this view carry {@code guards} — how lanes and {@code adapt}
+     * hand out scoped views without copying anything.
+     */
     private NioFlow(dev.nioflow.core.facade.NioEngine nioEngine, List<Guard> guards) {
         this.nioEngine = nioEngine;
         this.guards = guards;
@@ -188,7 +211,10 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
         return new MatchCases<>(this);
     }
 
-    /** Appends a decision link guarded by this view's lanes and reserves its id. */
+    /**
+     * Appends a decision link guarded by this view's lanes and reserves its id —
+     * the shared first step of {@code when} and every {@code match} case.
+     */
     int decision(Predicate<T> predicate) {
         int decision = nioEngine.nextDecision();
         nioEngine.append(new Decision(untypedPredicate(predicate), decision, guards));
@@ -264,16 +290,31 @@ public final class NioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, Aut
         close(Duration.ofSeconds(10));
     }
 
+    /**
+     * Like {@link #close()} with an explicit grace period: in-flight values get up
+     * to {@code gracePeriod} to finish before the engine stops its loops and
+     * releases its own resources — never an externally supplied executor.
+     *
+     * @param gracePeriod how long to let in-flight values finish before stopping
+     */
     public void close(Duration gracePeriod) {
         nioEngine.shutdown(gracePeriod);
     }
 
+    /**
+     * The view for one lane of a fork: everything declared through it carries this
+     * view's guards plus one for the given decision outcome, so those links only
+     * run for values that took the lane.
+     */
     NioFlow<T> lane(int decision, boolean expected) {
         List<Guard> laneGuards = new ArrayList<>(guards);
         laneGuards.add(new Guard(decision, expected));
         return new NioFlow<>(nioEngine, List.copyOf(laneGuards));
     }
 
+    // The engine is untyped on purpose (adapt re-types the view over the same
+    // chain), so user functions are erased once at declaration. Safe: each view
+    // only accepts functions matching the values flowing at its point of the chain.
     @SuppressWarnings("unchecked")
     private static Function<Object, Object> untyped(Function<?, ?> function) {
         return (Function<Object, Object>) function;

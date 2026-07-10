@@ -15,12 +15,12 @@ class LoggingTracerTest {
     void transitionsEndUpInTheLogger() {
         CapturingLogger logger = new CapturingLogger();
 
-        try (NioFlow<Integer> pipeline = new NioFlow<>()) {
-            pipeline.trace(LoggingTracer.to(logger, Level.INFO))
+        try (NioFlow<Integer> nioFlow = new NioFlow<>()) {
+            nioFlow.trace(LoggingTracer.to(logger, Level.INFO))
                     .handle("double", x -> x * 2);
 
-            pipeline.just(21);
-            pipeline.join();
+            nioFlow.just(21);
+            nioFlow.join();
         }
 
         assertTrue(logger.lines.stream().anyMatch(line -> line.contains("value 0 injected: 21")));
