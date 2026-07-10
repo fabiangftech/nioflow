@@ -17,12 +17,6 @@ dependencies {
     testImplementation 'io.opentelemetry:opentelemetry-api:1.63.0'
     testImplementation 'io.opentelemetry:opentelemetry-sdk-testing:1.63.0'
 
-    compileOnly 'org.springframework:spring-web:6.2.8'
-    testImplementation 'org.springframework:spring-web:6.2.8'
-
-    compileOnly 'io.projectreactor:reactor-core:3.7.6'
-    testImplementation 'io.projectreactor:reactor-core:3.7.6'
-
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

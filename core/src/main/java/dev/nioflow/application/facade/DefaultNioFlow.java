@@ -14,7 +14,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * {@link dev.nioflow.core.facade.NioFlow} implementation backed by an {@link ExecutorService} and two queues,
+ * {@link NioFlow} implementation backed by an {@link ExecutorService} and two queues,
  * io_uring style: a submission queue with values ready to run their next stage and a
  * completion queue with reaped async results.
  *
@@ -40,9 +40,9 @@ import java.util.function.Predicate;
  * @param <T> the type of the values flowing at this point of the chain; {@code adapt}
  *            and {@code fanOut} hand out a differently-typed view over the same engine
  */
-public final class DefaultNioFlow<T> implements dev.nioflow.core.facade.NioFlow<T>, AutoCloseable {
+public final class DefaultNioFlow<T> implements NioFlow<T>, AutoCloseable {
 
-    private final dev.nioflow.core.facade.NioEngine nioEngine;
+    private final NioEngine nioEngine;
     private final List<Guard> guards;
 
     /** All stages on virtual threads: blocking anywhere ties up only that value. */
@@ -108,91 +108,91 @@ public final class DefaultNioFlow<T> implements dev.nioflow.core.facade.NioFlow<
      * declared through this view carry {@code guards} — how lanes and {@code adapt}
      * hand out scoped views without copying anything.
      */
-    private DefaultNioFlow(dev.nioflow.core.facade.NioEngine nioEngine, List<Guard> guards) {
+    private DefaultNioFlow(NioEngine nioEngine, List<Guard> guards) {
         this.nioEngine = nioEngine;
         this.guards = guards;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> just(T input) {
+    public NioFlow<T> just(T input) {
         nioEngine.inject(input);
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> just(T input, Map<String, Object> context) {
+    public NioFlow<T> just(T input, Map<String, Object> context) {
         nioEngine.inject(input, context);
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> justAll(Iterable<T> inputs) {
+    public NioFlow<T> justAll(Iterable<T> inputs) {
         inputs.forEach(nioEngine::inject);
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> handle(Function<T, T> function) {
+    public NioFlow<T> handle(Function<T, T> function) {
         nioEngine.append(new Stage(null, untyped(function), false, null, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> handle(String name, Function<T, T> function) {
+    public NioFlow<T> handle(String name, Function<T, T> function) {
         nioEngine.append(new Stage(name, untyped(function), false, null, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> handle(Function<T, T> function, Resilience<T> resilience) {
+    public NioFlow<T> handle(Function<T, T> function, Resilience<T> resilience) {
         nioEngine.append(new Stage(null, untyped(resilience.decorate(function)), false, null, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(Function<T, T> function) {
+    public NioFlow<T> submit(Function<T, T> function) {
         nioEngine.append(new Stage(null, untyped(function), true, null, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(String name, Function<T, T> function) {
+    public NioFlow<T> submit(String name, Function<T, T> function) {
         nioEngine.append(new Stage(name, untyped(function), true, null, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(Function<T, T> function, Duration timeout) {
+    public NioFlow<T> submit(Function<T, T> function, Duration timeout) {
         nioEngine.append(new Stage(null, untyped(function), true, timeout, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(Function<T, T> function, Resilience<T> resilience) {
+    public NioFlow<T> submit(Function<T, T> function, Resilience<T> resilience) {
         nioEngine.append(new Stage(null, untyped(resilience.decorate(function)), true, null, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
+    public NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
         nioEngine.append(new Batch(untypedBatch(function), size, maxWait, guards));
         return this;
     }
 
     @Override
-    public <N> dev.nioflow.core.facade.NioFlow<N> adapt(Function<T, N> function) {
+    public <N> NioFlow<N> adapt(Function<T, N> function) {
         nioEngine.append(new Stage(null, untyped(function), false, null, guards));
         return new DefaultNioFlow<>(nioEngine, guards);
     }
 
     @Override
-    public <N> dev.nioflow.core.facade.NioFlow<N> fanOut(Function<T, List<N>> function) {
+    public <N> NioFlow<N> fanOut(Function<T, List<N>> function) {
         nioEngine.append(new FanOut(untypedFanOut(function), guards));
         return new DefaultNioFlow<>(nioEngine, guards);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> filter(Predicate<T> predicate) {
+    public NioFlow<T> filter(Predicate<T> predicate) {
         nioEngine.append(new Filter(untypedPredicate(predicate), guards));
         return this;
     }
@@ -222,33 +222,33 @@ public final class DefaultNioFlow<T> implements dev.nioflow.core.facade.NioFlow<
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> onError(Consumer<Throwable> handler) {
+    public NioFlow<T> onError(Consumer<Throwable> handler) {
         nioEngine.addErrorHandler(handler);
         return this;
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public dev.nioflow.core.facade.NioFlow<T> onComplete(Consumer<T> handler) {
+    public NioFlow<T> onComplete(Consumer<T> handler) {
         nioEngine.addCompleteHandler(value -> handler.accept((T) value));
         return this;
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public dev.nioflow.core.facade.NioFlow<T> onErrorResume(Function<Throwable, T> fallback) {
+    public NioFlow<T> onErrorResume(Function<Throwable, T> fallback) {
         nioEngine.append(new Recovery((Function<Throwable, Object>) fallback, guards));
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> metrics(NioFlowMetrics metrics) {
+    public NioFlow<T> metrics(NioFlowMetrics metrics) {
         nioEngine.metrics(metrics);
         return this;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> trace(NioFlowTracer tracer) {
+    public NioFlow<T> trace(NioFlowTracer tracer) {
         nioEngine.trace(tracer);
         return this;
     }
@@ -264,7 +264,7 @@ public final class DefaultNioFlow<T> implements dev.nioflow.core.facade.NioFlow<
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> seal() {
+    public NioFlow<T> seal() {
         nioEngine.seal();
         return this;
     }

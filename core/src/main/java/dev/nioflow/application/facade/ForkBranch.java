@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.facade.NioFlowTracer;
 import dev.nioflow.core.facade.Resilience;
@@ -21,11 +22,11 @@ import java.util.function.UnaryOperator;
  * resumes the main line, and false values skip the true lane unchanged.
  *
  * <p>All delegating overrides inherit their contract from
- * {@link dev.nioflow.core.facade.NioFlow}; only the fork mechanics live here.
+ * {@link NioFlow}; only the fork mechanics live here.
  *
  * @param <T> the type of the values flowing through the fork
  */
-final class ForkBranch<T> implements dev.nioflow.core.facade.NioFlow.Branch<T> {
+final class ForkBranch<T> implements NioFlow.Branch<T> {
 
     private final DefaultNioFlow<T> mainLine;
     private final int decision;
@@ -46,78 +47,78 @@ final class ForkBranch<T> implements dev.nioflow.core.facade.NioFlow.Branch<T> {
      * value again.
      */
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> otherwise(UnaryOperator<dev.nioflow.core.facade.NioFlow<T>> lane) {
+    public NioFlow<T> otherwise(UnaryOperator<NioFlow<T>> lane) {
         lane.apply(mainLine.lane(decision, false));
         return mainLine;
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> just(T input) {
+    public NioFlow<T> just(T input) {
         return mainLine.just(input);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> just(T input, Map<String, Object> context) {
+    public NioFlow<T> just(T input, Map<String, Object> context) {
         return mainLine.just(input, context);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> justAll(Iterable<T> inputs) {
+    public NioFlow<T> justAll(Iterable<T> inputs) {
         return mainLine.justAll(inputs);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> filter(Predicate<T> predicate) {
+    public NioFlow<T> filter(Predicate<T> predicate) {
         return mainLine.filter(predicate);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> handle(Function<T, T> function) {
+    public NioFlow<T> handle(Function<T, T> function) {
         return mainLine.handle(function);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> handle(String name, Function<T, T> function) {
+    public NioFlow<T> handle(String name, Function<T, T> function) {
         return mainLine.handle(name, function);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> handle(Function<T, T> function, Resilience<T> resilience) {
+    public NioFlow<T> handle(Function<T, T> function, Resilience<T> resilience) {
         return mainLine.handle(function, resilience);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(Function<T, T> function) {
+    public NioFlow<T> submit(Function<T, T> function) {
         return mainLine.submit(function);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(String name, Function<T, T> function) {
+    public NioFlow<T> submit(String name, Function<T, T> function) {
         return mainLine.submit(name, function);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(Function<T, T> function, Duration timeout) {
+    public NioFlow<T> submit(Function<T, T> function, Duration timeout) {
         return mainLine.submit(function, timeout);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> submit(Function<T, T> function, Resilience<T> resilience) {
+    public NioFlow<T> submit(Function<T, T> function, Resilience<T> resilience) {
         return mainLine.submit(function, resilience);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
+    public NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
         return mainLine.batch(size, maxWait, function);
     }
 
     @Override
-    public <N> dev.nioflow.core.facade.NioFlow<N> adapt(Function<T, N> function) {
+    public <N> NioFlow<N> adapt(Function<T, N> function) {
         return mainLine.adapt(function);
     }
 
     @Override
-    public <N> dev.nioflow.core.facade.NioFlow<N> fanOut(Function<T, List<N>> function) {
+    public <N> NioFlow<N> fanOut(Function<T, List<N>> function) {
         return mainLine.fanOut(function);
     }
 
@@ -132,27 +133,27 @@ final class ForkBranch<T> implements dev.nioflow.core.facade.NioFlow.Branch<T> {
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> onError(Consumer<Throwable> handler) {
+    public NioFlow<T> onError(Consumer<Throwable> handler) {
         return mainLine.onError(handler);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> onComplete(Consumer<T> handler) {
+    public NioFlow<T> onComplete(Consumer<T> handler) {
         return mainLine.onComplete(handler);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> onErrorResume(Function<Throwable, T> fallback) {
+    public NioFlow<T> onErrorResume(Function<Throwable, T> fallback) {
         return mainLine.onErrorResume(fallback);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> metrics(NioFlowMetrics metrics) {
+    public NioFlow<T> metrics(NioFlowMetrics metrics) {
         return mainLine.metrics(metrics);
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> trace(NioFlowTracer tracer) {
+    public NioFlow<T> trace(NioFlowTracer tracer) {
         return mainLine.trace(tracer);
     }
 
@@ -162,7 +163,7 @@ final class ForkBranch<T> implements dev.nioflow.core.facade.NioFlow.Branch<T> {
     }
 
     @Override
-    public dev.nioflow.core.facade.NioFlow<T> seal() {
+    public NioFlow<T> seal() {
         return mainLine.seal();
     }
 
