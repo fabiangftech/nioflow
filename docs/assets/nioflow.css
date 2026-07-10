@@ -1,0 +1,699 @@
+/* ==========================================================================
+   nio-flow docs theme
+   Palette: ice paper, marine ink, cerulean flow, mint recovered, coral failed
+   Type: Bricolage Grotesque (display) · Instrument Sans (body) · JetBrains Mono
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --paper: #FAFCFF;
+  --mist: #EAF3FB;
+  --mist-deep: #DCE9F5;
+  --ink: #0F2B3D;
+  --ink-soft: #3D5A6E;
+  --muted: #62798A;
+  --flow: #0794C4;
+  --flow-deep: #0B6E93;
+  --flow-ink: #0C4A73;
+  --mint: #15B097;
+  --coral: #F26B5E;
+  --radius: 12px;
+  --font-display: 'Bricolage Grotesque', 'Instrument Sans', sans-serif;
+  --font-body: 'Instrument Sans', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --theme-color: #0794C4;
+}
+
+/* --------------------------------------------------------------------------
+   Base
+   -------------------------------------------------------------------------- */
+
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(7, 148, 196, 0.18);
+}
+
+a {
+  color: var(--flow-deep);
+}
+
+:focus-visible {
+  outline: 2px solid var(--flow);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar
+   -------------------------------------------------------------------------- */
+
+.sidebar {
+  background: var(--paper);
+  border-right: 1px solid var(--mist-deep);
+  color: var(--ink-soft);
+  padding-top: 0;
+}
+
+.sidebar > h1 {
+  margin: 24px auto 8px;
+}
+
+.sidebar > h1 a,
+.app-name-link {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  color: var(--ink) !important;
+}
+
+.sidebar ul li a {
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  padding: 5px 0 5px 18px;
+}
+
+.sidebar ul li a:hover {
+  color: var(--flow-deep);
+  text-decoration: none;
+}
+
+.sidebar ul li.active > a {
+  color: var(--flow-deep);
+  font-weight: 600;
+  border-right: none;
+  border-left: 3px solid var(--flow);
+  padding-left: 15px;
+}
+
+.sidebar ul li strong {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 22px 0 4px 18px;
+}
+
+.sidebar-toggle {
+  background: transparent;
+}
+
+.sidebar-toggle span {
+  background-color: var(--flow);
+}
+
+/* Search plugin */
+.search {
+  border-bottom: 1px solid var(--mist-deep) !important;
+  margin-bottom: 6px;
+  padding: 8px 14px;
+}
+
+.search input {
+  font-family: var(--font-body);
+  font-size: 14px;
+  background: var(--mist);
+  border-radius: 8px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  color: var(--ink);
+}
+
+.search input:focus {
+  border-color: var(--flow);
+  box-shadow: 0 0 0 3px rgba(7, 148, 196, 0.15);
+}
+
+.search .results-panel .matching-post {
+  border-bottom: 1px solid var(--mist-deep);
+}
+
+.search .search-keyword {
+  color: var(--flow-deep);
+}
+
+/* --------------------------------------------------------------------------
+   Content
+   -------------------------------------------------------------------------- */
+
+.content {
+  background: var(--paper);
+}
+
+.markdown-section {
+  max-width: 860px;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.markdown-section h1,
+.markdown-section h2,
+.markdown-section h3,
+.markdown-section h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.markdown-section h1 {
+  font-size: 2.3rem;
+  font-weight: 800;
+  margin-bottom: 1.2rem;
+}
+
+.markdown-section h2 {
+  font-size: 1.55rem;
+  margin-top: 2.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--mist-deep);
+}
+
+.markdown-section h3 {
+  font-size: 1.18rem;
+  margin-top: 2rem;
+}
+
+.markdown-section a {
+  color: var(--flow-deep);
+  font-weight: 500;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(7, 148, 196, 0.35);
+}
+
+.markdown-section a:hover {
+  color: var(--flow);
+  border-bottom-color: var(--flow);
+}
+
+.markdown-section strong {
+  color: var(--ink);
+}
+
+/* Inline code */
+.markdown-section code {
+  font-family: var(--font-mono);
+  font-size: 0.83em;
+  background: var(--mist);
+  color: var(--flow-ink);
+  border-radius: 5px;
+  padding: 2px 6px;
+  margin: 0 1px;
+}
+
+/* Code blocks */
+.markdown-section pre {
+  background: #F2F7FC;
+  border: 1px solid var(--mist-deep);
+  border-radius: var(--radius);
+  padding: 0;
+}
+
+.markdown-section pre > code {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.65;
+  background: transparent;
+  color: var(--ink);
+  padding: 18px 22px;
+}
+
+.markdown-section pre::after {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* Prism tokens — light marine scheme (no gold) */
+.token.keyword { color: #0B5FB0; font-weight: 500; }
+.token.string, .token.attr-value { color: #0E8C6D; }
+.token.comment, .token.prolog, .token.cdata { color: #8AA4B8; font-style: italic; }
+.token.function { color: #C2543F; }
+.token.number, .token.boolean { color: #7C4DBE; }
+.token.class-name, .token.tag { color: #0C4A73; }
+.token.operator, .token.punctuation { color: #5A7184; background: none; }
+.token.annotation { color: #0B6E93; }
+
+/* Blockquotes → note cards */
+.markdown-section blockquote {
+  background: var(--mist);
+  border-left: 3px solid var(--flow);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 14px 20px;
+  margin: 1.6em 0;
+  color: var(--ink-soft);
+}
+
+.markdown-section blockquote p {
+  font-weight: 400;
+  margin: 0;
+}
+
+/* Tables */
+.markdown-section table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--mist-deep);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: 14.5px;
+}
+
+.markdown-section table th {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--ink-soft);
+  background: var(--mist);
+  border: none;
+  padding: 10px 16px;
+}
+
+.markdown-section table td {
+  border: none;
+  border-top: 1px solid var(--mist-deep);
+  padding: 10px 16px;
+  vertical-align: top;
+}
+
+.markdown-section table tr:nth-child(2n) {
+  background: #F5FAFD;
+}
+
+/* Mermaid diagrams */
+.markdown-section .mermaid {
+  background: #F5FAFD;
+  border: 1px solid var(--mist-deep);
+  border-radius: var(--radius);
+  padding: 20px 12px;
+  margin: 1.6em 0;
+  text-align: center;
+}
+
+.markdown-section .mermaid svg {
+  max-width: 100%;
+}
+
+/* Horizontal rules */
+.markdown-section hr {
+  border: none;
+  border-top: 1px solid var(--mist-deep);
+  margin: 2.5em 0;
+}
+
+/* GitHub corner */
+.github-corner svg {
+  fill: var(--flow);
+  color: var(--paper);
+}
+
+/* Docsify progress bar */
+.progress {
+  background: var(--flow);
+}
+
+/* ==========================================================================
+   Landing page (body.landing — route "/")
+   ========================================================================== */
+
+/* Hidden by default; the layout display lives ONLY under body.landing so no
+   later rule can re-show the hero on doc routes. */
+#landing-hero {
+  display: none !important;
+}
+
+body.landing #landing-hero {
+  display: flex !important;
+  flex-direction: column;
+}
+
+body.landing .sidebar,
+body.landing .sidebar-toggle {
+  display: none;
+}
+
+body.landing .content {
+  left: 0;
+  right: 0;
+  position: static;
+  padding-top: 0;
+}
+
+body.landing .markdown-section {
+  max-width: 880px;
+  margin: 0 auto;
+  padding-top: 32px;
+}
+
+body.landing .github-corner {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Hero
+   -------------------------------------------------------------------------- */
+
+#landing-hero {
+  position: relative;
+  min-height: 92vh;
+  background:
+    radial-gradient(900px 500px at 15% -10%, rgba(7, 148, 196, 0.14), transparent 60%),
+    radial-gradient(800px 480px at 90% 110%, rgba(21, 176, 151, 0.12), transparent 60%),
+    var(--paper);
+  overflow: hidden;
+}
+
+#landing-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(15, 43, 61, 0.07) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 30%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 30%, transparent 75%);
+  pointer-events: none;
+}
+
+.hero-inner {
+  position: relative;
+  width: min(1120px, 92vw);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* Mini nav — vue.css positions bare <nav> elements; neutralize it explicitly */
+.hero-nav {
+  position: static;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 26px 0 0;
+  z-index: 2;
+}
+
+.hero-nav a {
+  margin: 0;
+}
+
+.hero-logo {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.hero-logo .logo-dot {
+  color: var(--flow);
+}
+
+.hero-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+
+.hero-nav-links a {
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.hero-nav-links a:hover {
+  color: var(--flow-deep);
+}
+
+.hero-nav-links a.nav-github {
+  border: 1px solid var(--mist-deep);
+  border-radius: 999px;
+  padding: 7px 16px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.hero-nav-links a.nav-github:hover {
+  border-color: var(--flow);
+  color: var(--flow-deep);
+}
+
+/* Headline */
+.hero-head {
+  text-align: center;
+  margin: clamp(36px, 6vh, 64px) auto 0;
+  max-width: 780px;
+}
+
+.hero-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--flow-deep);
+  margin: 0 0 18px;
+}
+
+.hero-head h1 {
+  font-family: var(--font-display);
+  font-size: clamp(2.3rem, 5vw, 3.8rem);
+  font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  margin: 0;
+}
+
+.hero-head h1 .accent {
+  color: var(--flow);
+}
+
+.hero-sub {
+  font-size: clamp(1rem, 1.4vw, 1.15rem);
+  line-height: 1.65;
+  color: var(--ink-soft);
+  margin: 20px auto 0;
+  max-width: 620px;
+}
+
+.hero-sub code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--mist);
+  color: var(--flow-ink);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+/* Animated flow canvas */
+.hero-canvas {
+  margin: clamp(24px, 4vh, 40px) auto 0;
+  width: min(1020px, 100%);
+}
+
+.hero-canvas svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.flow-rail {
+  stroke: var(--mist-deep);
+  stroke-width: 2;
+  fill: none;
+}
+
+.flow-node {
+  fill: #FFFFFF;
+  stroke: var(--mist-deep);
+  stroke-width: 1.5;
+}
+
+.flow-node-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  fill: var(--ink);
+}
+
+.flow-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  fill: var(--muted);
+}
+
+.flow-endpoint {
+  fill: var(--flow);
+}
+
+.flow-dot {
+  stroke: #FFFFFF;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 1px 3px rgba(7, 148, 196, 0.45));
+}
+
+/* Legend */
+.hero-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 30px;
+  margin: 20px auto 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.hero-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.legend-dot.flowing { background: var(--flow); }
+.legend-dot.failed { background: var(--coral); }
+.legend-dot.recovered { background: var(--mint); }
+
+/* CTAs */
+.hero-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: clamp(24px, 4vh, 36px) auto 0;
+}
+
+.btn {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 12px 26px;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.btn-primary {
+  background: var(--flow);
+  color: #FFFFFF;
+  box-shadow: 0 4px 14px rgba(7, 148, 196, 0.35);
+}
+
+.btn-primary:hover {
+  background: var(--flow-deep);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(7, 148, 196, 0.4);
+}
+
+.btn-ghost {
+  border: 1px solid var(--mist-deep);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.btn-ghost:hover {
+  border-color: var(--flow);
+  color: var(--flow-deep);
+}
+
+.hero-install {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--flow-ink);
+  background: var(--mist);
+  border: 1px solid var(--mist-deep);
+  border-radius: 10px;
+  padding: 12px 18px;
+}
+
+/* Scroll cue */
+.hero-more {
+  text-align: center;
+  padding: clamp(28px, 5vh, 52px) 0 30px;
+  margin-top: auto;
+}
+
+.hero-more a {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.hero-more a:hover {
+  color: var(--flow-deep);
+}
+
+/* --------------------------------------------------------------------------
+   Responsive & accessibility
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 720px) {
+  .hero-nav-links a:not(.nav-github) {
+    display: none;
+  }
+
+  .hero-canvas {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .hero-canvas svg {
+    min-width: 660px;
+  }
+
+  .hero-install {
+    font-size: 11.5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .btn:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+@media print {
+  #landing-hero {
+    display: none !important;
+  }
+}

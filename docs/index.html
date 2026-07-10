@@ -2,15 +2,143 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>nio-flow</title>
+  <title>nio-flow — async flows for Java</title>
   <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-  <meta name="description" content="nio-flow — an io_uring-style asynchronous flow library for Java">
+  <meta name="description" content="nio-flow — an io_uring-style asynchronous flow library for Java. Declare the chain once, inject values, and a slow value never blocks the ones behind it.">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <link rel="stylesheet" href="assets/nioflow.css">
 </head>
 <body>
+
+  <!-- ================= Landing hero (visible only on the home route) ================= -->
+  <header id="landing-hero">
+    <div class="hero-inner">
+
+      <nav class="hero-nav" aria-label="Primary">
+        <a class="hero-logo" href="#/">nio<span class="logo-dot">·</span>flow</a>
+        <div class="hero-nav-links">
+          <a href="#/quickstart">Quick start</a>
+          <a href="#/examples">Examples</a>
+          <a href="#/architecture">Architecture</a>
+          <a href="#/reference">Reference</a>
+          <a class="nav-github" href="https://github.com/fabiangftech/nioflow" target="_blank" rel="noopener">GitHub</a>
+        </div>
+      </nav>
+
+      <div class="hero-head">
+        <p class="hero-eyebrow">Async flow library · Java 25+ · Zero dependencies</p>
+        <h1>Many values in flight.<br><span class="accent">None of them waiting.</span></h1>
+        <p class="hero-sub">
+          nio-flow runs your pipeline io_uring style: declare the chain once and inject values —
+          a value stuck on slow IO never delays the ones behind it, and a failure stops
+          only the value that failed.
+        </p>
+      </div>
+
+      <!-- The engine, live: values flow the real chain; one stalls on IO while
+           others overtake; one fails and is recovered by onErrorResume. -->
+      <div class="hero-canvas">
+        <svg id="flow-diagram" viewBox="0 68 1000 210" role="img"
+             aria-label="Animated diagram of a nio-flow chain: values flow through handle, submit and forked lanes; a value stalled on slow IO is overtaken by others; a failed value is recovered by onErrorResume and reaches join.">
+
+          <!-- rails -->
+          <path id="railA" class="flow-rail" d="M30,170 L500,170 C545,170 545,105 590,105 L745,105 C790,105 790,170 835,170 L955,170"/>
+          <path id="railB" class="flow-rail" d="M30,170 L500,170 C545,170 545,235 590,235 L745,235 C790,235 790,170 835,170 L955,170"/>
+
+          <!-- endpoints -->
+          <circle class="flow-endpoint" cx="30" cy="170" r="5"/>
+          <text class="flow-node-label" x="30" y="205" text-anchor="middle">just()</text>
+          <circle class="flow-endpoint" cx="955" cy="170" r="6"/>
+          <text class="flow-node-label" x="955" y="205" text-anchor="middle">join()</text>
+
+          <!-- stages -->
+          <rect class="flow-node" x="110" y="155" width="140" height="30" rx="15"/>
+          <text class="flow-node-label" x="180" y="174" text-anchor="middle">handle[validate]</text>
+
+          <rect class="flow-node" x="300" y="155" width="140" height="30" rx="15"/>
+          <text class="flow-node-label" x="370" y="174" text-anchor="middle">submit[enrich]</text>
+          <text class="flow-tag" x="370" y="141" text-anchor="middle">slow io</text>
+
+          <path class="flow-node" d="M500,148 L524,170 L500,192 L476,170 Z"/>
+          <text class="flow-tag" x="500" y="138" text-anchor="middle">when</text>
+
+          <rect class="flow-node" x="600" y="90" width="145" height="30" rx="15"/>
+          <text class="flow-node-label" x="672" y="109" text-anchor="middle">submit[notify]</text>
+
+          <rect class="flow-node" x="600" y="220" width="145" height="30" rx="15"/>
+          <text class="flow-node-label" x="672" y="239" text-anchor="middle">handle[queue]</text>
+
+          <rect class="flow-node" x="825" y="155" width="110" height="30" rx="15"/>
+          <text class="flow-node-label" x="880" y="174" text-anchor="middle">onErrorResume</text>
+
+          <!-- values in flight -->
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="5.5s" begin="-2.5s" repeatCount="indefinite">
+              <mpath href="#railA"/>
+            </animateMotion>
+          </circle>
+
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="6.8s" begin="-1s" repeatCount="indefinite">
+              <mpath href="#railB"/>
+            </animateMotion>
+          </circle>
+
+          <!-- the stalled value: pauses inside submit[enrich] while others overtake -->
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="9s" begin="-4.5s" repeatCount="indefinite"
+                           calcMode="linear"
+                           keyPoints="0;0.36;0.36;1" keyTimes="0;0.3;0.62;1">
+              <mpath href="#railA"/>
+            </animateMotion>
+            <animate attributeName="r" dur="9s" begin="-4.5s" repeatCount="indefinite"
+                     values="6;6;7.5;6;6" keyTimes="0;0.3;0.46;0.62;1"/>
+          </circle>
+
+          <!-- the failing value: fails at handle[queue], recovered by onErrorResume -->
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="7.5s" begin="-6s" repeatCount="indefinite">
+              <mpath href="#railB"/>
+            </animateMotion>
+            <animate attributeName="fill" dur="7.5s" begin="-6s" repeatCount="indefinite"
+                     values="#0794C4;#0794C4;#F26B5E;#F26B5E;#15B097;#15B097"
+                     keyTimes="0;0.66;0.69;0.91;0.94;1"/>
+          </circle>
+        </svg>
+      </div>
+
+      <div class="hero-legend" aria-hidden="true">
+        <span><i class="legend-dot flowing"></i>value in flight</span>
+        <span><i class="legend-dot failed"></i>failed</span>
+        <span><i class="legend-dot recovered"></i>recovered by onErrorResume</span>
+        <span>a stalled value never blocks its lane</span>
+      </div>
+
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="#/quickstart">Quick start</a>
+        <a class="btn btn-ghost" href="https://github.com/fabiangftech/nioflow" target="_blank" rel="noopener">View on GitHub</a>
+        <code class="hero-install">implementation 'dev.nioflow:core:1.0.0'</code>
+      </div>
+
+      <div class="hero-more">
+        <a href="#/" id="hero-scroll">Documentation ↓</a>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ================= Docsify app ================= -->
   <div id="app"></div>
+
   <script>
+    // Show the hero immediately when landing on the home route (before docsify boots)
+    if (!location.hash || location.hash === '#/' || location.hash.indexOf('#/?') === 0) {
+      document.body.classList.add('landing');
+    }
+
     window.$docsify = {
       name: 'nio-flow',
       repo: 'https://github.com/fabiangftech/nioflow',
@@ -20,7 +148,14 @@
       search: {
         placeholder: 'Search',
         depth: 3
-      }
+      },
+      plugins: [
+        function (hook, vm) {
+          hook.doneEach(function () {
+            document.body.classList.toggle('landing', vm.route.path === '/');
+          });
+        }
+      ]
     }
   </script>
   <!-- Docsify v4 -->
@@ -33,6 +168,36 @@
   <!-- Mermaid diagrams -->
   <script src="//cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script src="//cdn.jsdelivr.net/npm/docsify-mermaid@2/dist/docsify-mermaid.js"></script>
-  <script>mermaid.initialize({ startOnLoad: true });</script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        primaryColor: '#EAF3FB',
+        primaryTextColor: '#0F2B3D',
+        primaryBorderColor: '#8FBEDC',
+        lineColor: '#62798A',
+        secondaryColor: '#F5FAFD',
+        tertiaryColor: '#FFFFFF',
+        clusterBkg: '#F5FAFD',
+        clusterBorder: '#DCE9F5',
+        fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+        fontSize: '13px'
+      }
+    });
+
+    // Respect prefers-reduced-motion: freeze the hero diagram (SMIL)
+    var diagram = document.getElementById('flow-diagram');
+    if (diagram && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      diagram.pauseAnimations();
+    }
+
+    // "Documentation ↓" scrolls to the content instead of changing the route
+    document.getElementById('hero-scroll').addEventListener('click', function (e) {
+      e.preventDefault();
+      var content = document.querySelector('.content');
+      if (content) content.scrollIntoView({ behavior: 'smooth' });
+    });
+  </script>
 </body>
 </html>

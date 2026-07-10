@@ -1,10 +1,4 @@
-# nio-flow
-
-> An io_uring-style asynchronous flow library for Java — declare a chain of stages once, inject values, and let them flow concurrently without ever blocking each other.
-
-[GitHub](https://github.com/fabiangftech/nioflow) · [Maven Central](https://central.sonatype.com/artifact/dev.nioflow/core)
-
-## What is nio-flow?
+# Overview
 
 nio-flow lets you model a processing flow as a **chain of stages declared once**. Every value you inject walks the chain independently: several values are in flight at the same time, a value blocked on slow IO never delays the values behind it, and an error short-circuits only the value that failed.
 
@@ -61,23 +55,13 @@ Requires **Java 25+** (virtual threads and scoped values). The core has **zero r
 - **Observability first** — a metrics port (with an OpenTelemetry adapter), an opt-in per-value tracer, and a one-line diagnostics dump of the running flow.
 - **Zero required dependencies** — the core is plain JDK; adapters are `compileOnly` and opt-in.
 
-## At a glance
-
-```mermaid
-flowchart LR
-    P["just / justAll"] -->|inject| SQ[("submission queue")]
-    SQ --> BOSS["boss loop"]
-    BOSS --> W["handle workers<br/>(virtual threads)"]
-    W -->|"submit stage"| EX["executor"]
-    EX -->|result| CQ[("completion queue")]
-    CQ --> COMP["completer loop"]
-    COMP -->|"next stage"| SQ
-    W -->|"end of chain"| DONE["join()"]
-```
-
 ## Where to next?
 
 - [Quick start](quickstart.md) — install, build your first flow, handle errors.
 - [Examples](examples.md) — forks, batching, resilience, backpressure, observability.
 - [Architecture](architecture.md) — the engine, the threading model and the guarantees.
 - [API reference](reference.md) — every operator at a glance.
+
+---
+
+[GitHub](https://github.com/fabiangftech/nioflow) · [Maven Central](https://central.sonatype.com/artifact/dev.nioflow/core)
