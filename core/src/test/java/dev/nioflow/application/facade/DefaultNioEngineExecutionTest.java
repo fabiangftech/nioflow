@@ -7,12 +7,18 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultNioEngineExecutionTest extends EngineTestSupport {
@@ -77,5 +83,66 @@ class DefaultNioEngineExecutionTest extends EngineTestSupport {
         engine.inject("hola");
 
         assertEquals("HOLA", engine.await());
+    }
+
+    @Test
+    void handlersRunBeforeTheCallerObservesTheResult() {
+        // The raw result future is returned to the caller directly, so the
+        // bookkeeping must run BEFORE it completes — a caller returning from
+        // join() must already see complete handlers applied.
+        var observed = new AtomicReference<Object>();
+        engine.append(stage("double", value -> (int) value * 2));
+        engine.addCompleteHandler(observed::set);
+
+        assertEquals(6, engine.call(3, new ConcurrentHashMap<>()).join());
+        assertEquals(6, observed.get());
+    }
+
+    @Test
+    void callOnAShutDownOwnedBossFailsTheFutureInsteadOfHangingIt() {
+        ExecutorService boss = Executors.newSingleThreadExecutor();
+        ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
+        var ownedEngine = new DefaultNioEngine(boss, workers);
+        ownedEngine.append(stage("never", value -> value));
+        boss.shutdownNow();
+
+        CompletableFuture<Object> result = ownedEngine.call(1, new ConcurrentHashMap<>())
+                .orTimeout(5, TimeUnit.SECONDS);
+
+        assertThrows(CompletionException.class, result::join);
+        workers.shutdownNow();
+    }
+
+    @Test
+    void bossShutdownMidFlightFailsTheFutureInsteadOfHangingIt() throws Exception {
+        ExecutorService boss = Executors.newSingleThreadExecutor();
+        ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
+        var ownedEngine = new DefaultNioEngine(boss, workers);
+        var stageEntered = new CountDownLatch(1);
+        var bossGone = new CountDownLatch(1);
+        engineStageAwaiting(ownedEngine, stageEntered, bossGone);
+
+        CompletableFuture<Object> result = ownedEngine.call(1, new ConcurrentHashMap<>())
+                .orTimeout(5, TimeUnit.SECONDS);
+        assertTrue(stageEntered.await(5, TimeUnit.SECONDS));
+        boss.shutdownNow();
+        bossGone.countDown();
+
+        // The worker finishes but cannot resume on the boss: the execution
+        // must end exceptionally, never leave the future hanging.
+        assertThrows(CompletionException.class, result::join);
+        workers.shutdownNow();
+    }
+
+    private static void engineStageAwaiting(DefaultNioEngine engine, CountDownLatch entered, CountDownLatch resume) {
+        engine.append(stage("parked", value -> {
+            entered.countDown();
+            try {
+                resume.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return value;
+        }));
     }
 }

@@ -24,7 +24,6 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -132,7 +131,9 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public void inject(Object input) {
-        inject(input, new ConcurrentHashMap<>());
+        // No context: nothing on the hot path reads it, so nothing is allocated
+        // for it (the future Context API will lazy-init on first access).
+        inject(input, null);
     }
 
     @Override
@@ -208,33 +209,18 @@ public class DefaultNioEngine implements NioEngine {
         if (plan != null && plan.links() != chain) {
             plan = null;
         }
+        // The raw result future goes straight to the caller: bookkeeping
+        // (drain slot, metrics, handlers) runs inside Execution BEFORE the
+        // future completes, so no dependent whenComplete future is allocated.
         Execution execution = new Execution(nextBoss(), plan != null ? chain : List.copyOf(chain),
-                context != null ? context : new ConcurrentHashMap<>(), plan);
+                context, plan, input);
         activeExecutions.incrementAndGet();
-        execution.boss.execute(() -> execution.advance(0, input));
-        return execution.result.whenComplete((value, error) -> {
-            if (activeExecutions.decrementAndGet() == 0) {
-                synchronized (drainLock) {
-                    drainLock.notifyAll();
-                }
-            }
-            if (execution.metrics != null) {
-                long elapsed = System.nanoTime() - execution.startNanos;
-                if (error != null) {
-                    execution.metrics.executionFailed(unwrap(error), elapsed);
-                } else if (value == FILTERED) {
-                    execution.metrics.executionFiltered(elapsed);
-                } else {
-                    execution.metrics.executionCompleted(elapsed);
-                }
-            }
-            if (error != null) {
-                errorHandlers.forEach(handler -> handler.accept(unwrap(error)));
-            } else {
-                Object exposed = value == FILTERED ? null : value;
-                completeHandlers.forEach(handler -> handler.accept(exposed));
-            }
-        });
+        try {
+            execution.boss.execute(execution);
+        } catch (RejectedExecutionException rejected) {
+            execution.fail(rejected);
+        }
+        return execution.result;
     }
 
     @Override
@@ -528,8 +514,10 @@ public class DefaultNioEngine implements NioEngine {
      * One execution per request: chain snapshot, decisions and result of its own,
      * pinned to one boss. Orchestration (advance/recover) always runs on that
      * boss; user code from Stage/Background/Recovery runs on the workers.
+     * Runnable IS the initial boss task (advance from link 0) — no extra
+     * closure per call.
      */
-    private final class Execution {
+    private final class Execution implements Runnable {
 
         // Bitset limit: ids 0..511 fit in 16 longs (128 bytes). Beyond that the
         // bitset would outgrow a small map, so decisions overflow into one.
@@ -537,7 +525,13 @@ public class DefaultNioEngine implements NioEngine {
 
         private final ExecutorService boss;
         private final List<Link> links;
+        private final Object input;
+        // Per-execution context handed in by the caller; may be null — nothing
+        // in the engine reads it, it only travels for future typed accessors.
         private final Map<String, Object> context;
+        // Exactly-once completion guard. Written on the boss; the only off-boss
+        // writer is the resume-rejection path, which implies the boss is gone.
+        private volatile boolean finished;
         // Decisions as a bitset, 2 bits per id (bit 0 = recorded, bit 1 = value),
         // sized to the chain's highest Decision id: recording and guard checks
         // are O(1) with zero allocation, and an unrecorded decision fails any
@@ -554,17 +548,71 @@ public class DefaultNioEngine implements NioEngine {
         private final long startNanos;
 
         private Execution(ExecutorService boss, List<Link> links, Map<String, Object> context,
-                          CompiledChain plan) {
+                          CompiledChain plan, Object input) {
             this.boss = boss;
             this.links = links;
             this.context = context;
             this.plan = plan;
+            this.input = input;
             int maxDecision = plan != null ? plan.maxDecisionId() : maxDecisionId(links);
             this.decisionBits = maxDecision >= 0 && maxDecision <= MAX_BITSET_DECISION_ID
                     ? new long[(maxDecision >>> 5) + 1]
                     : null;
             this.metrics = DefaultNioEngine.this.metrics;
             this.startNanos = metrics != null ? System.nanoTime() : 0;
+        }
+
+        @Override
+        public void run() {
+            advance(0, input);
+        }
+
+        /**
+         * Exactly-once terminal completion. Bookkeeping (drain slot, metrics,
+         * handlers) runs BEFORE the future completes so a joining caller
+         * always observes it done — same ordering the old whenComplete
+         * wrapper gave, without allocating a dependent future per call.
+         */
+        private void complete(Object value) {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            finishBookkeeping(value, null);
+            result.complete(value);
+        }
+
+        private void fail(Throwable error) {
+            if (finished) {
+                return;
+            }
+            finished = true;
+            finishBookkeeping(null, unwrap(error));
+            result.completeExceptionally(error);
+        }
+
+        private void finishBookkeeping(Object value, Throwable error) {
+            if (activeExecutions.decrementAndGet() == 0) {
+                synchronized (drainLock) {
+                    drainLock.notifyAll();
+                }
+            }
+            if (metrics != null) {
+                long elapsed = System.nanoTime() - startNanos;
+                if (error != null) {
+                    metrics.executionFailed(error, elapsed);
+                } else if (value == FILTERED) {
+                    metrics.executionFiltered(elapsed);
+                } else {
+                    metrics.executionCompleted(elapsed);
+                }
+            }
+            if (error != null) {
+                errorHandlers.forEach(handler -> handler.accept(error));
+            } else {
+                Object exposed = value == FILTERED ? null : value;
+                completeHandlers.forEach(handler -> handler.accept(exposed));
+            }
         }
 
         // Iterative, never recursive: a deep chain of cheap links is walked
@@ -590,7 +638,7 @@ public class DefaultNioEngine implements NioEngine {
                             case Decision decision -> recordDecision(decision.id(), decision.predicate().test(current));
                             case Filter filter -> {
                                 if (!filter.predicate().test(current)) {
-                                    result.complete(FILTERED);
+                                    complete(FILTERED);
                                     return;
                                 }
                             }
@@ -615,7 +663,7 @@ public class DefaultNioEngine implements NioEngine {
                 }
                 index++;
             }
-            result.complete(current);
+            complete(current);
         }
 
         /**
@@ -674,62 +722,85 @@ public class DefaultNioEngine implements NioEngine {
                 resume = next;
                 run = selected == null ? null : selected.toArray(Link[]::new);
             }
-            CompletableFuture<Object> task = run == null || run.length == 1
-                    ? CompletableFuture.supplyAsync(() -> applyStage(first, value), workersExecutorService)
-                    : fusedTask(run, value);
-            task.whenCompleteAsync((nextValue, error) -> {
-                if (error != null) {
-                    recover(resume, unwrap(error));
-                } else if (nextValue == FILTERED) {
-                    result.complete(FILTERED);
-                } else {
-                    advance(resume, nextValue);
+            // Manual boss→worker→boss handoff: the CompletableFuture machinery
+            // (async task, dependent future, composition nodes) buys nothing
+            // here — no composition, no timeout — and costs several
+            // allocations per dispatch. Two plain closures do the round trip.
+            Link[] selectedRun = run;
+            int resumeAt = resume;
+            workersExecutorService.execute(() -> {
+                Object outcome;
+                try {
+                    outcome = selectedRun == null || selectedRun.length == 1
+                            ? applyStage(first, value)
+                            : applyRun(selectedRun, value);
+                } catch (Throwable error) {
+                    resumeOnBoss(() -> recover(resumeAt, unwrap(error)));
+                    return;
                 }
-            }, boss);
+                Object nextValue = outcome;
+                resumeOnBoss(() -> {
+                    if (nextValue == FILTERED) {
+                        complete(FILTERED);
+                    } else {
+                        advance(resumeAt, nextValue);
+                    }
+                });
+            });
         }
 
-        private CompletableFuture<Object> fusedTask(Link[] run, Object value) {
-            return CompletableFuture.supplyAsync(() -> {
-                Object current = value;
-                for (int i = 0; i < run.length; i++) {
-                    try {
-                        if (run[i] instanceof Stage stage) {
-                            current = applyStage(stage, current);
-                        } else if (run[i] instanceof Filter filter && !filter.predicate().test(current)) {
-                            return FILTERED;
-                        }
-                        // Recovery: skipped on the happy path
-                    } catch (Throwable error) {
-                        // Positional semantics inside the run: look forward for the
-                        // next Recovery; a throwing recovery keeps scanning with the
-                        // new failure; with none left, escape the run (the boss then
-                        // scans the rest of the chain from the run's end).
-                        Throwable pending = error;
-                        int next = i + 1;
-                        boolean recovered = false;
-                        while (next < run.length) {
-                            if (run[next] instanceof Recovery recovery) {
-                                try {
-                                    current = recovery.function().apply(pending);
-                                    if (metrics != null) {
-                                        metrics.recoveryApplied(recovery.name());
-                                    }
-                                    recovered = true;
-                                    break;
-                                } catch (Throwable failure) {
-                                    pending = failure;
-                                }
-                            }
-                            next++;
-                        }
-                        if (!recovered) {
-                            throw new CompletionException(pending);
-                        }
-                        i = next;
+        // Orchestration may only resume on the boss. A rejection means the
+        // engine-owned boss executor was shut down mid-flight: the execution
+        // can only end exceptionally (never silently, never on this thread).
+        private void resumeOnBoss(Runnable continuation) {
+            try {
+                boss.execute(continuation);
+            } catch (RejectedExecutionException rejected) {
+                fail(rejected);
+            }
+        }
+
+        // The fused run, applied on the worker as one plain call chain.
+        private Object applyRun(Link[] run, Object value) {
+            Object current = value;
+            for (int i = 0; i < run.length; i++) {
+                try {
+                    if (run[i] instanceof Stage stage) {
+                        current = applyStage(stage, current);
+                    } else if (run[i] instanceof Filter filter && !filter.predicate().test(current)) {
+                        return FILTERED;
                     }
+                    // Recovery: skipped on the happy path
+                } catch (Throwable error) {
+                    // Positional semantics inside the run: look forward for the
+                    // next Recovery; a throwing recovery keeps scanning with the
+                    // new failure; with none left, escape the run (the boss then
+                    // scans the rest of the chain from the run's end).
+                    Throwable pending = error;
+                    int next = i + 1;
+                    boolean recovered = false;
+                    while (next < run.length) {
+                        if (run[next] instanceof Recovery recovery) {
+                            try {
+                                current = recovery.function().apply(pending);
+                                if (metrics != null) {
+                                    metrics.recoveryApplied(recovery.name());
+                                }
+                                recovered = true;
+                                break;
+                            } catch (Throwable failure) {
+                                pending = failure;
+                            }
+                        }
+                        next++;
+                    }
+                    if (!recovered) {
+                        throw new CompletionException(pending);
+                    }
+                    i = next;
                 }
-                return current;
-            }, workersExecutorService);
+            }
+            return current;
         }
 
         /**
@@ -851,7 +922,7 @@ public class DefaultNioEngine implements NioEngine {
                     return;
                 }
             }
-            result.completeExceptionally(error);
+            fail(error);
         }
 
         private Object applyRecovery(Recovery recovery, Throwable error) {
