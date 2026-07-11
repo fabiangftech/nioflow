@@ -59,6 +59,18 @@ class DefaultLane<T> implements Lane<T> {
     }
 
     @Override
+    public Lane<T> recover(Function<Throwable, T> function) {
+        view.recover(function);
+        return this;
+    }
+
+    @Override
+    public Lane<T> recover(String name, Function<Throwable, T> function) {
+        view.recover(name, function);
+        return this;
+    }
+
+    @Override
     public LaneCondition<T> when(Predicate<T> predicate) {
         return new DefaultLaneCondition<>(view, view.appendDecision(predicate));
     }

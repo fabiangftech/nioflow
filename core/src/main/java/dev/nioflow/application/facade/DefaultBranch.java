@@ -75,6 +75,16 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     }
 
     @Override
+    public NioFlow<I, T> recover(Function<Throwable, T> function) {
+        return flow.recover(function);
+    }
+
+    @Override
+    public NioFlow<I, T> recover(String name, Function<Throwable, T> function) {
+        return flow.recover(name, function);
+    }
+
+    @Override
     public Condition<I, T> when(Predicate<T> predicate) {
         return flow.when(predicate);
     }

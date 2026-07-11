@@ -23,6 +23,14 @@ public interface Lane<T> {
 
     Lane<T> filter(Predicate<T> predicate);
 
+    /**
+     * Positional error handling scoped to this lane: it inherits the lane's
+     * guards, so it only catches failures of values routed through this branch.
+     */
+    Lane<T> recover(Function<Throwable, T> function);
+
+    Lane<T> recover(String name, Function<Throwable, T> function);
+
     LaneCondition<T> when(Predicate<T> predicate);
 
     LaneCases<T> match();

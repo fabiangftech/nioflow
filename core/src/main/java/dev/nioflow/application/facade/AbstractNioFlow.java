@@ -9,6 +9,7 @@ import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
+import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Stage;
 
 import java.util.ArrayList;
@@ -71,6 +72,18 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     @SuppressWarnings("unchecked")
     public NioFlow<I, T> filter(Predicate<T> predicate) {
         appendLink(new Filter((Predicate<Object>) predicate, guards()));
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> recover(Function<Throwable, T> function) {
+        return recover(anonymousName("recovery"), function);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public NioFlow<I, T> recover(String name, Function<Throwable, T> function) {
+        appendLink(new Recovery(name, (Function<Throwable, Object>) function, guards()));
         return this;
     }
 

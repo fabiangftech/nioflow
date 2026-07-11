@@ -34,7 +34,7 @@ cd examples/springboot-with-nioflow
 ./gradlew bootRun        # serves GET /greeting on :8080
 ```
 
-Tests are JUnit 6 (Jupiter), under `core/src/test/java/dev/nioflow/application/facade/`.
+Tests are JUnit 6 (Jupiter), under `core/src/test/java/dev/nioflow/application/facade/`, split **one class per feature** (`DefaultNioFlowForkTest`, `DefaultNioEngineFusionTest`, ...) — add new tests to the matching feature class or create a new one, never grow a catch-all class. Engine test classes extend `EngineTestSupport` (fresh engine per test + `stage()` helper).
 
 `tests/` is a third Gradle build (also composite against core) for bug-hunting stress tests and JMH benchmarks — functional coverage stays in core:
 
@@ -66,7 +66,7 @@ Two rules define it:
 Hot-path rules the benchmarks enforce (see `tests/`):
 
 - `advance` must stay **iterative**, never recursive: cheap links (Decision/Filter/Background/guard-skips) are walked in a loop on the boss, and a recursive version overflows the boss stack on deep chains, killing the task and leaving the request future hanging forever (regression: `DeepChainStressTest`).
-- **Stage fusion**: a run of consecutive no-timeout `Stage`s and `Filter`s travels boss→worker→boss as ONE composed function (2 thread hops per run, not per link — measured ~5x on an 8-stage chain, ~1.5x on stage-filter-stage). Fused `Filter` predicates evaluate on the worker; a rejection returns the internal `FILTERED` sentinel and completes the flow with `null`. Guard-skipped links inside the run are stepped over (decisions can't change until the next passing `Decision`, which ends the run); a failure anywhere in the run recovers from the run's end, equivalent because runs contain no `Recovery` links by construction. Stages with a timeout dispatch alone.
+- **Stage fusion**: a run of consecutive no-timeout `Stage`s, `Filter`s and `Recovery`s travels boss→worker→boss as ONE composed function (2 thread hops per run, not per link — measured ~5x on an 8-stage chain, ~1.5x on stage-filter-stage). Fused `Filter` predicates evaluate on the worker; a rejection returns the internal `FILTERED` sentinel and completes the flow with `null`. Fused `Recovery`s keep positional semantics inside the run: a failure scans forward for the next in-run `Recovery` and continues from it; with none left it escapes the run and the boss scans the rest of the chain from the run's end — equivalent, because the segment in between was already searched. Guard-skipped links inside the run are stepped over (decisions can't change until the next passing `Decision`, which ends the run). Stages with a timeout dispatch alone.
 - No streams or allocations on the per-link path (`passesGuards` is a plain loop — the stream version cost ~20% on fork routing).
 
 Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()` style): a pool of daemon bosses (≥2, sized by available processors) + one virtual-thread worker pool shared by every engine created with the default constructor, no matter how many `DefaultNioFlow`s exist. `shutdown()` only terminates executors that were explicitly passed in (`ownsExecutors`); shared ones survive so closing one flow never starves the others.
@@ -76,7 +76,7 @@ Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()`
 - The chain is an **immutable list swapped atomically** (`volatile`); `append`/`splice` build a new list under `synchronized`. Every `call()` snapshots the chain at submission, so a runtime `splice` never affects in-flight executions — the next call sees the new chain.
 - Each `call()` gets its own `Execution` (chain snapshot, decisions map, result future): concurrent requests share nothing. The decisions map is only ever touched on the boss.
 - `seal()` blocks `append` (frozen definition) but **not** `splice` — splice *is* the runtime-edit operation, anchored on `Stage`/`Background` names. `release()` re-opens appending.
-- `Recovery` is positional: it catches failures (including `Stage` timeouts via `orTimeout`) from links upstream of it; execution continues after it with the recovered value. With no matching recovery, the failure reaches `errorHandlers` and the call's future.
+- `Recovery` is positional: it catches failures (including `Stage` timeouts via `orTimeout`) from links upstream of it; execution continues after it with the recovered value. With no matching recovery, the failure reaches `errorHandlers` and the call's future. Declared fluently via `recover(fn)` / `recover(name, fn)` on `NioFlow` and `Lane` — a lane-scoped recover inherits the lane's guards and only catches failures of values routed through that branch. Named recoveries are splice anchors like stages.
 - `Filter` short-circuits by completing the flow with `null`. `Background` never waits and never fails the flow; a throwing effect reports to `errorHandlers` only.
 - `inject`/`await` are the fire-and-forget pair (results queue up in `inFlight`); `call` is the request/response form returning a `CompletableFuture`.
 

@@ -29,6 +29,15 @@ public interface NioFlow<I, T> {
 
     NioFlow<I, T> filter(Predicate<T> predicate);
 
+    /**
+     * Positional error handling: catches failures (exceptions and stage
+     * timeouts) from links declared upstream of it, and the flow continues
+     * after it with the recovered value. Failures downstream are not caught.
+     */
+    NioFlow<I, T> recover(Function<Throwable, T> function);
+
+    NioFlow<I, T> recover(String name, Function<Throwable, T> function);
+
     Condition<I, T> when(Predicate<T> predicate);
 
     Cases<I, T> match();

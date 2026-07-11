@@ -51,7 +51,7 @@ public class AdminController {
                     case Background background -> "background:" + background.name();
                     case Filter ignored -> "filter";
                     case Decision decision -> "decision:" + decision.id();
-                    case Recovery ignored -> "recovery";
+                    case Recovery recovery -> "recovery:" + recovery.name();
                 })
                 .toList();
     }

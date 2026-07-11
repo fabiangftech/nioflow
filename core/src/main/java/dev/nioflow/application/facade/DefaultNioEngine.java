@@ -246,6 +246,7 @@ public class DefaultNioEngine implements NioEngine {
             String name = switch (links.get(i)) {
                 case Stage stage -> stage.name();
                 case Background background -> background.name();
+                case Recovery recovery -> recovery.name();
                 default -> null;
             };
             if (anchor.equals(name)) {
@@ -317,15 +318,18 @@ public class DefaultNioEngine implements NioEngine {
 
         /**
          * Stage fusion: starting at index, take the maximal run of consecutive
-         * no-timeout Stages and Filters (guard-skipped links inside the run are
-         * stepped over — decisions cannot change until the next passing Decision,
-         * which ends the run). The whole run travels boss→worker→boss as ONE
-         * composed function: 2 thread hops per run instead of 2 per link. Fused
-         * Filter predicates run on the worker (off the boss); a rejection returns
-         * the FILTERED sentinel and completes the flow with null, same as a
-         * boss-side cut. A failure anywhere in the run recovers from the end of
-         * the run, which is equivalent because a run contains no Recovery links
-         * by construction.
+         * no-timeout Stages, Filters and Recoveries (guard-skipped links inside
+         * the run are stepped over — decisions cannot change until the next
+         * passing Decision, which ends the run). The whole run travels
+         * boss→worker→boss as ONE composed function: 2 thread hops per run
+         * instead of 2 per link. Fused Filter predicates run on the worker; a
+         * rejection returns the FILTERED sentinel and completes the flow with
+         * null, same as a boss-side cut. Fused Recoveries preserve positional
+         * semantics inside the run: a failure looks forward for the next
+         * Recovery in the run and continues from there; with none left, the
+         * failure escapes the run and recover(resume) scans the rest of the
+         * chain — equivalent, because everything between the failure and the
+         * run's end has already been searched.
          */
         private void dispatch(int index, Object value) {
             Stage first = (Stage) links.get(index);
@@ -342,6 +346,7 @@ public class DefaultNioEngine implements NioEngine {
                     continue;
                 }
                 boolean fusable = link instanceof Filter
+                        || link instanceof Recovery
                         || (link instanceof Stage stage && stage.timeout() == null);
                 if (!fusable) {
                     break;
@@ -372,10 +377,37 @@ public class DefaultNioEngine implements NioEngine {
             return CompletableFuture.supplyAsync(() -> {
                 Object current = value;
                 for (int i = 0; i < run.size(); i++) {
-                    if (run.get(i) instanceof Stage stage) {
-                        current = stage.function().apply(current);
-                    } else if (run.get(i) instanceof Filter filter && !filter.predicate().test(current)) {
-                        return FILTERED;
+                    try {
+                        if (run.get(i) instanceof Stage stage) {
+                            current = stage.function().apply(current);
+                        } else if (run.get(i) instanceof Filter filter && !filter.predicate().test(current)) {
+                            return FILTERED;
+                        }
+                        // Recovery: skipped on the happy path
+                    } catch (Throwable error) {
+                        // Positional semantics inside the run: look forward for the
+                        // next Recovery; a throwing recovery keeps scanning with the
+                        // new failure; with none left, escape the run (the boss then
+                        // scans the rest of the chain from the run's end).
+                        Throwable pending = error;
+                        int next = i + 1;
+                        boolean recovered = false;
+                        while (next < run.size()) {
+                            if (run.get(next) instanceof Recovery recovery) {
+                                try {
+                                    current = recovery.function().apply(pending);
+                                    recovered = true;
+                                    break;
+                                } catch (Throwable failure) {
+                                    pending = failure;
+                                }
+                            }
+                            next++;
+                        }
+                        if (!recovered) {
+                            throw new CompletionException(pending);
+                        }
+                        i = next;
                     }
                 }
                 return current;
