@@ -13,6 +13,7 @@ Entry point: `dev.nioflow.application.facade.DefaultNioFlow<T>` — implements t
 | `new DefaultNioFlow<>(ExecutorService ex)` | Your executor for `submit` stages; you keep its lifecycle. |
 | `new DefaultNioFlow<>(ExecutorService ex, int handleWorkers)` | Plus a fixed handle-worker pool bounding sync parallelism (CPU-heavy chains). |
 | `new DefaultNioFlow<>(ExecutorService ex, int handleWorkers, Backpressure bp)` | Fully tuned. |
+| `DefaultNioFlow.autoScoped([ex][, workers][, bp])` | Per-call flow: every fluent chain opens its own [scope](#scoped-flows). The fit for one shared bean whose callers declare their own stages. |
 
 ## Injecting values
 
@@ -136,6 +137,8 @@ flow.scoped()
     .handle("greeting", s -> s + ", World!")
     .join();                             // "Hello, World!" — the shared chain stays untouched
 ```
+
+A flow built with `DefaultNioFlow.autoScoped()` does this implicitly: every fluent chain started on it opens its own scope, and the shared-pipeline operations (`join`, `seal`, `release`, structural edits) throw on the flow itself — there is no shared chain to act on.
 
 ## Backpressure
 

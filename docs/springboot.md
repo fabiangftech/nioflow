@@ -2,7 +2,7 @@
 
 nio-flow needs **no Spring adapter and no extra dependency**: a flow is a plain `AutoCloseable` bean, `call` returns a `CompletableFuture` that WebMVC resolves natively (and WebFlux wraps in one line), and scopes and runtime edits let a single shared instance serve every controller. Just add the core dependency and wire beans.
 
-The one rule that matters: **controllers never declare stages on the shared flow** — a `handle(...)` inside a request handler appends a permanent link on every call, so the chain grows with each request. Either declare the chain once in configuration, or use a [scope](#one-empty-flow-stages-at-the-call-site) so the stages you declare are private to that call.
+The one rule that matters: **controllers never declare stages on a shared pipeline** — a `handle(...)` inside a request handler appends a permanent link on every call, so the chain grows with each request. Either declare the chain once in configuration, or build the bean with [`DefaultNioFlow.autoScoped()`](#one-flow-stages-at-the-call-site) so every chain a controller declares is automatically private to that call.
 
 ## One shared flow, chain declared once
 
@@ -85,44 +85,45 @@ void reroute() {
 
 A later `replace("routes", ...)` swaps the whole previous segment (not just one link), and `remove("routes")` takes all of it out. Edits are engine-locked — safe from any thread. See [runtime editing](reference.md#runtime-editing).
 
-## One empty flow, stages at the call site
+## One flow, stages at the call site
 
-When each endpoint wants its *own* mini-pipeline, keep the bean empty and open a **scope** per call: the stages you declare are private to that scope, concurrent requests never see each other, and nothing accumulates on the shared chain.
+When each endpoint wants its *own* mini-pipeline, build the bean with `DefaultNioFlow.autoScoped()`: every fluent chain started on it automatically opens a private **scope**, so the stages a controller declares belong to that call alone — concurrent requests never see each other, and nothing accumulates.
 
 ```java
 @Bean(destroyMethod = "close")
 NioFlow<String> flow() {
-    return new DefaultNioFlow<>();              // empty: no handlers, no chain
+    return DefaultNioFlow.autoScoped();         // every chain is its own scope
 }
 ```
 
 ```java
 @GetMapping("/greeting")
 public ResponseEntity<?> greeting() {
-    return ResponseEntity.ok(flow.scoped()
+    return ResponseEntity.ok(flow
             .just("Hello")
             .handle("greeting", s -> s + ", World!")
-            .join());                           // waits for this scope's values only
+            .join());                           // waits for this chain's values only
 }
 ```
 
-Inside a scope, `join()` is fine: it flushes the scope's buffered values through its private chain and waits for those values only. Scopes ride the shared engine — threads, executor, backpressure — and their values are released on finish, so memory stays flat with no `seal()` needed. The async style works too:
+Here `join()` is fine: it belongs to the chain you just built and waits for its values only. Scopes ride the shared engine — threads, executor, backpressure — and their values are released on finish, so memory stays flat with no `seal()` needed. The async style works too:
 
 ```java
 @PostMapping("/quotes")
 CompletableFuture<Quote> quote(@RequestBody Request request) {
-    return flow.scoped()
-            .handle(r -> normalize(r))
+    return flow.handle(r -> normalize(r))
             .submit(r -> priceRemote(r))
             .adapt(r -> toQuote(r))
             .call(request, Duration.ofSeconds(2));
 }
 ```
 
+An auto-scoped flow has no shared chain, so shared-pipeline operations called directly on the bean — `join`, `seal`, `release`, structural edits — throw `IllegalStateException` with a message that explains the model, instead of silently misbehaving. `onComplete`/`onError`/`metrics`/`trace` on the bean are global observers across every chain. On a *classic* flow (`new DefaultNioFlow<>()`), the same per-call isolation is one explicit word away: `flow.scoped()`.
+
 ## Lifecycle and tips
 
 - **Shutdown**: `@Bean(destroyMethod = "close")` drains in-flight values for up to 10 s, then stops the engine — and never touches an executor you supplied. (Spring also infers `close` for `AutoCloseable` beans; being explicit documents the intent.)
-- **Which mode for the shared bean?** `seal()` when the chain is fixed — loud failure on accidental mutation. `release()` when you need runtime edits. Neither, plus `scoped()`, when the bean is just a shared engine.
+- **Which mode for the shared bean?** `seal()` when the chain is fixed — loud failure on accidental mutation. `release()` when you need runtime edits. `DefaultNioFlow.autoScoped()` when controllers declare their own stages per call.
 - **Observability is global**: register `metrics(...)`/`trace(...)` on the bean at configuration time; they throw on a scope by design.
 - Closing a scope (or try-with-resources around one) never stops the shared engine.
 - One bean per distinctly-typed flow is the natural layout; scopes cover the ad-hoc cases.

@@ -18,7 +18,7 @@
     <div class="hero-inner">
 
       <nav class="hero-nav" aria-label="Primary">
-        <a class="hero-logo" href="#/">nio<span class="logo-dot">·</span>flow</a>
+        <a class="hero-logo" href="#/">NioFlow</a>
         <div class="hero-nav-links">
           <a href="#/quickstart">Quick start</a>
           <a href="#/examples">Examples</a>
@@ -29,7 +29,7 @@
       </nav>
 
       <div class="hero-head">
-        <p class="hero-eyebrow">Async flow library · Java 25+ · Zero dependencies</p>
+        <p class="hero-eyebrow">Async&nbsp;flow&nbsp;library · Java&nbsp;25+ · Zero&nbsp;dependencies</p>
         <h1>Many values in flight.<br><span class="accent">None of them waiting.</span></h1>
         <p class="hero-sub">
           Declare the chain once — <code>handle</code> for sync stages, <code>submit</code>
@@ -42,70 +42,150 @@
            others overtake; one fails and is recovered by onErrorResume. -->
       <div class="hero-canvas">
         <svg id="flow-diagram" viewBox="0 68 1000 210" role="img"
-             aria-label="Animated diagram of a nio-flow chain: values flow through handle, submit and forked lanes; a value stalled on slow IO is overtaken by others; a failed value is recovered by onErrorResume and reaches join.">
+             aria-label="Animated diagram of a nio-flow chain: values pause inside each stage as it runs — handle, submit, then one lane of a when fork; a value stalled on slow IO is overtaken; a failed value takes the dashed recovery detour through onErrorResume, healthy values skip it, and all reach join.">
 
-          <!-- rails -->
-          <path id="railA" class="flow-rail" d="M30,170 L500,170 C545,170 545,105 590,105 L745,105 C790,105 790,170 835,170 L955,170"/>
-          <path id="railB" class="flow-rail" d="M30,170 L500,170 C545,170 545,235 590,235 L745,235 C790,235 790,170 835,170 L955,170"/>
+          <!-- rails: one per lane; the dashed detour is walked by failed values only -->
+          <path id="railA" class="flow-rail" d="M25,170 L435,170 C470,170 470,105 505,105 L650,105 C685,105 685,170 720,170 L955,170"/>
+          <path id="railB" class="flow-rail" d="M25,170 L435,170 C470,170 470,235 505,235 L650,235 C685,235 685,170 720,170 L955,170"/>
+          <path class="flow-rail flow-rail-detour" d="M760,170 C795,170 795,237 815,237 L875,237 C910,237 910,170 930,170"/>
+          <path id="railR" class="flow-rail-ghost" d="M25,170 L435,170 C470,170 470,235 505,235 L650,235 C685,235 685,170 720,170 L760,170 C795,170 795,237 815,237 L875,237 C910,237 910,170 930,170 L955,170"/>
 
           <!-- endpoints -->
-          <circle class="flow-endpoint" cx="30" cy="170" r="5"/>
-          <text class="flow-node-label" x="30" y="205" text-anchor="middle">just()</text>
+          <circle class="flow-endpoint" cx="25" cy="170" r="5"/>
+          <text class="flow-node-label" x="25" y="205" text-anchor="middle">just()</text>
           <circle class="flow-endpoint" cx="955" cy="170" r="6"/>
           <text class="flow-node-label" x="955" y="205" text-anchor="middle">join()</text>
 
           <!-- stages -->
-          <rect class="flow-node" x="110" y="155" width="140" height="30" rx="15"/>
-          <text class="flow-node-label" x="180" y="174" text-anchor="middle">handle[validate]</text>
+          <rect class="flow-node" x="85" y="155" width="125" height="30" rx="15"/>
+          <text class="flow-node-label" x="147" y="174" text-anchor="middle">handle[validate]</text>
 
-          <rect class="flow-node" x="300" y="155" width="140" height="30" rx="15"/>
-          <text class="flow-node-label" x="370" y="174" text-anchor="middle">submit[enrich]</text>
-          <text class="flow-tag" x="370" y="141" text-anchor="middle">slow io</text>
+          <rect class="flow-node" x="255" y="155" width="125" height="30" rx="15"/>
+          <text class="flow-node-label" x="317" y="174" text-anchor="middle">submit[enrich]</text>
+          <text class="flow-tag" x="317" y="141" text-anchor="middle">slow io</text>
 
-          <path class="flow-node" d="M500,148 L524,170 L500,192 L476,170 Z"/>
-          <text class="flow-tag" x="500" y="138" text-anchor="middle">when</text>
+          <path class="flow-node" d="M435,148 L459,170 L435,192 L411,170 Z"/>
+          <text class="flow-tag" x="435" y="138" text-anchor="middle">when</text>
 
-          <rect class="flow-node" x="600" y="90" width="145" height="30" rx="15"/>
-          <text class="flow-node-label" x="672" y="109" text-anchor="middle">submit[notify]</text>
+          <rect class="flow-node" x="505" y="90" width="145" height="30" rx="15"/>
+          <text class="flow-node-label" x="577" y="109" text-anchor="middle">submit[notify]</text>
+          <text class="flow-tag" x="577" y="81" text-anchor="middle">then lane</text>
 
-          <rect class="flow-node" x="600" y="220" width="145" height="30" rx="15"/>
-          <text class="flow-node-label" x="672" y="239" text-anchor="middle">handle[queue]</text>
+          <rect class="flow-node" x="505" y="220" width="145" height="30" rx="15"/>
+          <text class="flow-node-label" x="577" y="239" text-anchor="middle">handle[queue]</text>
+          <text class="flow-tag" x="577" y="267" text-anchor="middle">otherwise lane</text>
 
-          <rect class="flow-node" x="825" y="155" width="110" height="30" rx="15"/>
-          <text class="flow-node-label" x="880" y="174" text-anchor="middle">onErrorResume</text>
+          <rect class="flow-node" x="785" y="222" width="120" height="30" rx="15"/>
+          <text class="flow-node-label" x="845" y="241" text-anchor="middle">onErrorResume</text>
+          <text class="flow-tag" x="845" y="270" text-anchor="middle">failed values only</text>
 
-          <!-- values in flight -->
+          <!-- values in flight: each dot pauses inside a stage while it runs -->
           <circle class="flow-dot" r="6" fill="#0794C4">
-            <animateMotion dur="5.5s" begin="-2.5s" repeatCount="indefinite">
+            <animateMotion dur="7s" begin="-3s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.12;0.12;0.29;0.29;0.59;0.59;1"
+                           keyTimes="0;0.10;0.16;0.30;0.36;0.60;0.66;1">
               <mpath href="#railA"/>
             </animateMotion>
           </circle>
 
           <circle class="flow-dot" r="6" fill="#0794C4">
-            <animateMotion dur="6.8s" begin="-1s" repeatCount="indefinite">
+            <animateMotion dur="7.8s" begin="-1.2s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.12;0.12;0.29;0.29;0.59;0.59;1"
+                           keyTimes="0;0.10;0.16;0.30;0.36;0.60;0.66;1">
               <mpath href="#railB"/>
             </animateMotion>
           </circle>
 
-          <!-- the stalled value: pauses inside submit[enrich] while others overtake -->
+          <!-- the stalled value: stuck on slow IO inside submit[enrich] while others overtake -->
           <circle class="flow-dot" r="6" fill="#0794C4">
-            <animateMotion dur="9s" begin="-4.5s" repeatCount="indefinite"
-                           calcMode="linear"
-                           keyPoints="0;0.36;0.36;1" keyTimes="0;0.3;0.62;1">
+            <animateMotion dur="9.5s" begin="-5s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.12;0.12;0.29;0.29;0.59;0.59;1"
+                           keyTimes="0;0.08;0.12;0.24;0.58;0.76;0.80;1">
               <mpath href="#railA"/>
+            </animateMotion>
+            <animate attributeName="r" dur="9.5s" begin="-5s" repeatCount="indefinite"
+                     values="6;6;7.5;6;6" keyTimes="0;0.24;0.41;0.58;1"/>
+          </circle>
+
+          <!-- the failing value: fails inside handle[queue], takes the recovery detour, resumes -->
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="8.5s" begin="-6.5s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.113;0.113;0.27;0.27;0.543;0.543;0.861;0.861;1"
+                           keyTimes="0;0.09;0.14;0.27;0.32;0.53;0.58;0.84;0.89;1">
+              <mpath href="#railR"/>
+            </animateMotion>
+            <animate attributeName="fill" dur="8.5s" begin="-6.5s" repeatCount="indefinite"
+                     values="#0794C4;#0794C4;#F26B5E;#F26B5E;#15B097;#15B097"
+                     keyTimes="0;0.54;0.57;0.84;0.88;1"/>
+          </circle>
+        </svg>
+
+        <!-- Compact vertical variant for narrow screens: same story, fewer steps —
+             a stalled value is overtaken, a failed one detours through recovery. -->
+        <svg id="flow-diagram-mobile" viewBox="78 0 240 320" role="img"
+             aria-label="Animated diagram of a nio-flow chain on mobile: values flow top to bottom, pausing inside handle and submit stages as they run; a value stalled on slow IO is overtaken; a failed value takes the dashed recovery detour through onErrorResume, healthy values skip it, and all reach join.">
+
+          <!-- rails: the dashed detour is walked by failed values only -->
+          <path id="railM" class="flow-rail" d="M150,26 L150,282"/>
+          <path class="flow-rail flow-rail-detour" d="M150,198 C150,225 195,225 249,225 C195,229 150,236 150,256"/>
+          <path id="railMR" class="flow-rail-ghost" d="M150,26 L150,195 C150,222 195,225 249,225 C195,228 150,235 150,258 L150,282"/>
+
+          <!-- endpoints -->
+          <circle class="flow-endpoint" cx="150" cy="26" r="5"/>
+          <text class="flow-node-label" x="134" y="30" text-anchor="end">just()</text>
+          <circle class="flow-endpoint" cx="150" cy="282" r="6"/>
+          <text class="flow-node-label" x="150" y="308" text-anchor="middle">join()</text>
+
+          <!-- stages -->
+          <rect class="flow-node" x="85" y="54" width="130" height="30" rx="15"/>
+          <text class="flow-node-label" x="150" y="73" text-anchor="middle">handle[validate]</text>
+
+          <rect class="flow-node" x="85" y="124" width="130" height="30" rx="15"/>
+          <text class="flow-node-label" x="150" y="143" text-anchor="middle">submit[enrich]</text>
+          <text class="flow-tag" x="224" y="143" text-anchor="start">slow io</text>
+
+          <rect class="flow-node" x="194" y="210" width="112" height="30" rx="15"/>
+          <text class="flow-node-label" x="250" y="229" text-anchor="middle">onErrorResume</text>
+          <text class="flow-tag" x="250" y="258" text-anchor="middle">failed only</text>
+
+          <!-- values in flight: each dot pauses inside a stage while it runs -->
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="5.5s" begin="-2s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.168;0.168;0.441;0.441;1"
+                           keyTimes="0;0.15;0.21;0.45;0.51;1">
+              <mpath href="#railM"/>
+            </animateMotion>
+          </circle>
+
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="6.8s" begin="-0.8s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.168;0.168;0.441;0.441;1"
+                           keyTimes="0;0.15;0.21;0.45;0.51;1">
+              <mpath href="#railM"/>
+            </animateMotion>
+          </circle>
+
+          <!-- the stalled value: stuck on slow IO inside submit[enrich] while others overtake -->
+          <circle class="flow-dot" r="6" fill="#0794C4">
+            <animateMotion dur="9s" begin="-4.5s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.168;0.168;0.441;0.441;1"
+                           keyTimes="0;0.10;0.14;0.28;0.62;1">
+              <mpath href="#railM"/>
             </animateMotion>
             <animate attributeName="r" dur="9s" begin="-4.5s" repeatCount="indefinite"
-                     values="6;6;7.5;6;6" keyTimes="0;0.3;0.46;0.62;1"/>
+                     values="6;6;7.5;6;6" keyTimes="0;0.28;0.45;0.62;1"/>
           </circle>
 
-          <!-- the failing value: fails at handle[queue], recovered by onErrorResume -->
+          <!-- the failing value: fails inside submit[enrich], takes the recovery detour, resumes -->
           <circle class="flow-dot" r="6" fill="#0794C4">
-            <animateMotion dur="7.5s" begin="-6s" repeatCount="indefinite">
-              <mpath href="#railB"/>
+            <animateMotion dur="8s" begin="-6s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0.105;0.105;0.275;0.275;0.679;0.679;1"
+                           keyTimes="0;0.09;0.15;0.29;0.35;0.68;0.74;1">
+              <mpath href="#railMR"/>
             </animateMotion>
-            <animate attributeName="fill" dur="7.5s" begin="-6s" repeatCount="indefinite"
+            <animate attributeName="fill" dur="8s" begin="-6s" repeatCount="indefinite"
                      values="#0794C4;#0794C4;#F26B5E;#F26B5E;#15B097;#15B097"
-                     keyTimes="0;0.66;0.69;0.91;0.94;1"/>
+                     keyTimes="0;0.33;0.36;0.68;0.72;1"/>
           </circle>
         </svg>
       </div>
@@ -140,7 +220,7 @@
     }
 
     window.$docsify = {
-      name: 'nio-flow',
+      name: 'NioFlow',
       repo: 'https://github.com/fabiangftech/nioflow',
       loadSidebar: true,
       subMaxLevel: 3,
@@ -186,10 +266,12 @@
       }
     });
 
-    // Respect prefers-reduced-motion: freeze the hero diagram (SMIL)
-    var diagram = document.getElementById('flow-diagram');
-    if (diagram && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      diagram.pauseAnimations();
+    // Respect prefers-reduced-motion: freeze the hero diagrams (SMIL)
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      ['flow-diagram', 'flow-diagram-mobile'].forEach(function (id) {
+        var diagram = document.getElementById(id);
+        if (diagram) diagram.pauseAnimations();
+      });
     }
 
     // "Documentation ↓" scrolls to the content instead of changing the route

@@ -11,6 +11,6 @@ public class NioFlowConfig {
 
     @Bean(destroyMethod = "close")
     public NioFlow<String> defaultNioFlow() {
-        return new DefaultNioFlow<>();
+        return DefaultNioFlow.autoScoped();
     }
 }

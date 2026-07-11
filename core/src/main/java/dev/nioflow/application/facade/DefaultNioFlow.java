@@ -107,6 +107,73 @@ public final class DefaultNioFlow<T> implements NioFlow<T> {
     private static final int VIRTUAL_HANDLE_WORKERS = 0;
 
     /**
+     * A per-call nio-flow: every fluent chain started on it automatically opens its
+     * own {@link #scoped() scope}, so many callers can share one instance — a web
+     * app's single bean — and each declare their own stages without interfering or
+     * accumulating anything on a shared chain:
+     *
+     * <pre>{@code
+     * NioFlow<String> flow = DefaultNioFlow.autoScoped();   // the shared bean
+     *
+     * flow.just("Hello")
+     *     .handle("greeting", s -> s + ", World!")
+     *     .join();                                          // isolated per call
+     * }</pre>
+     *
+     * <p>There is no shared chain, so shared-pipeline operations called directly on
+     * the returned flow — {@code join}, {@code seal}, {@code release}, structural
+     * edits — throw {@code IllegalStateException} instead of silently misbehaving;
+     * inside a chain they keep their scope semantics. {@code onComplete}/
+     * {@code onError}/{@code metrics}/{@code trace} on the returned flow are global
+     * observers, and {@code close} stops the one shared engine. Use the constructors
+     * instead when you want a classic declare-once pipeline.
+     *
+     * @param <T> the type of the values callers inject
+     * @return a flow where every chain is its own scope over one shared engine
+     */
+    public static <T> NioFlow<T> autoScoped() {
+        return new AutoScopedNioFlow<>(new DefaultNioFlow<>());
+    }
+
+    /**
+     * Like {@link #autoScoped()} with admission control shared by every scope.
+     *
+     * @param <T>          the type of the values callers inject
+     * @param backpressure the admission policy applied per injection at capacity
+     * @return a flow where every chain is its own scope over one shared engine
+     */
+    public static <T> NioFlow<T> autoScoped(Backpressure backpressure) {
+        return new AutoScopedNioFlow<>(new DefaultNioFlow<>(backpressure));
+    }
+
+    /**
+     * Like {@link #autoScoped()} with async stages of every scope running on the
+     * given executor; the caller keeps ownership of its lifecycle.
+     *
+     * @param <T>      the type of the values callers inject
+     * @param executor runs every {@code submit} stage of every scope
+     * @return a flow where every chain is its own scope over one shared engine
+     */
+    public static <T> NioFlow<T> autoScoped(ExecutorService executor) {
+        return new AutoScopedNioFlow<>(new DefaultNioFlow<>(executor));
+    }
+
+    /**
+     * Fully tuned {@link #autoScoped()}: executor, fixed handle-worker pool and
+     * backpressure, shared by every scope.
+     *
+     * @param <T>           the type of the values callers inject
+     * @param executor      runs every {@code submit} stage of every scope
+     * @param handleWorkers size of the fixed pool walking sync stages
+     * @param backpressure  the admission policy applied per injection at capacity
+     * @return a flow where every chain is its own scope over one shared engine
+     */
+    public static <T> NioFlow<T> autoScoped(ExecutorService executor, int handleWorkers,
+                                            Backpressure backpressure) {
+        return new AutoScopedNioFlow<>(new DefaultNioFlow<>(executor, handleWorkers, backpressure));
+    }
+
+    /**
      * A view over an already running engine: same chain, same values, but links
      * declared through this view carry {@code guards} — how lanes and {@code adapt}
      * hand out scoped views without copying anything.

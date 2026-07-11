@@ -17,18 +17,16 @@ public class GreetingNioFlowController {
     @GetMapping(path = "/greeting")
     public ResponseEntity<?> greeting() {
         return ResponseEntity.ok(this.defaultNioFlow
-                        .scoped()
                 .just("Hello")
-                .handle("greeting", s -> s + ", World!")
-                .join());
-    }
-
-    @GetMapping(path = "/greeting-2")
-    public ResponseEntity<?> greetingTwo() {
-        return ResponseEntity.ok(this.defaultNioFlow
-                .scoped()
-                .just("Hola")
-                .handle("greeting", s -> s + ", Mundo!")
-                .join());
+                .handle(s -> s + ", World!")
+                .submit(s -> {
+                    try {
+                        Thread.sleep(3000);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    System.out.println("Greeting: " + s);
+                    return s;
+                }).join());
     }
 }

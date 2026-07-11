@@ -520,10 +520,26 @@ body.landing .github-corner {
   display: block;
 }
 
+/* The compact vertical diagram only exists on narrow screens */
+#flow-diagram-mobile {
+  display: none;
+}
+
 .flow-rail {
   stroke: var(--mist-deep);
   stroke-width: 2;
   fill: none;
+}
+
+/* The recovery detour: visibly off the main line, walked by failed values only */
+.flow-rail-detour {
+  stroke-dasharray: 5 6;
+}
+
+/* Motion-only rails: full paths for animateMotion, never drawn */
+.flow-rail-ghost {
+  fill: none;
+  stroke: none;
 }
 
 .flow-node {
@@ -669,17 +685,66 @@ body.landing .github-corner {
     display: none;
   }
 
-  .hero-canvas {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+  .hero-nav {
+    padding-top: 18px;
   }
 
-  .hero-canvas svg {
-    min-width: 660px;
+  .hero-head h1 {
+    font-size: clamp(2rem, 9vw, 2.6rem);
+  }
+
+  .hero-eyebrow {
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-wrap: balance;
+  }
+
+  /* The vertical diagram takes over: same story, fewer steps, no sideways scroll */
+  #flow-diagram {
+    display: none;
+  }
+
+  #flow-diagram-mobile {
+    display: block;
+    width: min(100%, 290px);
+    margin: 0 auto;
+  }
+
+  .hero-legend {
+    gap: 8px 18px;
+    padding: 0 12px;
   }
 
   .hero-install {
     font-size: 11.5px;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  /* Doc pages: wide content scrolls inside itself, never the page */
+  .markdown-section table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .markdown-section .mermaid {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-ctas {
+    flex-direction: column;
+    align-items: stretch;
+    width: min(100%, 340px);
+  }
+
+  .btn,
+  .hero-install {
+    text-align: center;
   }
 }
 
