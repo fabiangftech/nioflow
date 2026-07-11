@@ -89,6 +89,26 @@ public interface NioFlow<I, T> {
 
     NioFlow<I, T> recover(String name, Function<Throwable, T> function);
 
+    /**
+     * Observes successful outcomes: the callback receives the flow's terminal
+     * value (null for a filtered cut, like execute()). On the shared
+     * definition it fires for EVERY execution of the flow — inject/justAll
+     * included; on a just() execution it is scoped to that execution only.
+     * Declare it after the last re-typing step (adapt), since it observes the
+     * terminal value. Callbacks run on engine threads: keep them fast and
+     * never throw (a throwing complete callback is reported to onError).
+     */
+    NioFlow<I, T> onComplete(Consumer<T> callback);
+
+    /**
+     * Observes failures: the callback receives the unwrapped terminal error
+     * of an execution no recover() caught. On the shared definition it is the
+     * engine's error tap — it also sees non-execution errors (rejected or
+     * dropped values, failing background effects); on a just() execution it
+     * is scoped to that execution only.
+     */
+    NioFlow<I, T> onError(Consumer<Throwable> callback);
+
     Condition<I, T> when(Predicate<T> predicate);
 
     Cases<I, T> match();

@@ -10,6 +10,8 @@ import dev.nioflow.core.model.Link;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.function.Consumer;
 
 /**
  * Ejecución efímera creada por just(): usa la definición compartida tal cual
@@ -65,9 +67,43 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
                 : new FlowResult.Completed<>((T) value);
     }
 
+    @Override
+    @SuppressWarnings("unchecked")
+    public NioFlow<I, T> onComplete(Consumer<T> callback) {
+        Consumer<Object> untyped = value -> callback.accept((T) value);
+        state.onComplete = state.onComplete == null ? untyped : state.onComplete.andThen(untyped);
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> onError(Consumer<Throwable> callback) {
+        state.onError = state.onError == null ? callback : state.onError.andThen(callback);
+        return this;
+    }
+
     private CompletableFuture<Object> rawFuture() {
         List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
-        return state.nioEngine.call(state.seed, null, chain);
+        CompletableFuture<Object> raw = state.nioEngine.call(state.seed, null, chain);
+        if (state.onComplete == null && state.onError == null) {
+            // Pay for what you use: no callbacks, no dependent future.
+            return raw;
+        }
+        // execute()/executeAsync() join/compose on the DEPENDENT future, so
+        // execution-scoped callbacks are guaranteed done before the caller
+        // observes the result — same ordering the engine handlers give.
+        return raw.whenComplete((value, error) -> {
+            if (error != null) {
+                if (state.onError != null) {
+                    state.onError.accept(unwrap(error));
+                }
+            } else if (state.onComplete != null) {
+                state.onComplete.accept(value == FlowSignal.FILTERED ? null : value);
+            }
+        });
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
     }
 
     @Override
@@ -106,6 +142,10 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
         private List<Link> links;
         private Object seed;
         private int anonymousLinks;
+        // Callbacks scoped a ESTA ejecución (null = ninguno); compuestos con
+        // andThen si se registran varios. Compartidos con las vistas de lane.
+        private Consumer<Object> onComplete;
+        private Consumer<Throwable> onError;
 
         private State(NioEngine nioEngine, Object seed) {
             this.nioEngine = nioEngine;

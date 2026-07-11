@@ -140,8 +140,7 @@ public class DefaultNioEngine implements NioEngine {
     public void inject(Object input, Map<String, Object> context) {
         NioFlowMetrics metrics = this.metrics;
         if (closed) {
-            errorHandlers.forEach(handler -> handler.accept(
-                    new RejectedExecutionException("Engine is shut down; value rejected")));
+            notifyError(new RejectedExecutionException("Engine is shut down; value rejected"));
             return;
         }
         if (!admit()) {
@@ -151,7 +150,7 @@ public class DefaultNioEngine implements NioEngine {
             if (metrics != null) {
                 metrics.valueDropped();
             }
-            errorHandlers.forEach(handler -> handler.accept(rejection));
+            notifyError(rejection);
             return;
         }
         inFlight.add(call(input, context));
@@ -200,7 +199,7 @@ public class DefaultNioEngine implements NioEngine {
         if (closed) {
             RejectedExecutionException rejection =
                     new RejectedExecutionException("Engine is shut down; call rejected");
-            errorHandlers.forEach(handler -> handler.accept(rejection));
+            notifyError(rejection);
             return CompletableFuture.failedFuture(rejection);
         }
         // The plan only applies to the exact chain version it was built for;
@@ -396,6 +395,18 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
         return activeExecutions.get();
+    }
+
+    // Error handlers never break the engine or each other: one throwing
+    // handler must not starve the rest, kill a worker or hang a future.
+    private void notifyError(Throwable error) {
+        for (Consumer<Throwable> handler : errorHandlers) {
+            try {
+                handler.accept(error);
+            } catch (Throwable ignored) {
+                // Nowhere left to report a failing error handler.
+            }
+        }
     }
 
     private ExecutorService nextBoss() {
@@ -607,11 +618,21 @@ public class DefaultNioEngine implements NioEngine {
                     metrics.executionCompleted(elapsed);
                 }
             }
+            // Hardened on purpose: this runs BEFORE the result future
+            // completes, so a throwing handler must never escape — it would
+            // leave the caller's future hanging forever. A failing complete
+            // handler is reported through the error handlers instead.
             if (error != null) {
-                errorHandlers.forEach(handler -> handler.accept(error));
+                notifyError(error);
             } else {
                 Object exposed = value == FILTERED ? null : value;
-                completeHandlers.forEach(handler -> handler.accept(exposed));
+                for (Consumer<Object> handler : completeHandlers) {
+                    try {
+                        handler.accept(exposed);
+                    } catch (Throwable failure) {
+                        notifyError(failure);
+                    }
+                }
             }
         }
 
@@ -937,7 +958,7 @@ public class DefaultNioEngine implements NioEngine {
             try {
                 background.effect().accept(value);
             } catch (Throwable error) {
-                errorHandlers.forEach(handler -> handler.accept(error));
+                notifyError(error);
             }
         }
 

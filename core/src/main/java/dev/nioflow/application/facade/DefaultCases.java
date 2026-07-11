@@ -87,6 +87,16 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     }
 
     @Override
+    public NioFlow<I, T> onComplete(Consumer<T> callback) {
+        return flow.onComplete(callback);
+    }
+
+    @Override
+    public NioFlow<I, T> onError(Consumer<Throwable> callback) {
+        return flow.onError(callback);
+    }
+
+    @Override
     public NioFlow<I, T> handleSync(Function<T, T> function) {
         return flow.handleSync(function);
     }

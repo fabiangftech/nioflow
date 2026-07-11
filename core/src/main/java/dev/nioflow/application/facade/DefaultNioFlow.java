@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoCloseable {
 
@@ -56,6 +57,20 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
     @Override
     public NioFlow<I, T> justAll(Iterable<I> inputs) {
         inputs.forEach(nioEngine::inject);
+        return this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public NioFlow<I, T> onComplete(Consumer<T> callback) {
+        // Shared-definition scope: every execution of this engine reports here.
+        nioEngine.addCompleteHandler(value -> callback.accept((T) value));
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> onError(Consumer<Throwable> callback) {
+        nioEngine.addErrorHandler(callback);
         return this;
     }
 
