@@ -18,17 +18,17 @@ class DefaultNioFlowTest {
 
     @Test
     void buildsAndExecutesAFullFlow() throws Exception {
-        try (NioFlow flow = new DefaultNioFlow()) {
+        try (NioFlow<Integer> flow = new DefaultNioFlow<>(Integer.class)) {
             var effects = new CopyOnWriteArrayList<Object>();
             var backgroundRan = new CountDownLatch(1);
 
             String result = flow.just(5)
-                    .handle("plus-one", (Integer value) -> value + 1)
+                    .handle("plus-one", value -> value + 1)
                     .background("audit", value -> {
                         effects.add(value);
                         backgroundRan.countDown();
                     })
-                    .adapt((Integer value) -> "value:" + value)
+                    .adapt(value -> "value:" + value)
                     .execute();
 
             assertEquals("value:6", result);
@@ -38,9 +38,22 @@ class DefaultNioFlowTest {
     }
 
     @Test
+    void adaptChangesThePipelineType() throws Exception {
+        try (NioFlow<String> flow = new DefaultNioFlow<>(String.class)) {
+            Integer length = flow.just("hola mundo")
+                    .handle(String::toUpperCase)
+                    .adapt(String::length)
+                    .handle(value -> value * 2)
+                    .execute();
+
+            assertEquals(20, length);
+        }
+    }
+
+    @Test
     void executeIsIsolatedPerThread() throws Exception {
-        try (NioFlow flow = new DefaultNioFlow()) {
-            flow.handle("double", (Integer value) -> value * 2);
+        try (NioFlow<Integer> flow = new DefaultNioFlow<>(Integer.class)) {
+            flow.handle("double", value -> value * 2);
 
             var results = new ConcurrentHashMap<Integer, Integer>();
             try (var requests = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -58,12 +71,12 @@ class DefaultNioFlowTest {
 
     @Test
     void repeatedExecutionsAreIndependent() throws Exception {
-        try (NioFlow flow = new DefaultNioFlow()) {
+        try (NioFlow<String> flow = new DefaultNioFlow<>(String.class)) {
             String first = flow.just("hola")
-                    .handle((String value) -> value.toUpperCase())
+                    .handle(String::toUpperCase)
                     .execute();
             String second = flow.just("mundo")
-                    .handle((String value) -> value.toUpperCase())
+                    .handle(String::toUpperCase)
                     .execute();
 
             assertEquals("HOLA", first);
@@ -75,11 +88,11 @@ class DefaultNioFlowTest {
 
     @Test
     void sharedDefinitionRunsBeforeExecutionLinks() throws Exception {
-        try (NioFlow flow = new DefaultNioFlow()) {
-            flow.handle("trim", (String value) -> value.trim());
+        try (NioFlow<String> flow = new DefaultNioFlow<>(String.class)) {
+            flow.handle("trim", String::trim);
 
             String withLocal = flow.just("  hola  ")
-                    .handle((String value) -> value.toUpperCase())
+                    .handle(String::toUpperCase)
                     .execute();
             String sharedOnly = flow.just("  mundo  ").execute();
 
@@ -90,7 +103,7 @@ class DefaultNioFlowTest {
 
     @Test
     void executeWithoutJustIsRejected() throws Exception {
-        try (NioFlow flow = new DefaultNioFlow()) {
+        try (NioFlow<String> flow = new DefaultNioFlow<>(String.class)) {
             assertThrows(IllegalStateException.class, flow::execute);
         }
     }

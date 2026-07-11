@@ -4,27 +4,31 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
-public interface NioFlow extends AutoCloseable {
+/**
+ * Pipeline tipado: T es el tipo del valor en el punto actual de la cadena.
+ * adapt() es el único paso que cambia T; el resto lo preserva.
+ */
+public interface NioFlow<T> extends AutoCloseable {
 
-    <T> NioFlow just(T input);
+    <I> NioFlow<I> just(I input);
 
-    <T> NioFlow justAll(Iterable<T> inputs);
+    <I> NioFlow<T> justAll(Iterable<I> inputs);
 
-    <T> NioFlow handle(Function<T, T> function);
+    NioFlow<T> handle(Function<T, T> function);
 
-    <T> NioFlow handle(String name, Function<T, T> function);
+    NioFlow<T> handle(String name, Function<T, T> function);
 
-    <T> NioFlow background(Consumer<T> effect);
+    NioFlow<T> background(Consumer<T> effect);
 
-    <T> NioFlow background(String name, Consumer<T> effect);
+    NioFlow<T> background(String name, Consumer<T> effect);
 
-    <T, R> NioFlow adapt(Function<T, R> function);
+    <R> NioFlow<R> adapt(Function<T, R> function);
 
-    <T> NioFlow filter(Predicate<T> predicate);
+    NioFlow<T> filter(Predicate<T> predicate);
 
-    <T> Condition when(Predicate<T> predicate);
+    Condition<T> when(Predicate<T> predicate);
 
-    Cases match();
+    Cases<T> match();
 
-    <T> T execute();
+    T execute();
 }

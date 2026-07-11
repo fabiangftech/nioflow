@@ -2,7 +2,7 @@ package dev.nioflow.core.facade;
 
 import java.util.function.UnaryOperator;
 
-public interface Condition {
+public interface Condition<T> {
 
-    <T> Branch then(UnaryOperator<NioFlow> lane);
+    Branch<T> then(UnaryOperator<NioFlow<T>> lane);
 }

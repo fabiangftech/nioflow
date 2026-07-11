@@ -9,9 +9,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class GreetingController {
 
-    private final NioFlow nioFlow;
+    private final NioFlow<String> nioFlow;
 
-    public GreetingController(NioFlow nioFlow) {
+    public GreetingController(NioFlow<String> nioFlow) {
         this.nioFlow = nioFlow;
     }
 
@@ -19,7 +19,7 @@ public class GreetingController {
     public String greeting() {
         return this.nioFlow
                 .just("Hello World! - " + System.currentTimeMillis())
-                .handle(value -> value.toString().toUpperCase())
+                .handle(String::toUpperCase)
                 .background(value -> {
                     try {
                         Thread.sleep(3000);
@@ -28,6 +28,8 @@ public class GreetingController {
                     }
                     log.info("Background task executed");
                 })
+                .adapt(String::length)
+                .adapt(length -> "chars: " + length)
                 .execute();
     }
 }
