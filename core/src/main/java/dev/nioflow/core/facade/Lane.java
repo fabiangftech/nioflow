@@ -4,6 +4,7 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -24,6 +25,13 @@ public interface Lane<T> {
     Lane<T> handle(String name, Function<T, T> function, Retry retry);
 
     Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
+
+    /**
+     * Context-aware stage; see NioFlow#handleContextual for the contract.
+     */
+    Lane<T> handleContextual(BiFunction<T, Context, T> function);
+
+    Lane<T> handleContextual(String name, BiFunction<T, Context, T> function);
 
     /**
      * Boss-inlined stage for pure-CPU, sub-microsecond functions; see

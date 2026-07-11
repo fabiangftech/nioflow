@@ -2,6 +2,7 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.Cases;
 import dev.nioflow.core.facade.Condition;
+import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.Segment;
@@ -18,6 +19,7 @@ import dev.nioflow.core.model.Stage;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -68,6 +70,20 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
         appendLink(new Stage(name, asObjectFunction(function), false, timeout, retry, guards()));
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> handleContextual(BiFunction<T, Context, T> function) {
+        return handleContextual(anonymousName("stage"), function);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public NioFlow<I, T> handleContextual(String name, BiFunction<T, Context, T> function) {
+        appendLink(new Stage(name,
+                new ContextualFunction((BiFunction<Object, Context, Object>) (BiFunction<?, ?, ?>) function),
+                false, null, null, guards()));
         return this;
     }
 

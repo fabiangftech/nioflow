@@ -5,6 +5,7 @@ import dev.nioflow.core.model.Retry;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -42,6 +43,17 @@ public interface NioFlow<I, T> {
     NioFlow<I, T> handle(String name, Function<T, T> function, Retry retry);
 
     NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
+
+    /**
+     * Context-aware stage: besides the value it receives the typed
+     * per-execution Context (Context.Key accessors) — scratch state shared
+     * by this execution's stages without threading it through the value
+     * type. Plain stages never pay for the context; the backing map is
+     * created on the first put.
+     */
+    NioFlow<I, T> handleContextual(BiFunction<T, Context, T> function);
+
+    NioFlow<I, T> handleContextual(String name, BiFunction<T, Context, T> function);
 
     /**
      * Opt-in for pure-CPU, sub-microsecond functions: runs inline on the

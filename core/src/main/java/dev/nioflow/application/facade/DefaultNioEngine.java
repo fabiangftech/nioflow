@@ -1,6 +1,8 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.ChainValidationException;
+import dev.nioflow.core.facade.Context;
+import dev.nioflow.core.facade.Context.Key;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.Background;
@@ -537,9 +539,12 @@ public class DefaultNioEngine implements NioEngine {
         private final ExecutorService boss;
         private final List<Link> links;
         private final Object input;
-        // Per-execution context handed in by the caller; may be null — nothing
-        // in the engine reads it, it only travels for future typed accessors.
-        private final Map<String, Object> context;
+        // Per-execution context: null until a contextual stage puts the first
+        // entry (or the caller handed a map to call/inject). Stage
+        // applications are serialized by the executor handoffs — one
+        // continuation at a time, each hop a happens-before edge — so a plain
+        // HashMap is enough. Only touched through ExecutionContext views.
+        private Map<String, Object> context;
         // Exactly-once completion guard. Written on the boss; the only off-boss
         // writer is the resume-rejection path, which implies the boss is gone.
         private volatile boolean finished;
@@ -920,12 +925,48 @@ public class DefaultNioEngine implements NioEngine {
         // Called on a worker thread — except for boss-inlined sync stages.
         private Object timedApply(Stage stage, Object value) {
             if (metrics == null) {
-                return stage.function().apply(value);
+                return invoke(stage, value);
             }
             long start = System.nanoTime();
-            Object next = stage.function().apply(value);
+            Object next = invoke(stage, value);
             metrics.stageCompleted(stage.name(), System.nanoTime() - start);
             return next;
+        }
+
+        // The single point where stage functions run: contextual stages get
+        // the execution's Context here; plain stages pay one instanceof. The
+        // view is stateless (it reads/writes the execution's map), so it is
+        // allocated per contextual application instead of adding a field
+        // that every context-free execution would pay for.
+        private Object invoke(Stage stage, Object value) {
+            return stage.function() instanceof ContextualFunction contextual
+                    ? contextual.body().apply(value, new ExecutionContext())
+                    : stage.function().apply(value);
+        }
+
+        private final class ExecutionContext implements Context {
+
+            @Override
+            @SuppressWarnings("unchecked")
+            public <T> T get(Key<T> key) {
+                Map<String, Object> map = context;
+                return map == null ? null : (T) map.get(key.name());
+            }
+
+            @Override
+            public <T> T getOrDefault(Key<T> key, T fallback) {
+                T value = get(key);
+                return value == null ? fallback : value;
+            }
+
+            @Override
+            public <T> Context put(Key<T> key, T value) {
+                if (context == null) {
+                    context = new HashMap<>();
+                }
+                context.put(key.name(), value);
+                return this;
+            }
         }
 
         private void recover(int from, Throwable error) {
