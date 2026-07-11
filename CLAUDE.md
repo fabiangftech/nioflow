@@ -32,13 +32,24 @@ cd examples/springboot-with-nioflow
 
 Tests are JUnit 6 (Jupiter), under `core/src/test/java/dev/nioflow/application/facade/`.
 
+`tests/` is a third Gradle build (also composite against core) for bug-hunting stress tests and JMH benchmarks — functional coverage stays in core:
+
+```bash
+cd tests
+./gradlew test                                      # stress tests (deep chains, hot splice, fork routing races)
+./gradlew jmh                                       # full benchmark run
+./gradlew jmh -PjmhArgs='-f 0 -wi 1 -i 1 NioFlowBenchmark'   # quick smoke of one benchmark
+```
+
+Benchmarks live in `tests/src/main/java` (JMH annotation processing), stress tests in `tests/src/test/java`. Stress tests use `orTimeout` on the futures they join — an engine bug that kills the boss task leaves futures hanging forever, and the timeout converts that hang into a visible failure.
+
 ## Architecture
 
 Three packages under `core/src/main/java/dev/nioflow/`, dependency direction strictly inward (`application` and `infrastructure` depend on `core`, never the reverse). Interfaces live in `core.facade`; implementations in `application.facade` with a `Default` prefix.
 
-- **`core/facade`** — public contracts. `NioFlow<I, T>` is the fluent typed API: `I` is the input type (`just` is compile-checked against it), `T` is the value's type at the current point of the chain; `adapt(Function<T, R>)` is the only step that changes `T` (returning `NioFlow<I, R>`), everything else preserves it. `NioEngine` is the engine contract behind it — untyped (`Object`) on purpose; all unchecked casts are encapsulated in `DefaultNioFlow`. `Condition`/`Branch`/`Cases` are fork contracts, **not implemented yet** (`when()`/`match()` throw `UnsupportedOperationException`).
+- **`core/facade`** — public contracts. `NioFlow<I, T>` is the fluent typed API: `I` is the input type (`just` is compile-checked against it), `T` is the value's type at the current point of the chain; `adapt(Function<T, R>)` is the only step that changes `T` (returning `NioFlow<I, R>`), everything else preserves it. `NioEngine` is the engine contract behind it — untyped (`Object`) on purpose; all unchecked casts are encapsulated in the flow implementations. `Condition`/`Branch`/`Cases` are the fork contracts behind `when()`/`match()`.
 - **`core/model`** — the chain model: `Link` is a sealed interface permitting `Stage` (transform, optional timeout), `Decision` (records a boolean per value), `Filter` (short-circuits the flow), `Background` (fire-and-forget side effect), `Recovery` (positional error handler). Every link carries `Guard`s (`decision id` + `expected`) for lane routing. `Splice` (BEFORE/AFTER/REPLACE) names the runtime-edit positions.
-- **`application/facade`** — `DefaultNioEngine` and `DefaultNioFlow` (plus its inner `ExecutionNioFlow`).
+- **`application/facade`** — `DefaultNioEngine`; `AbstractNioFlow` (shared builder + fork logic) extended by `DefaultNioFlow` (shared definition) and `ExecutionNioFlow` (per-request execution); `DefaultCondition`/`DefaultBranch`/`DefaultCases` (forks).
 - **`infrastructure`** — reserved for optional adapters (currently empty).
 
 ### DefaultNioEngine: the event loop
@@ -47,6 +58,8 @@ Two rules define it:
 
 1. **Only the boss thread touches orchestration state.** `Execution.advance`/`recover` always run on the boss; workers hand results back via `whenCompleteAsync(..., bossExecutorService)`. This is the serialization mechanism — no locks in the hot path.
 2. **The boss never runs user code** — `Stage`/`Background`/`Recovery` functions go to the virtual-thread workers. Exception by design: `Decision` and `Filter` predicates run on the boss, so they must stay cheap and non-blocking (same rule as Netty handlers).
+
+`advance` must stay **iterative**, never recursive: cheap links (Decision/Filter/Background/guard-skips) are walked in a loop on the boss, and a recursive version overflows the boss stack on deep chains, killing the task and leaving the request future hanging forever (regression: `DeepChainStressTest` in `tests/`).
 
 Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()` style): one daemon boss + one virtual-thread pool shared by every engine created with the default constructor, no matter how many `DefaultNioFlow`s exist. `shutdown()` only terminates executors that were explicitly passed in (`ownsExecutors`); shared ones survive so closing one flow never starves the others.
 
@@ -76,3 +89,11 @@ public NioFlow<String, Integer> flow() {
 ```
 
 `execute()` without `just()` throws; `justAll` only exists on the root (injects through the shared chain, collect with `engine.await()`).
+
+### Forks: when() and match()
+
+Both are sugar over `Decision`/`Guard` — the engine knows nothing about forks. A lane is a *guarded view* of the same flow (`AbstractNioFlow.withGuards`): every link declared inside the lane's `UnaryOperator` carries `Guard(decisionId, expected)`, so nested forks compose guards automatically and forks work identically on the shared definition and inside a `just()` execution.
+
+- `when(pred).then(lane).otherwise(lane)`: appends one `Decision`; the lanes require `true`/`false`. Chaining after the fork (on `Branch` or after `otherwise`) is the main line — unguarded, runs for every value.
+- `match().is(pred, lane)...otherwise(lane)` is **first-match-wins**: case k's `Decision` carries guards requiring all previous cases `false` (so it isn't even evaluated after a match), its lane additionally requires its own decision `true`, and `otherwise` requires all `false`. A skipped `Decision` records nothing, and an absent decision fails any guard on it — that's what makes the semantics hold.
+- Lanes are `UnaryOperator<NioFlow<I, T>>`: the type going into and out of a lane is `T` (an `adapt` inside a lane must return to `T`).
