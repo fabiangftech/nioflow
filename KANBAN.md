@@ -39,15 +39,16 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 
 ## 🚀 Ready (next up, in priority order)
 
-_(empty — promote the next item from the backlog)_
+- [ ] **Inline cheap stages on the boss (opt-in)** — `sync` marker for stages that are pure CPU and sub-microsecond; skips both thread hops (measured: 2 hops ≈ 10-18µs). Same contract as Decision predicates: cheap, non-blocking, a throw fails the value never the boss task `[perf]`
+- [ ] **Allocation audit per call** — Execution, snapshot, context map; target near-zero garbage for the common path. Baseline to beat after bitset + decision fusion: ~1000 B/op plain, ~1150 B/op forked (`-prof gc` runs recorded) `[perf]`
+- [ ] **Flow-level `onComplete`/`onError` in the fluent API** — engine handlers exist; expose them per flow and per execution `[maint]`
+- [ ] **Dead-letter handler** — terminal failures routed to a configurable sink with the original input and failing stage name `[maint]`
 
 ## 📋 Backlog
 
 ### Performance `[perf]`
 
-- [ ] **Inline cheap stages on the boss (opt-in)** — `sync` marker for stages that are pure CPU and sub-microsecond; skips both thread hops (measured: 2 hops ≈ 10-18µs)
-- [ ] **Allocation audit per call** — Execution, snapshot, context map; target near-zero garbage for the common path
-- [ ] **JMH regression gate in CI** — fail the build if a benchmark drops beyond a threshold vs the recorded baseline
+- [ ] **JMH regression gate in CI** — fail the build if a benchmark drops beyond a threshold vs the recorded baseline (blocked: no CI pipeline exists yet)
 - [ ] **Timer wheel for stage timeouts** — replace per-call `orTimeout` scheduling (measured ~40% on timeout-armed stages) with a shared hashed timer wheel
 
 ### Scalability `[scale]`
@@ -61,14 +62,12 @@ _(empty — promote the next item from the backlog)_
 ### Maintainability / DX `[maint]`
 
 - [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links)
-- [ ] **Flow-level `onComplete`/`onError` in the fluent API** — engine handlers exist; expose them per flow and per execution
 - [ ] **Context API** — typed accessors for the per-execution context map (`ctx.get(Key<T>)`), available to stages that opt in
 - [ ] **Kotlin DSL** — indentation-native branches for Kotlin consumers
 
 ### Resilience (cross-cutting)
 
 - [ ] **Resilience4j adapter** — circuit breaker / bulkhead as stage decorators; the `compileOnly` dependency is already declared `[scale]`
-- [ ] **Dead-letter handler** — terminal failures routed to a configurable sink with the original input and failing stage name `[maint]`
 
 ## 🧊 Icebox (revisit later)
 
