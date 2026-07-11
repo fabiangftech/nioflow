@@ -25,6 +25,14 @@ public interface Lane<T> {
 
     Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
 
+    /**
+     * Boss-inlined stage for pure-CPU, sub-microsecond functions; see
+     * NioFlow#handleSync for the contract.
+     */
+    Lane<T> handleSync(Function<T, T> function);
+
+    Lane<T> handleSync(String name, Function<T, T> function);
+
     Lane<T> background(Consumer<T> effect);
 
     Lane<T> background(String name, Consumer<T> effect);

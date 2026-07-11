@@ -76,6 +76,16 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     }
 
     @Override
+    public NioFlow<I, T> handleSync(Function<T, T> function) {
+        return flow.handleSync(function);
+    }
+
+    @Override
+    public NioFlow<I, T> handleSync(String name, Function<T, T> function) {
+        return flow.handleSync(name, function);
+    }
+
+    @Override
     public NioFlow<I, T> background(Consumer<T> effect) {
         return flow.background(effect);
     }

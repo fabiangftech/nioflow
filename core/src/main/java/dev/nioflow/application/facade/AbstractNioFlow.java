@@ -72,6 +72,17 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     }
 
     @Override
+    public NioFlow<I, T> handleSync(Function<T, T> function) {
+        return handleSync(anonymousName("sync"), function);
+    }
+
+    @Override
+    public NioFlow<I, T> handleSync(String name, Function<T, T> function) {
+        appendLink(new Stage(name, asObjectFunction(function), true, null, null, guards()));
+        return this;
+    }
+
+    @Override
     public NioFlow<I, T> background(Consumer<T> effect) {
         return background(anonymousName("background"), effect);
     }

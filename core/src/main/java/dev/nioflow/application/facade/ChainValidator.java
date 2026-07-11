@@ -27,7 +27,9 @@ import java.util.Set;
  * - duplicate anchor names: splice targets the first match, so duplicates
  *   make runtime edits ambiguous;
  * - dead recoveries: a Recovery with no fallible link upstream can never
- *   catch anything.
+ *   catch anything;
+ * - sync stages with a timeout or retry: a boss-inlined call cannot be cut,
+ *   and retry backoff would park the boss.
  */
 final class ChainValidator {
 
@@ -71,6 +73,17 @@ final class ChainValidator {
 
             if (link instanceof Recovery && !fallibleUpstream) {
                 problems.add(label + " has nothing fallible upstream to recover from");
+            }
+
+            if (link instanceof Stage stage && stage.sync()) {
+                if (stage.timeout() != null) {
+                    problems.add(label + " is sync (boss-inlined) but declares a timeout"
+                            + " (an inlined call cannot be cut; drop the timeout or the sync marker)");
+                }
+                if (stage.retry() != null) {
+                    problems.add(label + " is sync (boss-inlined) but declares a retry policy"
+                            + " (backoff would park the boss; drop the retry or the sync marker)");
+                }
             }
 
             if (link instanceof Decision decision) {

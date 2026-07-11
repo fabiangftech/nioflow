@@ -43,6 +43,18 @@ public interface NioFlow<I, T> {
 
     NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
 
+    /**
+     * Opt-in for pure-CPU, sub-microsecond functions: runs inline on the
+     * boss thread, skipping both thread hops (boss→worker→boss). Same
+     * contract as when()/match() predicates — cheap and never blocking; a
+     * throw fails the value through the recovery path, never the engine.
+     * Deliberately has no timeout/retry variants: nothing can cut a
+     * boss-inlined call, and retry backoff would park the boss.
+     */
+    NioFlow<I, T> handleSync(Function<T, T> function);
+
+    NioFlow<I, T> handleSync(String name, Function<T, T> function);
+
     NioFlow<I, T> background(Consumer<T> effect);
 
     NioFlow<I, T> background(String name, Consumer<T> effect);

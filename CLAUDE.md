@@ -61,7 +61,7 @@ Three packages under `core/src/main/java/dev/nioflow/`, dependency direction str
 Two rules define it:
 
 1. **Each execution is pinned to one boss, and only that boss touches its orchestration state.** `Execution.advance`/`recover` always run on the execution's boss; workers hand results back via `whenCompleteAsync(..., boss)`. This is the serialization mechanism — no locks in the hot path. Concurrent executions spread across the boss pool (EventLoopGroup-style affinity), so one boss is never a JVM-wide ceiling.
-2. **The boss never runs user code** — `Stage`/`Background`/`Recovery` functions go to the virtual-thread workers. Exception by design: `Decision` predicates (and `Filter` predicates not absorbed into a fused run) run on the boss, so they must stay cheap and non-blocking (same rule as Netty handlers). A predicate that throws on the boss fails the value through the recovery path — never the boss task (a dead boss task means a forever-hanging request future).
+2. **The boss never runs user code** — `Stage`/`Background`/`Recovery` functions go to the virtual-thread workers. Exceptions by design: `Decision` predicates (and `Filter` predicates not absorbed into a fused run) run on the boss, and `handleSync(name, fn)` opts a pure-CPU sub-microsecond stage into boss-inlining (skips both thread hops, ~2.2x on trivial chains; still fuses into a preceding worker run; no timeout/retry — validation rejects that combination). Both must stay cheap and non-blocking (same rule as Netty handlers). User code that throws on the boss fails the value through the recovery path — never the boss task (a dead boss task means a forever-hanging request future).
 
 Hot-path rules the benchmarks enforce (see `tests/`):
 

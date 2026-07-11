@@ -56,6 +56,18 @@ class DefaultLane<T> implements Lane<T> {
     }
 
     @Override
+    public Lane<T> handleSync(Function<T, T> function) {
+        view.handleSync(function);
+        return this;
+    }
+
+    @Override
+    public Lane<T> handleSync(String name, Function<T, T> function) {
+        view.handleSync(name, function);
+        return this;
+    }
+
+    @Override
     public Lane<T> background(Consumer<T> effect) {
         view.background(effect);
         return this;

@@ -471,7 +471,11 @@ public class DefaultNioEngine implements NioEngine {
             Link[][] runs = new Link[size][];
             int[] runEnds = new int[size];
             for (int i = 0; i < size; i++) {
-                if (!(links.get(i) instanceof Stage stage) || stage.timeout() != null) {
+                // No window starts at a sync stage: advance inlines it on the
+                // boss and never dispatches there (validated chains can't
+                // carry sync+timeout/retry). It still FUSES into a preceding
+                // stage's window like any other no-timeout stage.
+                if (!(links.get(i) instanceof Stage stage) || stage.timeout() != null || stage.sync()) {
                     continue;
                 }
                 int end = i + 1;
@@ -566,26 +570,36 @@ public class DefaultNioEngine implements NioEngine {
         // Iterative, never recursive: a deep chain of cheap links is walked
         // entirely on the boss and must not depend on stack size.
         private void advance(int index, Object value) {
+            Object current = value;
             while (index < links.size()) {
                 Link link = links.get(index);
                 if (passesGuards(link)) {
                     try {
                         switch (link) {
-                            case Stage ignored -> {
-                                dispatch(index, value);
-                                return; // the worker resumes on the boss when done
+                            case Stage stage -> {
+                                // Opt-in boss inline: a sync stage skips both thread
+                                // hops. timeout/retry force the dispatch path (they
+                                // need a worker); validation flags that combination.
+                                if (stage.sync() && stage.timeout() == null && stage.retry() == null) {
+                                    current = timedApply(stage, current);
+                                } else {
+                                    dispatch(index, current);
+                                    return; // the worker resumes on the boss when done
+                                }
                             }
-                            case Decision decision -> recordDecision(decision.id(), decision.predicate().test(value));
+                            case Decision decision -> recordDecision(decision.id(), decision.predicate().test(current));
                             case Filter filter -> {
-                                if (!filter.predicate().test(value)) {
+                                if (!filter.predicate().test(current)) {
                                     result.complete(FILTERED);
                                     return;
                                 }
                             }
-                            case Background background ->
-                                    workersExecutorService.execute(() -> runBackground(background, value));
+                            case Background background -> {
+                                Object snapshot = current;
+                                workersExecutorService.execute(() -> runBackground(background, snapshot));
+                            }
                             case FanOut fanOut -> {
-                                dispatchFanOut(fanOut, index + 1, value);
+                                dispatchFanOut(fanOut, index + 1, current);
                                 return; // the join resumes on the boss when all branches finish
                             }
                             case Recovery ignored -> {
@@ -601,7 +615,7 @@ public class DefaultNioEngine implements NioEngine {
                 }
                 index++;
             }
-            result.complete(value);
+            result.complete(current);
         }
 
         /**
@@ -810,8 +824,8 @@ public class DefaultNioEngine implements NioEngine {
             throw new CompletionException(last);
         }
 
-        // Runs the stage function, timing it when metrics are installed. Always
-        // called on a worker thread.
+        // Runs the stage function, timing it when metrics are installed.
+        // Called on a worker thread — except for boss-inlined sync stages.
         private Object timedApply(Stage stage, Object value) {
             if (metrics == null) {
                 return stage.function().apply(value);
