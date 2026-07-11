@@ -2,6 +2,7 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.Cases;
 import dev.nioflow.core.facade.Condition;
+import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
 
 import java.util.function.Consumer;
@@ -9,6 +10,16 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 public class DefaultNioFlow implements NioFlow {
+
+    private final NioEngine nioEngine;
+
+    public DefaultNioFlow() {
+        this(new DefaultNioEngine());
+    }
+
+    public DefaultNioFlow(NioEngine nioEngine) {
+        this.nioEngine = nioEngine;
+    }
 
     @Override
     public <T> T just(T input) {

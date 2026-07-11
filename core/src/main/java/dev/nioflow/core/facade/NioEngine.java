@@ -1,0 +1,43 @@
+package dev.nioflow.core.facade;
+
+import dev.nioflow.core.model.Link;
+import dev.nioflow.core.model.Splice;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+
+public interface NioEngine {
+
+    void inject(Object input);
+
+    void inject(Object input, Map<String, Object> context);
+
+    CompletableFuture<Object> call(Object input, Map<String, Object> context);
+
+    CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain);
+
+    List<Link> chain();
+
+    void append(Link link);
+
+    void seal();
+
+    void release();
+
+    void splice(String anchor, Splice position, List<Link> links);
+
+    int nextDecision();
+
+    void addErrorHandler(Consumer<Throwable> handler);
+
+    void addCompleteHandler(Consumer<Object> handler);
+
+    Object await();
+
+    Object await(Duration timeout);
+
+    void shutdown(Duration gracePeriod);
+}
