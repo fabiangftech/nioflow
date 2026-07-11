@@ -23,7 +23,7 @@ import java.time.Duration;
 @Configuration
 public class NioFlowConfig {
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<String, String> greetingFlow() {
         return DefaultNioFlow.from(String.class);
     }
@@ -39,7 +39,7 @@ public class NioFlowConfig {
      * startup so every request runs the compiled plan. The controller stays a
      * one-liner; runtime splices (AdminController) recompile once per edit.
      */
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<OrderRequest, OrderReceipt> orderFlow(NioEngine orderEngine,
                                                          ValidationService validationService,
                                                          InventoryService inventoryService,
