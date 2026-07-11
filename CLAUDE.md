@@ -43,6 +43,7 @@ Naming note: interfaces live in `core.facade` (`NioFlow`, `NioEngine`), implemen
 - Structural edits (`remove`/`replace`/`insertBefore`/`insertAfter`) anchor on named stages, run under the engine lock (safe from any thread) and never disturb values in flight: each value finishes the chain version it was injected into.
 - `scoped()` hands out an ephemeral caller-private chain over the shared engine: links declared on it never touch the shared chain, concurrent scopes never interfere, its `join()` waits only for its own values, and scope `onComplete`/`onError` observe only those. Global concerns (structural edits, `metrics`, `trace`, `close`) belong to the shared flow — the first three throw on a scope, `close` is a no-op.
 - Filtered-out values leave deliberately: no `onComplete`/`onError`, don't count toward `join()`, free their backpressure slot.
+- `background(effect)` is fire-and-forget: the consumer launches on the executor and the value moves on immediately — `join()`/`call` never wait for it; a throwing effect reports to `onError` (and metrics) but never fails the value. `submit` is for async work that produces the result and is always awaited.
 - Fork lanes (`when`/`then`/`otherwise`, `match`/`is`) record decisions on the value; guards make it skip links of other lanes. Stages after the fork are the main line and run for every value.
 
 ## Tests

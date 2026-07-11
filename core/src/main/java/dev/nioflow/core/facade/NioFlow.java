@@ -198,6 +198,34 @@ public interface NioFlow<T> extends AutoCloseable {
     NioFlow<T> submit(Function<T, T> function, Resilience<T> resilience);
 
     /**
+     * Appends a fire-and-forget effect: the consumer is launched on the nio-flow's
+     * executor with the value's payload as of this point, and the value moves on
+     * <em>immediately</em> — neither the value nor any caller waiting on it
+     * ({@code join()}, {@code call}) ever waits for the effect. The shape for
+     * side-effect tails — notifications, logging, audit — that must not delay the
+     * caller's answer; use {@link #submit(Function)} instead when the async work
+     * produces the value's result.
+     *
+     * <p>The effect sees a snapshot: the payload as of this link and a copy of the
+     * {@code FlowContext}. A throwing effect is reported to {@code onError}
+     * handlers and metrics, but never fails the value — it already moved on.
+     *
+     * @param effect the side effect, receiving the payload as of this link
+     * @return this nio-flow, for chaining
+     */
+    NioFlow<T> background(Consumer<T> effect);
+
+    /**
+     * Like {@link #background(Consumer)} but named: a failure is reported wrapped
+     * in a {@code StageException} carrying the name, and metrics count it under it.
+     *
+     * @param name   the effect name reported by failures and metrics
+     * @param effect the side effect, receiving the payload as of this link
+     * @return this nio-flow, for chaining
+     */
+    NioFlow<T> background(String name, Consumer<T> effect);
+
+    /**
      * Groups values into lists of up to {@code size}, flushing a partial group after
      * its oldest value waited {@code maxWait}, and runs one async call for the whole
      * group — ideal for bulk IO like JDBC batch writes. The function must return

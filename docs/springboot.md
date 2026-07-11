@@ -102,9 +102,12 @@ public ResponseEntity<?> greeting() {
     return ResponseEntity.ok(flow
             .just("Hello")
             .handle("greeting", s -> s + ", World!")
+            .background(s -> notify(s))         // fire-and-forget: never delays the answer
             .join());                           // waits for this chain's values only
 }
 ```
+
+A `submit` computes part of the answer, so `join()`/`call` wait for it. When the async work is a **side effect** — a notification, audit, logging — use `background(...)` instead: it launches on the executor and the value (and your caller) moves on immediately.
 
 Here `join()` is fine: it belongs to the chain you just built and waits for its values only. Scopes ride the shared engine — threads, executor, backpressure — and their values are released on finish, so memory stays flat with no `seal()` needed. The async style works too:
 

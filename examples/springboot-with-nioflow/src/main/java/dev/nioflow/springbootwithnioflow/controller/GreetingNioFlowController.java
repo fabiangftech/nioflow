@@ -19,14 +19,13 @@ public class GreetingNioFlowController {
         return ResponseEntity.ok(this.defaultNioFlow
                 .just("Hello")
                 .handle(s -> s + ", World!")
-                .submit(s -> {
+                .background(s -> {
                     try {
                         Thread.sleep(3000);
                     } catch (InterruptedException e) {
                         throw new RuntimeException(e);
                     }
                     System.out.println("Greeting: " + s);
-                    return s;
                 }).join());
     }
 }

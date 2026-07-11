@@ -37,6 +37,7 @@ The one distinction that matters: **`handle` is synchronous, `submit` is asynchr
 | `submit(name, fn)` | executor | Named async stage. |
 | `submit(fn, timeout)` | executor | Bounded: on expiry the worker is interrupted, the value fails with `TimeoutException`. |
 | `submit(fn, resilience)` | executor | Decorated async stage. |
+| `background([name, ]effect)` | executor | Fire-and-forget: launches the `Consumer<T>` and the value moves on immediately — `join()`/`call` never wait for it. A throwing effect reports to `onError`, never fails the value. |
 | `batch(size, maxWait, fn)` | executor | Groups values; one async call per group; one result per input, matched by index. |
 | `adapt(fn)` | handle worker | Changes the value type; returns a re-typed view of the same flow. |
 | `fanOut(fn)` | handle worker | Splits one value into many independent ones; empty list drops it. |

@@ -129,6 +129,16 @@ final class ForkBranch<T> implements NioFlow.Branch<T> {
     }
 
     @Override
+    public NioFlow<T> background(Consumer<T> effect) {
+        return mainLine.background(effect);
+    }
+
+    @Override
+    public NioFlow<T> background(String name, Consumer<T> effect) {
+        return mainLine.background(name, effect);
+    }
+
+    @Override
     public NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
         return mainLine.batch(size, maxWait, function);
     }

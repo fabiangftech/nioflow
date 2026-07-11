@@ -272,6 +272,18 @@ public final class DefaultNioFlow<T> implements NioFlow<T> {
     }
 
     @Override
+    public NioFlow<T> background(Consumer<T> effect) {
+        nioEngine.append(new Background(null, untypedConsumer(effect), guards));
+        return this;
+    }
+
+    @Override
+    public NioFlow<T> background(String name, Consumer<T> effect) {
+        nioEngine.append(new Background(name, untypedConsumer(effect), guards));
+        return this;
+    }
+
+    @Override
     public NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
         nioEngine.append(new Batch(untypedBatch(function), size, maxWait, guards));
         return this;
@@ -468,6 +480,11 @@ public final class DefaultNioFlow<T> implements NioFlow<T> {
     @SuppressWarnings("unchecked")
     private static Predicate<Object> untypedPredicate(Predicate<?> predicate) {
         return (Predicate<Object>) predicate;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Consumer<Object> untypedConsumer(Consumer<?> consumer) {
+        return (Consumer<Object>) consumer;
     }
 
     @SuppressWarnings("unchecked")

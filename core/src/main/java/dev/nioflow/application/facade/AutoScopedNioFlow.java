@@ -121,6 +121,16 @@ final class AutoScopedNioFlow<T> implements NioFlow<T> {
     }
 
     @Override
+    public NioFlow<T> background(Consumer<T> effect) {
+        return scope().background(effect);
+    }
+
+    @Override
+    public NioFlow<T> background(String name, Consumer<T> effect) {
+        return scope().background(name, effect);
+    }
+
+    @Override
     public NioFlow<T> batch(int size, Duration maxWait, Function<List<T>, List<T>> function) {
         return scope().batch(size, maxWait, function);
     }

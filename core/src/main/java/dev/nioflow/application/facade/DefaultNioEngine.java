@@ -240,6 +240,8 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
             case Recovery ignored -> "onErrorResume";
             case Filter ignored -> "filter";
             case FanOut ignored -> "fanOut";
+            case Background background -> "background"
+                    + (background.name() == null ? "" : "[" + background.name() + "]");
             case Batch batch -> "batch[size=" + batch.size() + ", maxWait=" + batch.maxWait() + "]";
         };
         if (link.guards().isEmpty()) {
@@ -411,6 +413,7 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
             case Recovery recovery -> new Recovery(recovery.function(), guards);
             case Filter filter -> new Filter(filter.predicate(), guards);
             case FanOut fanOut -> new FanOut(fanOut.function(), guards);
+            case Background background -> new Background(background.name(), background.effect(), guards);
             case Batch batch -> new Batch(batch.function(), batch.size(), batch.maxWait(), guards);
         };
     }
@@ -612,6 +615,10 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
                         flow.advance();
                     }
                     case Recovery ignored -> flow.advance(); // only failing values enter it
+                    case Background background -> {
+                        launchBackground(flow, background);
+                        flow.advance(); // fire-and-forget: the value never waits for it
+                    }
                     case Batch batch -> {
                         List<FlowValue> group = null;
                         synchronized (lock) {
@@ -792,6 +799,68 @@ public final class DefaultNioEngine implements dev.nioflow.core.facade.NioEngine
         for (int i = 0; i < group.size(); i++) {
             completionQueue.offer(new Completion(group.get(i), results.get(i), null));
         }
+    }
+
+    /**
+     * Fires a fire-and-forget effect on the executor. The value moves on without
+     * waiting, so the effect gets a snapshot of the payload and a copy of the
+     * context — the live ones keep flowing concurrently. A throwing effect is
+     * reported to metrics and the error handlers; the value is unaffected.
+     */
+    private void launchBackground(FlowValue flow, Background background) {
+        Object input = flow.value();
+        Map<String, Object> context = new HashMap<>(flow.context());
+        try {
+            executor.submit(() -> {
+                long start = System.nanoTime();
+                try {
+                    FlowContext.bound(context, () -> {
+                        background.effect().accept(input);
+                        return null;
+                    });
+                    meterBackground(background, start, true);
+                } catch (Throwable error) {
+                    meterBackground(background, start, false);
+                    reportBackgroundFailure(background, error);
+                }
+            });
+        } catch (Throwable rejected) {
+            // e.g. RejectedExecutionException when the executor was shut down externally
+            reportBackgroundFailure(background, rejected);
+        }
+    }
+
+    /** Reports a background effect execution to the metrics sink, if one is registered. */
+    private void meterBackground(Background background, long startNanos, boolean success) {
+        NioFlowMetrics sink = metrics;
+        if (sink != null) {
+            sink.stage(background.name(), true, System.nanoTime() - startNanos, success);
+        }
+    }
+
+    /**
+     * A failed background effect never fails its value — the value moved on, maybe
+     * finished, maybe answered a caller. The failure is still made visible: metrics,
+     * the bounded replay history and every error handler. It does not become the
+     * {@code join()} failure: the flow of values stays healthy.
+     */
+    private void reportBackgroundFailure(Background background, Throwable error) {
+        Throwable described = background.name() == null
+                ? error
+                : new StageException(background.name(), error);
+        NioFlowMetrics sink = metrics;
+        if (sink != null) {
+            sink.failed(described);
+        }
+        List<Consumer<Throwable>> snapshot;
+        synchronized (handlerLock) {
+            deliveredFailures.addLast(described);
+            if (deliveredFailures.size() > FAILURE_HISTORY) {
+                deliveredFailures.removeFirst();
+            }
+            snapshot = List.copyOf(errorHandlers);
+        }
+        snapshot.forEach(handler -> deliver(handler, described));
     }
 
     /** Fires an async stage on the executor and moves on; the result is reaped later. */
