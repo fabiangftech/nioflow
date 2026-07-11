@@ -29,11 +29,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 public class DefaultNioEngine implements NioEngine {
 
     private static final String NIO_FLOW_BOSS = "nio-flow-boss-";
+
+    // Sentinel returned by a fused run when a Filter rejected the value; never
+    // escapes the engine (the flow completes with null, as with a boss-side cut).
+    private static final Object FILTERED = new Object();
 
     /**
      * Executors shared by every engine in the JVM (commonPool style): a pool of
@@ -281,23 +284,30 @@ public class DefaultNioEngine implements NioEngine {
             while (index < links.size()) {
                 Link link = links.get(index);
                 if (passesGuards(link)) {
-                    switch (link) {
-                        case Stage ignored -> {
-                            dispatch(index, value);
-                            return; // the worker resumes on the boss when done
-                        }
-                        case Decision decision -> decisions.put(decision.id(), decision.predicate().test(value));
-                        case Filter filter -> {
-                            if (!filter.predicate().test(value)) {
-                                result.complete(null);
-                                return;
+                    try {
+                        switch (link) {
+                            case Stage ignored -> {
+                                dispatch(index, value);
+                                return; // the worker resumes on the boss when done
+                            }
+                            case Decision decision -> decisions.put(decision.id(), decision.predicate().test(value));
+                            case Filter filter -> {
+                                if (!filter.predicate().test(value)) {
+                                    result.complete(null);
+                                    return;
+                                }
+                            }
+                            case Background background ->
+                                    workersExecutorService.execute(() -> runBackground(background, value));
+                            case Recovery ignored -> {
+                                // Only applies on the error path (see recover)
                             }
                         }
-                        case Background background ->
-                                workersExecutorService.execute(() -> runBackground(background, value));
-                        case Recovery ignored -> {
-                            // Only applies on the error path (see recover)
-                        }
+                    } catch (Throwable error) {
+                        // A throwing Decision/Filter predicate fails the value, never
+                        // the boss task — otherwise the request future hangs forever.
+                        recover(index + 1, error);
+                        return;
                     }
                 }
                 index++;
@@ -307,12 +317,15 @@ public class DefaultNioEngine implements NioEngine {
 
         /**
          * Stage fusion: starting at index, take the maximal run of consecutive
-         * no-timeout Stages (guard-skipped links inside the run are stepped over —
-         * decisions cannot change until the next passing Decision, which ends the
-         * run). The whole run travels boss→worker→boss as ONE composed function:
-         * 2 thread hops per run instead of 2 per stage. A failure anywhere in the
-         * run recovers from the end of the run, which is equivalent because a run
-         * contains no Recovery links by construction.
+         * no-timeout Stages and Filters (guard-skipped links inside the run are
+         * stepped over — decisions cannot change until the next passing Decision,
+         * which ends the run). The whole run travels boss→worker→boss as ONE
+         * composed function: 2 thread hops per run instead of 2 per link. Fused
+         * Filter predicates run on the worker (off the boss); a rejection returns
+         * the FILTERED sentinel and completes the flow with null, same as a
+         * boss-side cut. A failure anywhere in the run recovers from the end of
+         * the run, which is equivalent because a run contains no Recovery links
+         * by construction.
          */
         private void dispatch(int index, Object value) {
             Stage first = (Stage) links.get(index);
@@ -320,7 +333,7 @@ public class DefaultNioEngine implements NioEngine {
                 dispatchWithTimeout(first, index + 1, value);
                 return;
             }
-            List<Function<Object, Object>> run = null;
+            List<Link> run = null;
             int next = index + 1;
             while (next < links.size()) {
                 Link link = links.get(next);
@@ -328,16 +341,17 @@ public class DefaultNioEngine implements NioEngine {
                     next++;
                     continue;
                 }
-                if (link instanceof Stage stage && stage.timeout() == null) {
-                    if (run == null) {
-                        run = new ArrayList<>();
-                        run.add(first.function());
-                    }
-                    run.add(stage.function());
-                    next++;
-                } else {
+                boolean fusable = link instanceof Filter
+                        || (link instanceof Stage stage && stage.timeout() == null);
+                if (!fusable) {
                     break;
                 }
+                if (run == null) {
+                    run = new ArrayList<>();
+                    run.add(first);
+                }
+                run.add(link);
+                next++;
             }
             int resume = next;
             CompletableFuture<Object> task = run == null
@@ -346,17 +360,23 @@ public class DefaultNioEngine implements NioEngine {
             task.whenCompleteAsync((nextValue, error) -> {
                 if (error != null) {
                     recover(resume, unwrap(error));
+                } else if (nextValue == FILTERED) {
+                    result.complete(null);
                 } else {
                     advance(resume, nextValue);
                 }
             }, boss);
         }
 
-        private CompletableFuture<Object> fusedTask(List<Function<Object, Object>> run, Object value) {
+        private CompletableFuture<Object> fusedTask(List<Link> run, Object value) {
             return CompletableFuture.supplyAsync(() -> {
                 Object current = value;
                 for (int i = 0; i < run.size(); i++) {
-                    current = run.get(i).apply(current);
+                    if (run.get(i) instanceof Stage stage) {
+                        current = stage.function().apply(current);
+                    } else if (run.get(i) instanceof Filter filter && !filter.predicate().test(current)) {
+                        return FILTERED;
+                    }
                 }
                 return current;
             }, workersExecutorService);

@@ -95,6 +95,39 @@ class DefaultNioEngineTest {
     }
 
     @Test
+    void fusedFilterBetweenStagesCutsTheFlow() {
+        engine.append(stage("head", value -> (int) value + 1));
+        engine.append(new Filter(value -> (int) value > 10, List.of()));
+        engine.append(stage("tail", value -> (int) value * 2));
+
+        assertEquals(42, engine.call(20, new ConcurrentHashMap<>()).join());
+        assertNull(engine.call(3, new ConcurrentHashMap<>()).join());
+    }
+
+    @Test
+    void throwingFilterPredicateFailsTheCallInsteadOfHangingIt() {
+        engine.append(new Filter(value -> {
+            throw new IllegalStateException("boom");
+        }, List.of()));
+
+        CompletableFuture<Object> result = engine.call("x", new ConcurrentHashMap<>())
+                .orTimeout(5, java.util.concurrent.TimeUnit.SECONDS);
+
+        CompletionException failure = assertThrows(CompletionException.class, result::join);
+        assertInstanceOf(IllegalStateException.class, failure.getCause());
+    }
+
+    @Test
+    void throwingPredicateCanBeRecovered() {
+        engine.append(new Decision(value -> {
+            throw new IllegalStateException("boom");
+        }, engine.nextDecision(), List.of()));
+        engine.append(new Recovery(error -> "recovered:" + error.getMessage(), List.of()));
+
+        assertEquals("recovered:boom", engine.call("x", new ConcurrentHashMap<>()).join());
+    }
+
+    @Test
     void recoveryHandlesStageFailure() {
         engine.append(stage("boom", value -> {
             throw new IllegalStateException("boom");

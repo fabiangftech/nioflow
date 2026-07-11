@@ -11,6 +11,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -205,6 +206,43 @@ class DefaultNioFlowTest {
             assertEquals(16, route.apply(6)); // grande y par
             assertEquals(27, route.apply(7)); // grande e impar
             assertEquals(32, route.apply(2)); // pequeño: el fork interno ni se evalúa
+        }
+    }
+
+    @Test
+    void filterCutsThePerRequestExecution() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            java.util.function.Function<Integer, Integer> route = input -> flow.just(input)
+                    .handle(value -> value + 1)
+                    .filter(value -> value > 10)
+                    .handle(value -> value * 2)
+                    .execute();
+
+            assertEquals(42, route.apply(20)); // (20 + 1) pasa el filtro → * 2
+            assertNull(route.apply(3));        // (3 + 1) no pasa: corta sin ejecutar la cola
+        }
+    }
+
+    @Test
+    void filterOnSharedDefinitionAppliesToEveryExecution() throws Exception {
+        try (NioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
+            flow.filter(value -> !value.isBlank());
+
+            assertEquals("HOLA", flow.just("hola").handle(String::toUpperCase).execute());
+            assertNull(flow.just("   ").handle(String::toUpperCase).execute());
+        }
+    }
+
+    @Test
+    void filterInsideALaneOnlyCutsValuesRoutedThroughThatLane() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            flow.when(value -> value % 2 == 0)
+                    .then(lane -> lane.filter(value -> value > 10).handle(value -> value * 10))
+                    .otherwise(lane -> lane.handle(value -> -value));
+
+            assertEquals(200, flow.just(20).execute()); // par y grande: pasa el filtro del lane
+            assertNull(flow.just(4).execute());         // par y chico: el filtro del lane corta
+            assertEquals(-3, flow.just(3).execute());   // impar: el filtro del otro lane no le aplica
         }
     }
 
