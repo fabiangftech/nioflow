@@ -42,28 +42,17 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 
 ## 🚀 Ready (next up, in priority order)
 
-_(empty — promote the next item from the backlog)_
+1. [ ] **Context API** — typed accessors for the per-execution context map (`ctx.get(Key<T>)`), available to stages that opt in. The engine side is already prepared: the context travels null and must lazy-init on first access (allocation audit) `[maint]`
+2. [ ] **Boss pool tuning** — configurable pool size, dedicated (non-shared) event loop option per engine for latency-critical flows. Unblocks sharded/keyed execution (needs explicit pool control) `[scale]`
+3. [ ] **Rate limiting per stage** — token bucket on named stages; protects downstream dependencies. Lazily-computed refill (timestamps), no timer needed `[scale]`
+4. [ ] **Timer wheel for stage timeouts** — replace per-call `orTimeout` scheduling (measured ~40% on timeout-armed stages) with a shared hashed timer wheel. Do BEFORE batching: the batch window will want this timer `[perf]`
+5. [ ] **Async stages** — launch a stage without awaiting and join later in the chain (needs its own marker on `Stage`; the old unused `async` flag became the `sync` boss-inline marker) `[scale]`
+6. [ ] **Batching** — `batch(size, window)` link: accumulate values and process them as one unit (bulk inserts, bulk API calls); the window timer rides on the timer wheel (#4) `[scale]`
+7. [ ] **Sharded/keyed execution** — pin executions with the same business key to the same boss for ordered processing per key (Kafka-partition style); builds on boss pool tuning (#2) `[scale]`
+8. [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links) `[maint]`
+9. [ ] **Resilience4j adapter** — circuit breaker / bulkhead as stage decorators; the `compileOnly` dependency is already declared. After rate limiting (#3), its scope shrinks to what stays external: circuit breaker + bulkhead `[scale]`
+10. [ ] **JMH regression gate in CI** — fail the build if a benchmark drops beyond a threshold vs the recorded baseline. Last on purpose: blocked until a CI pipeline exists (setting one up is part of the card) `[perf]`
 
 ## 📋 Backlog
 
-### Performance `[perf]`
-
-- [ ] **JMH regression gate in CI** — fail the build if a benchmark drops beyond a threshold vs the recorded baseline (blocked: no CI pipeline exists yet)
-- [ ] **Timer wheel for stage timeouts** — replace per-call `orTimeout` scheduling (measured ~40% on timeout-armed stages) with a shared hashed timer wheel
-
-### Scalability `[scale]`
-
-- [ ] **Batching** — `batch(size, window)` link: accumulate values and process them as one unit (bulk inserts, bulk API calls)
-- [ ] **Async stages** — launch a stage without awaiting and join later in the chain (needs its own marker on `Stage`; the old unused `async` flag became the `sync` boss-inline marker)
-- [ ] **Rate limiting per stage** — token bucket on named stages; protects downstream dependencies
-- [ ] **Boss pool tuning** — configurable pool size, dedicated (non-shared) event loop option per engine for latency-critical flows
-- [ ] **Sharded/keyed execution** — pin executions with the same business key to the same boss for ordered processing per key (Kafka-partition style)
-
-### Maintainability / DX `[maint]`
-
-- [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links)
-- [ ] **Context API** — typed accessors for the per-execution context map (`ctx.get(Key<T>)`), available to stages that opt in
-
-### Resilience (cross-cutting)
-
-- [ ] **Resilience4j adapter** — circuit breaker / bulkhead as stage decorators; the `compileOnly` dependency is already declared `[scale]`
+_(empty — everything actionable is in Ready, in execution order)_
