@@ -32,12 +32,13 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **Distinguish filtered from null results** — public `FlowSignal.FILTERED` carried by raw engine futures (engine exits map it to null); `executeResult()` returns sealed `FlowResult<T>` (`Completed(value)` — even genuinely null — vs `Filtered`), pattern-matchable; `execute`/`executeAsync` keep the null mapping for compatibility; filter paths at parity `[maint]`
 - [x] **Retry policy per stage** — native `Retry` (attempts + backoff + multiplier, zero external deps: Resilience4j stays an optional adapter for circuit breaker/bulkhead); `handle(name, fn, Retry)` / `handle(name, fn, Duration, Retry)` on `NioFlow` and `Lane`; no-timeout retries loop inline on the (virtual) worker and never break fusion, timeout+retry applies the budget per attempt with non-blocking backoff scheduling; exhausted retries flow to recovery; observable via `stageRetried` metrics; declared-but-unused at parity, one retry costs ~15% `[scale]`
 - [x] **Validation at `seal()`** — `ChainValidationException` (with the full problem list) on dangling guards, contradictory guards, duplicate anchor names and dead recoveries; runs at seal (broken definitions stop the deploy) and on every splice over a sealed chain (a rejected runtime edit leaves the previous chain and plan untouched); build-time only, runtime at parity `[maint]`
+- [x] **Decisions as bitset** — per-execution decisions in a `long[]` bitset (2 bits per id: recorded + value) instead of `HashMap<Integer, Boolean>`: O(1) records/guards with zero per-decision allocation, and an unrecorded id still fails any guard (what first-match-wins relies on). Sized by the chain's highest Decision id (precomputed at `seal()`, scanned once per call on interpreted chains); ids past 511 — per-request forks on a long-lived engine keep growing the engine-wide counter — fall back to a lazy overflow map with identical semantics. Throughput at parity; ~14% less garbage per forked request (1192 → 1025 B/op on match routing, 1312 → 1144 B/op on forked compiled chains) and decision-free executions drop the eagerly-allocated HashMap (~48 B/op) `[perf]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **Decisions as bitset** — decision ids are dense ints; replace the per-execution `HashMap<Integer, Boolean>` with a long[] bitset (zero allocation, O(1) guards) `[perf]`
+_(empty — promote the next item from the backlog)_
 
 ## 📋 Backlog
 

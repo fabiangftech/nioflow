@@ -435,6 +435,19 @@ public class DefaultNioEngine implements NioEngine {
         return -1;
     }
 
+    // Highest Decision id in the chain, -1 with none: sizes the per-execution
+    // decision bitset by chain content, not by the engine-wide id counter
+    // (which grows forever under per-request forks).
+    private static int maxDecisionId(List<Link> links) {
+        int max = -1;
+        for (int i = 0; i < links.size(); i++) {
+            if (links.get(i) instanceof Decision decision && decision.id() > max) {
+                max = decision.id();
+            }
+        }
+        return max;
+    }
+
     private static Throwable unwrap(Throwable error) {
         return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
     }
@@ -447,9 +460,11 @@ public class DefaultNioEngine implements NioEngine {
      * Background, timeout Stage) — and, when NO link in the window carries
      * guards, the precollected runs[i] array: those dispatches do zero
      * scanning and zero allocation. Windows containing guarded links keep the
-     * per-execution guard selection, just bounded to the window.
+     * per-execution guard selection, just bounded to the window. It also
+     * records the chain's highest Decision id so executions size their
+     * decision bitset without rescanning.
      */
-    private record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds) {
+    private record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, int maxDecisionId) {
 
         static CompiledChain compile(List<Link> links) {
             int size = links.size();
@@ -468,7 +483,7 @@ public class DefaultNioEngine implements NioEngine {
                     runs[i] = links.subList(i, end).toArray(Link[]::new);
                 }
             }
-            return new CompiledChain(links, runs, runEnds);
+            return new CompiledChain(links, runs, runEnds, DefaultNioEngine.maxDecisionId(links));
         }
 
         private static boolean staticallyFusable(Link link) {
@@ -495,10 +510,21 @@ public class DefaultNioEngine implements NioEngine {
      */
     private final class Execution {
 
+        // Bitset limit: ids 0..511 fit in 16 longs (128 bytes). Beyond that the
+        // bitset would outgrow a small map, so decisions overflow into one.
+        private static final int MAX_BITSET_DECISION_ID = 511;
+
         private final ExecutorService boss;
         private final List<Link> links;
         private final Map<String, Object> context;
-        private final Map<Integer, Boolean> decisions = new HashMap<>();
+        // Decisions as a bitset, 2 bits per id (bit 0 = recorded, bit 1 = value),
+        // sized to the chain's highest Decision id: recording and guard checks
+        // are O(1) with zero allocation, and an unrecorded decision fails any
+        // guard on it — the property match() first-match-wins relies on. null
+        // when the chain has no decisions, or when its ids outgrew the limit
+        // (then decisionsOverflow takes over, lazily).
+        private final long[] decisionBits;
+        private Map<Integer, Boolean> decisionsOverflow;
         private final CompletableFuture<Object> result = new CompletableFuture<>();
         // Precompiled dispatch plan for this exact chain version; null = interpret.
         private final CompiledChain plan;
@@ -512,6 +538,10 @@ public class DefaultNioEngine implements NioEngine {
             this.links = links;
             this.context = context;
             this.plan = plan;
+            int maxDecision = plan != null ? plan.maxDecisionId() : maxDecisionId(links);
+            this.decisionBits = maxDecision >= 0 && maxDecision <= MAX_BITSET_DECISION_ID
+                    ? new long[(maxDecision >>> 5) + 1]
+                    : null;
             this.metrics = DefaultNioEngine.this.metrics;
             this.startNanos = metrics != null ? System.nanoTime() : 0;
         }
@@ -528,7 +558,7 @@ public class DefaultNioEngine implements NioEngine {
                                 dispatch(index, value);
                                 return; // the worker resumes on the boss when done
                             }
-                            case Decision decision -> decisions.put(decision.id(), decision.predicate().test(value));
+                            case Decision decision -> recordDecision(decision.id(), decision.predicate().test(value));
                             case Filter filter -> {
                                 if (!filter.predicate().test(value)) {
                                     result.complete(FILTERED);
@@ -809,6 +839,21 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
 
+        // Ids recorded here always fit the bitset: it was sized from the same
+        // chain this Decision came from. Only ids past the limit go to the map.
+        private void recordDecision(int id, boolean value) {
+            if (decisionBits != null) {
+                int shift = (id & 31) << 1;
+                decisionBits[id >>> 5] = (decisionBits[id >>> 5] & ~(0b11L << shift))
+                        | ((value ? 0b11L : 0b01L) << shift);
+            } else {
+                if (decisionsOverflow == null) {
+                    decisionsOverflow = new HashMap<>();
+                }
+                decisionsOverflow.put(id, value);
+            }
+        }
+
         // Plain loop on purpose: this runs on the boss for every link of every
         // execution — no streams or allocations in the hot path.
         private boolean passesGuards(Link link) {
@@ -818,9 +863,23 @@ public class DefaultNioEngine implements NioEngine {
             }
             for (int i = 0; i < guards.size(); i++) {
                 Guard guard = guards.get(i);
-                Boolean recorded = decisions.get(guard.decision());
-                if (recorded == null || recorded != guard.expected()) {
-                    return false;
+                int id = guard.decision();
+                if (decisionBits != null) {
+                    // Out-of-range ids (dangling or negative guards — >>> maps
+                    // negatives past any length) read as never recorded.
+                    int word = id >>> 5;
+                    if (word >= decisionBits.length) {
+                        return false;
+                    }
+                    long bits = decisionBits[word] >>> ((id & 31) << 1);
+                    if ((bits & 0b01L) == 0 || ((bits & 0b10L) != 0) != guard.expected()) {
+                        return false;
+                    }
+                } else {
+                    Boolean recorded = decisionsOverflow == null ? null : decisionsOverflow.get(id);
+                    if (recorded == null || recorded != guard.expected()) {
+                        return false;
+                    }
                 }
             }
             return true;
