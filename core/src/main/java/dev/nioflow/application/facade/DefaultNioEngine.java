@@ -60,18 +60,21 @@ public class DefaultNioEngine implements NioEngine {
      */
     private static final class SharedExecutors {
 
-        private static final int BOSS_COUNT = Math.max(2, Runtime.getRuntime().availableProcessors());
-        private static final ExecutorService[] BOSSES = createBosses();
+        // Tunable at JVM level: -Dnioflow.bosses=N (default: available cores,
+        // floor 2). Read once — the shared pool is a JVM-wide singleton.
+        private static final int BOSS_COUNT = Integer.getInteger("nioflow.bosses",
+                Math.max(2, Runtime.getRuntime().availableProcessors()));
+        private static final ExecutorService[] BOSSES = createBossPool(BOSS_COUNT, NIO_FLOW_BOSS);
         private static final ExecutorService WORKERS = Executors.newVirtualThreadPerTaskExecutor();
+    }
 
-        private static ExecutorService[] createBosses() {
-            ThreadFactory factory = Thread.ofPlatform().name(NIO_FLOW_BOSS, 0).daemon(true).factory();
-            ExecutorService[] bosses = new ExecutorService[BOSS_COUNT];
-            for (int i = 0; i < bosses.length; i++) {
-                bosses[i] = Executors.newSingleThreadExecutor(factory);
-            }
-            return bosses;
+    private static ExecutorService[] createBossPool(int count, String namePrefix) {
+        ThreadFactory factory = Thread.ofPlatform().name(namePrefix, 0).daemon(true).factory();
+        ExecutorService[] bosses = new ExecutorService[count];
+        for (int i = 0; i < bosses.length; i++) {
+            bosses[i] = Executors.newSingleThreadExecutor(factory);
         }
+        return bosses;
     }
 
     private final ExecutorService[] bossExecutorServices;
@@ -119,6 +122,27 @@ public class DefaultNioEngine implements NioEngine {
     public DefaultNioEngine(ExecutorService bossExecutorService,
                             ExecutorService workersExecutorService) {
         this(new ExecutorService[]{bossExecutorService}, workersExecutorService, true, 0, OverflowPolicy.BLOCK);
+    }
+
+    /**
+     * Dedicated event loop for latency-critical flows: this engine gets its
+     * own boss pool (bossCount single-threaded bosses) and its own virtual
+     * worker pool instead of the JVM-shared ones — no other engine can queue
+     * orchestration behind its bosses, and shutdown() terminates them.
+     * Executions still pin to one boss each, so bossCount bounds how many
+     * executions this engine orchestrates in parallel (user code runs on
+     * virtual workers either way).
+     */
+    public static DefaultNioEngine dedicated(int bossCount) {
+        return dedicated(bossCount, 0, OverflowPolicy.BLOCK);
+    }
+
+    public static DefaultNioEngine dedicated(int bossCount, int inFlightCapacity, OverflowPolicy overflowPolicy) {
+        if (bossCount < 1) {
+            throw new IllegalArgumentException("bossCount must be >= 1");
+        }
+        return new DefaultNioEngine(createBossPool(bossCount, NIO_FLOW_BOSS + "dedicated-"),
+                Executors.newVirtualThreadPerTaskExecutor(), true, inFlightCapacity, overflowPolicy);
     }
 
     private DefaultNioEngine(ExecutorService[] bossExecutorServices, ExecutorService workersExecutorService,
