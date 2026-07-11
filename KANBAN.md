@@ -42,7 +42,6 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 
 - [ ] **Allocation audit per call** — Execution, snapshot, context map; target near-zero garbage for the common path. Baseline to beat after bitset + decision fusion: ~1000 B/op plain, ~1150 B/op forked (`-prof gc` runs recorded) `[perf]`
 - [ ] **Flow-level `onComplete`/`onError` in the fluent API** — engine handlers exist; expose them per flow and per execution `[maint]`
-- [ ] **Dead-letter handler** — terminal failures routed to a configurable sink with the original input and failing stage name `[maint]`
 
 ## 📋 Backlog
 
