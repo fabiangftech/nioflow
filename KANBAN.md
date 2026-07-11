@@ -30,12 +30,12 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **Reusable sub-flows (`Segment<T, R>` + `use`)** — a segment defines a chain piece over `Lane<T>` ending at `Lane<R>`; embedded inline with the caller's guards (lane-scoped when used in forks), segments compose and are independently testable; build-time only, runtime at parity with inline definitions `[maint]`
 - [x] **Graceful drain on shutdown** — `shutdown(grace)` now returns the pending count: rejects new call/inject immediately, waits for in-flight executions up to the grace (works for JVM-shared executors too — the old code was a no-op there), then terminates engine-owned executors; stragglers on shared executors still finish on their own; hot-path counter at parity `[scale]`
 - [x] **Distinguish filtered from null results** — public `FlowSignal.FILTERED` carried by raw engine futures (engine exits map it to null); `executeResult()` returns sealed `FlowResult<T>` (`Completed(value)` — even genuinely null — vs `Filtered`), pattern-matchable; `execute`/`executeAsync` keep the null mapping for compatibility; filter paths at parity `[maint]`
+- [x] **Retry policy per stage** — native `Retry` (attempts + backoff + multiplier, zero external deps: Resilience4j stays an optional adapter for circuit breaker/bulkhead); `handle(name, fn, Retry)` / `handle(name, fn, Duration, Retry)` on `NioFlow` and `Lane`; no-timeout retries loop inline on the (virtual) worker and never break fusion, timeout+retry applies the budget per attempt with non-blocking backoff scheduling; exhausted retries flow to recovery; observable via `stageRetried` metrics; declared-but-unused at parity, one retry costs ~15% `[scale]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **Retry policy per stage** — attempts + backoff on named stages, composing with timeout and recovery `[scale]`
 - [ ] **Validation at `seal()`** — detect dangling guards, unreachable lanes, duplicate stage names, recovery with nothing upstream `[maint]`
 - [ ] **Chain diagnostics** — human-readable chain dump (names, guards, fusion runs), DOT/Mermaid export for architecture docs `[maint]`
 - [ ] **Decisions as bitset** — decision ids are dense ints; replace the per-execution `HashMap<Integer, Boolean>` with a long[] bitset (zero allocation, O(1) guards) `[perf]`

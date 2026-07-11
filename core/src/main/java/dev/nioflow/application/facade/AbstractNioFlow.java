@@ -12,6 +12,7 @@ import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.Recovery;
+import dev.nioflow.core.model.Retry;
 import dev.nioflow.core.model.Stage;
 
 import java.time.Duration;
@@ -48,13 +49,25 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
 
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function) {
-        appendLink(new Stage(name, asObjectFunction(function), false, null, guards()));
+        appendLink(new Stage(name, asObjectFunction(function), false, null, null, guards()));
         return this;
     }
 
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout) {
-        appendLink(new Stage(name, asObjectFunction(function), false, timeout, guards()));
+        appendLink(new Stage(name, asObjectFunction(function), false, timeout, null, guards()));
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, Retry retry) {
+        appendLink(new Stage(name, asObjectFunction(function), false, null, retry, guards()));
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
+        appendLink(new Stage(name, asObjectFunction(function), false, timeout, retry, guards()));
         return this;
     }
 
@@ -73,7 +86,7 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     @Override
     @SuppressWarnings("unchecked")
     public <R> NioFlow<I, R> adapt(Function<T, R> function) {
-        appendLink(new Stage(anonymousName("adapt"), asObjectFunction(function), false, null, guards()));
+        appendLink(new Stage(anonymousName("adapt"), asObjectFunction(function), false, null, null, guards()));
         return (NioFlow<I, R>) this;
     }
 

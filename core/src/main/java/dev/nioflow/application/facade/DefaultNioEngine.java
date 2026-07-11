@@ -11,6 +11,7 @@ import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.OverflowPolicy;
 import dev.nioflow.core.model.Recovery;
+import dev.nioflow.core.model.Retry;
 import dev.nioflow.core.model.Splice;
 import dev.nioflow.core.model.Stage;
 
@@ -34,6 +35,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -597,7 +599,7 @@ public class DefaultNioEngine implements NioEngine {
                 run = selected == null ? null : selected.toArray(Link[]::new);
             }
             CompletableFuture<Object> task = run == null || run.length == 1
-                    ? CompletableFuture.supplyAsync(() -> timedApply(first, value), workersExecutorService)
+                    ? CompletableFuture.supplyAsync(() -> applyStage(first, value), workersExecutorService)
                     : fusedTask(run, value);
             task.whenCompleteAsync((nextValue, error) -> {
                 if (error != null) {
@@ -616,7 +618,7 @@ public class DefaultNioEngine implements NioEngine {
                 for (int i = 0; i < run.length; i++) {
                     try {
                         if (run[i] instanceof Stage stage) {
-                            current = timedApply(stage, current);
+                            current = applyStage(stage, current);
                         } else if (run[i] instanceof Filter filter && !filter.predicate().test(current)) {
                             return FILTERED;
                         }
@@ -686,15 +688,64 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         private void dispatchWithTimeout(Stage stage, int resume, Object value) {
+            attemptWithTimeout(stage, resume, value, 1);
+        }
+
+        /**
+         * Timeout + retry composition: the budget applies to EACH attempt (a
+         * hung attempt is cut by orTimeout, which an inline loop could not do),
+         * the backoff is scheduled without parking anyone, and once attempts
+         * are exhausted the last failure flows to the recovery path.
+         */
+        private void attemptWithTimeout(Stage stage, int resume, Object value, int attempt) {
             CompletableFuture.supplyAsync(() -> timedApply(stage, value), workersExecutorService)
                     .orTimeout(stage.timeout().toMillis(), TimeUnit.MILLISECONDS)
                     .whenCompleteAsync((nextValue, error) -> {
-                        if (error != null) {
-                            recover(resume, unwrap(error));
-                        } else {
+                        if (error == null) {
                             advance(resume, nextValue);
+                            return;
+                        }
+                        Retry retry = stage.retry();
+                        if (retry != null && attempt < retry.attempts()) {
+                            if (metrics != null) {
+                                metrics.stageRetried(stage.name());
+                            }
+                            CompletableFuture.delayedExecutor(retry.delayNanos(attempt), TimeUnit.NANOSECONDS, boss)
+                                    .execute(() -> attemptWithTimeout(stage, resume, value, attempt + 1));
+                        } else {
+                            recover(resume, unwrap(error));
                         }
                     }, boss);
+        }
+
+        /**
+         * Runs the stage on a worker honoring its retry policy: failed attempts
+         * back off by parking the (virtual) worker thread — cheap — and the
+         * last failure escapes to the caller's error path (in-run recovery or
+         * recover()). Works unchanged inside fused runs: retrying never breaks
+         * fusion. Timeout+retry stages do NOT go through here (a hung attempt
+         * cannot be cut inline; see attemptWithTimeout).
+         */
+        private Object applyStage(Stage stage, Object value) {
+            Retry retry = stage.retry();
+            if (retry == null) {
+                return timedApply(stage, value);
+            }
+            Throwable last = null;
+            for (int attempt = 1; attempt <= retry.attempts(); attempt++) {
+                if (attempt > 1) {
+                    if (metrics != null) {
+                        metrics.stageRetried(stage.name());
+                    }
+                    LockSupport.parkNanos(retry.delayNanos(attempt - 1));
+                }
+                try {
+                    return timedApply(stage, value);
+                } catch (Throwable error) {
+                    last = error;
+                }
+            }
+            throw new CompletionException(last);
         }
 
         // Runs the stage function, timing it when metrics are installed. Always

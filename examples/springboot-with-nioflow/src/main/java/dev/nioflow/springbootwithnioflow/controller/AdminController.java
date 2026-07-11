@@ -40,7 +40,7 @@ public class AdminController {
         orderEngine.splice("tax", Splice.REPLACE, List.of(new Stage("tax", value -> {
             Order order = (Order) value;
             return order.withTax(order.subtotal() * rate);
-        }, false, null, List.of())));
+        }, false, null, null, List.of())));
         return "tax stage replaced at runtime: rate=" + rate;
     }
 

@@ -49,7 +49,7 @@ public class NioFlowBenchmark {
     public void setUp() {
         engine = new DefaultNioEngine();
         for (int i = 0; i < stages; i++) {
-            engine.append(new Stage("stage-" + i, value -> (int) value + 1, false, null, List.of()));
+            engine.append(new Stage("stage-" + i, value -> (int) value + 1, false, null, null, List.of()));
         }
         engine.seal();
         flow = DefaultNioFlow.from(Integer.class, engine);

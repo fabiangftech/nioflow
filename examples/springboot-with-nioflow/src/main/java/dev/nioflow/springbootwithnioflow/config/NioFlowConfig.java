@@ -5,6 +5,7 @@ import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.Segment;
+import dev.nioflow.core.model.Retry;
 import dev.nioflow.springbootwithnioflow.model.Order;
 import dev.nioflow.springbootwithnioflow.model.OrderReceipt;
 import dev.nioflow.springbootwithnioflow.model.OrderRequest;
@@ -70,7 +71,10 @@ public class NioFlowConfig {
                 .handle("normalize", validationService::normalize)
                 .adapt(pricingService::price)
                 .filter(inventoryService::hasStock)
-                .handle("reserve", inventoryService::reserve, Duration.ofSeconds(2))
+                // Transient inventory hiccups retry with backoff; each attempt
+                // has its own 2s budget; persistent failure fails the order fast.
+                .handle("reserve", inventoryService::reserve,
+                        Duration.ofSeconds(2), Retry.of(3, Duration.ofMillis(100)))
                 .handle("tax", pricingService::withTax)
                 .background("audit", auditService::record);
     }

@@ -83,7 +83,7 @@ class DefaultNioEngineCompiledChainTest {
         assertEquals(6, flow.just(5).execute());
 
         engine.splice("mutable", Splice.REPLACE, List.of(
-                new dev.nioflow.core.model.Stage("mutable", value -> (int) value + 100, false, null, List.of())));
+                new dev.nioflow.core.model.Stage("mutable", value -> (int) value + 100, false, null, null, List.of())));
 
         assertEquals(105, flow.just(5).execute()); // the new plan, compiled once at splice time
         shutdown(engine);

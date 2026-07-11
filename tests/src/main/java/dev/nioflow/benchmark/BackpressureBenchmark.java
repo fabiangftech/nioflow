@@ -35,8 +35,8 @@ public class BackpressureBenchmark {
         unbounded = new DefaultNioEngine();
         bounded = new DefaultNioEngine(1024, OverflowPolicy.BLOCK);
         for (DefaultNioEngine engine : new DefaultNioEngine[]{unbounded, bounded}) {
-            engine.append(new Stage("plus", value -> (int) value + 1, false, null, List.of()));
-            engine.append(new Stage("double", value -> (int) value * 2, false, null, List.of()));
+            engine.append(new Stage("plus", value -> (int) value + 1, false, null, null, List.of()));
+            engine.append(new Stage("double", value -> (int) value * 2, false, null, null, List.of()));
             engine.seal();
         }
     }

@@ -29,7 +29,7 @@ class DeepChainStressTest {
             for (int i = 0; i < depth; i++) {
                 engine.append(new Decision(value -> true, engine.nextDecision(), List.of()));
             }
-            engine.append(new Stage("tail", value -> value, false, null, List.of()));
+            engine.append(new Stage("tail", value -> value, false, null, null, List.of()));
 
             Object result = engine.call(42, new ConcurrentHashMap<>())
                     .orTimeout(20, TimeUnit.SECONDS)

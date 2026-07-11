@@ -37,7 +37,7 @@ class DefaultNioEngineRecoveryTest extends EngineTestSupport {
                 Thread.currentThread().interrupt();
             }
             return value;
-        }, false, Duration.ofMillis(50), List.of()));
+        }, false, Duration.ofMillis(50), null, List.of()));
         engine.append(new Recovery("recovery", error -> "timed-out", List.of()));
 
         assertEquals("timed-out", engine.call("in", new ConcurrentHashMap<>()).join());

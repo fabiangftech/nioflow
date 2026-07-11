@@ -23,6 +23,6 @@ abstract class EngineTestSupport {
     }
 
     static Stage stage(String name, Function<Object, Object> function) {
-        return new Stage(name, function, false, null, List.of());
+        return new Stage(name, function, false, null, null, List.of());
     }
 }

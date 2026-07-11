@@ -23,6 +23,9 @@ public interface NioFlowMetrics {
     default void recoveryApplied(String recovery) {
     }
 
+    default void stageRetried(String stage) {
+    }
+
     default void valueDropped() {
     }
 

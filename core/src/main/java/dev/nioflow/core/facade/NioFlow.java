@@ -1,5 +1,7 @@
 package dev.nioflow.core.facade;
 
+import dev.nioflow.core.model.Retry;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -30,6 +32,16 @@ public interface NioFlow<I, T> {
      * by recover(), like any other stage failure.
      */
     NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout);
+
+    /**
+     * Stage with a retry policy: failed attempts back off on the worker and,
+     * once exhausted, the last failure flows to the recovery path. Composes
+     * in layers: timeout per attempt → retry over attempts → recover() as the
+     * final net.
+     */
+    NioFlow<I, T> handle(String name, Function<T, T> function, Retry retry);
+
+    NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
 
     NioFlow<I, T> background(Consumer<T> effect);
 

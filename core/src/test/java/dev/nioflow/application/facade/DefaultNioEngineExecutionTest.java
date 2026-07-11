@@ -48,9 +48,9 @@ class DefaultNioEngineExecutionTest extends EngineTestSupport {
     void guardsRouteLinksPerRequestWithoutSharingDecisions() {
         int decision = engine.nextDecision();
         engine.append(new Decision(value -> (int) value > 10, decision, List.of()));
-        engine.append(new Stage("big", value -> "big:" + value, false, null,
+        engine.append(new Stage("big", value -> "big:" + value, false, null, null,
                 List.of(new Guard(decision, true))));
-        engine.append(new Stage("small", value -> "small:" + value, false, null,
+        engine.append(new Stage("small", value -> "small:" + value, false, null, null,
                 List.of(new Guard(decision, false))));
 
         assertEquals("big:42", engine.call(42, new ConcurrentHashMap<>()).join());

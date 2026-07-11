@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class DefaultNioEngineBackpressureTest {
 
     private static Stage identity() {
-        return new Stage("identity", Function.identity(), false, null, List.of());
+        return new Stage("identity", Function.identity(), false, null, null, List.of());
     }
 
     @Test

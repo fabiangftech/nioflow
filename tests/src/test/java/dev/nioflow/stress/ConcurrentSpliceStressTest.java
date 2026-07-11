@@ -28,7 +28,7 @@ class ConcurrentSpliceStressTest {
     @Test
     void runtimeSpliceUnderLoadNeverProducesTornResults() throws Exception {
         var engine = new DefaultNioEngine();
-        engine.append(new Stage("mutable", value -> (int) value + 1, false, null, List.of()));
+        engine.append(new Stage("mutable", value -> (int) value + 1, false, null, null, List.of()));
         engine.seal();
 
         var stop = new AtomicBoolean(false);
@@ -37,7 +37,7 @@ class ConcurrentSpliceStressTest {
             while (!stop.get()) {
                 int currentDelta = delta;
                 engine.splice("mutable", Splice.REPLACE, List.of(
-                        new Stage("mutable", value -> (int) value + currentDelta, false, null, List.of())));
+                        new Stage("mutable", value -> (int) value + currentDelta, false, null, null, List.of())));
                 delta = delta == 2 ? 1 : 2;
             }
         });

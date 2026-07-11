@@ -5,5 +5,5 @@ import java.util.List;
 import java.util.function.Function;
 
 public record Stage(String name, Function<Object, Object> function, boolean async, Duration timeout,
-                    List<Guard> guards) implements Link {
+                    Retry retry, List<Guard> guards) implements Link {
 }

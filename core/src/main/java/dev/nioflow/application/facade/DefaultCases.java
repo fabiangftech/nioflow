@@ -7,6 +7,7 @@ import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Guard;
+import dev.nioflow.core.model.Retry;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -73,6 +74,16 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout) {
         return flow.handle(name, function, timeout);
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, Retry retry) {
+        return flow.handle(name, function, retry);
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
+        return flow.handle(name, function, timeout, retry);
     }
 
     @Override

@@ -1,5 +1,7 @@
 package dev.nioflow.core.facade;
 
+import dev.nioflow.core.model.Retry;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
@@ -18,6 +20,10 @@ public interface Lane<T> {
     Lane<T> handle(String name, Function<T, T> function);
 
     Lane<T> handle(String name, Function<T, T> function, Duration timeout);
+
+    Lane<T> handle(String name, Function<T, T> function, Retry retry);
+
+    Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
 
     Lane<T> background(Consumer<T> effect);
 
