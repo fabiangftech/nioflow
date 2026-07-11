@@ -116,6 +116,99 @@ class DefaultNioFlowTest {
     }
 
     @Test
+    void whenRoutesEachExecutionThroughItsLane() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            Integer big = flow.just(42)
+                    .when(value -> value > 10)
+                    .then(lane -> lane.handle(value -> value * 2))
+                    .otherwise(lane -> lane.handle(value -> value - 1))
+                    .handle(value -> value + 100)
+                    .execute();
+            Integer small = flow.just(3)
+                    .when(value -> value > 10)
+                    .then(lane -> lane.handle(value -> value * 2))
+                    .otherwise(lane -> lane.handle(value -> value - 1))
+                    .handle(value -> value + 100)
+                    .execute();
+
+            assertEquals(184, big);   // (42 * 2) + 100: solo el lane then
+            assertEquals(102, small); // (3 - 1) + 100: solo el lane otherwise
+        }
+    }
+
+    @Test
+    void whenWithoutOtherwiseSkipsTheLaneAndContinuesTheMainLine() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            Integer result = flow.just(3)
+                    .when(value -> value > 10)
+                    .then(lane -> lane.handle(value -> value * 1000))
+                    .handle(value -> value + 1)
+                    .execute();
+
+            assertEquals(4, result);
+        }
+    }
+
+    @Test
+    void whenOnSharedDefinitionRoutesPerRequest() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            flow.when(value -> value % 2 == 0)
+                    .then(lane -> lane.handle("even", value -> value * 10))
+                    .otherwise(lane -> lane.handle("odd", value -> value * -1));
+
+            assertEquals(40, flow.just(4).execute());
+            assertEquals(-7, flow.just(7).execute());
+        }
+    }
+
+    @Test
+    void matchFirstMatchingCaseWins() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            java.util.function.Function<Integer, Integer> route = input -> flow.just(input)
+                    .match()
+                    .is(value -> value % 2 == 0, lane -> lane.handle(value -> value * 2))
+                    .is(value -> value > 10, lane -> lane.handle(value -> value + 1000))
+                    .otherwise(lane -> lane.handle(value -> -value))
+                    .execute();
+
+            assertEquals(40, route.apply(20));   // par Y > 10: gana el primer caso, el segundo no corre
+            assertEquals(1015, route.apply(15)); // impar y > 10: segundo caso
+            assertEquals(-3, route.apply(3));    // ningún caso: otherwise
+        }
+    }
+
+    @Test
+    void matchWithoutOtherwiseFallsThroughToTheMainLine() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            Integer result = flow.just(3)
+                    .match()
+                    .is(value -> value > 10, lane -> lane.handle(value -> value * 1000))
+                    .handle(value -> value + 1)
+                    .execute();
+
+            assertEquals(4, result);
+        }
+    }
+
+    @Test
+    void nestedForksComposeGuards() throws Exception {
+        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
+            java.util.function.Function<Integer, Integer> route = input -> flow.just(input)
+                    .when(value -> value > 5)
+                    .then(lane -> lane
+                            .when(value -> value % 2 == 0)
+                            .then(inner -> inner.handle(value -> value + 10))
+                            .otherwise(inner -> inner.handle(value -> value + 20)))
+                    .otherwise(lane -> lane.handle(value -> value + 30))
+                    .execute();
+
+            assertEquals(16, route.apply(6)); // grande y par
+            assertEquals(27, route.apply(7)); // grande e impar
+            assertEquals(32, route.apply(2)); // pequeño: el fork interno ni se evalúa
+        }
+    }
+
+    @Test
     void executeWithoutJustIsRejected() throws Exception {
         try (NioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
             assertThrows(IllegalStateException.class, flow::execute);

@@ -248,34 +248,33 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         private void advance(int index, Object value) {
-            if (index >= links.size()) {
-                result.complete(value);
-                return;
-            }
-            Link link = links.get(index);
-            if (!passesGuards(link)) {
-                advance(index + 1, value);
-                return;
-            }
-            switch (link) {
-                case Stage stage -> dispatch(stage, index, value);
-                case Decision decision -> {
-                    decisions.put(decision.id(), decision.predicate().test(value));
-                    advance(index + 1, value);
-                }
-                case Filter filter -> {
-                    if (filter.predicate().test(value)) {
-                        advance(index + 1, value);
-                    } else {
-                        result.complete(null);
+            // Iterativo, no recursivo: una chain profunda de links baratos se
+            // procesa entera en el boss y no puede depender del tamaño del stack.
+            while (index < links.size()) {
+                Link link = links.get(index);
+                if (passesGuards(link)) {
+                    switch (link) {
+                        case Stage stage -> {
+                            dispatch(stage, index, value);
+                            return; // el worker retoma en el boss al terminar
+                        }
+                        case Decision decision -> decisions.put(decision.id(), decision.predicate().test(value));
+                        case Filter filter -> {
+                            if (!filter.predicate().test(value)) {
+                                result.complete(null);
+                                return;
+                            }
+                        }
+                        case Background background ->
+                                workersExecutorService.execute(() -> runBackground(background, value));
+                        case Recovery ignored -> {
+                            // Solo aplica en la ruta de error (ver recover)
+                        }
                     }
                 }
-                case Background background -> {
-                    workersExecutorService.execute(() -> runBackground(background, value));
-                    advance(index + 1, value);
-                }
-                case Recovery ignored -> advance(index + 1, value);
+                index++;
             }
+            result.complete(value);
         }
 
         private void dispatch(Stage stage, int index, Object value) {
