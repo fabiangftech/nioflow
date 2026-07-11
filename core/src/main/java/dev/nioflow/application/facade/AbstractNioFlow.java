@@ -4,6 +4,7 @@ import dev.nioflow.core.facade.Cases;
 import dev.nioflow.core.facade.Condition;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
@@ -96,6 +97,15 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
                 (Function<List<Object>, Object>) (Function<?, ?>) join,
                 guards()));
         return (NioFlow<I, C>) this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R> NioFlow<I, R> use(Segment<T, R> segment) {
+        // The segment defines itself over a lane view of this flow: its links
+        // are appended inline with the current guards.
+        segment.define(new DefaultLane<>(this));
+        return (NioFlow<I, R>) this;
     }
 
     @Override

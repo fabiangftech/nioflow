@@ -47,6 +47,13 @@ public interface NioFlow<I, T> {
 
     <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
+    /**
+     * Embeds a reusable segment inline: its links join this chain as if they
+     * had been declared here, and the pipeline continues at the segment's
+     * output type.
+     */
+    <R> NioFlow<I, R> use(Segment<T, R> segment);
+
     NioFlow<I, T> filter(Predicate<T> predicate);
 
     /**

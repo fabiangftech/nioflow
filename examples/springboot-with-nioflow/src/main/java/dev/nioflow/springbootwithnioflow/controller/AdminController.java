@@ -3,6 +3,7 @@ package dev.nioflow.springbootwithnioflow.controller;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Decision;
+import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Splice;
@@ -52,6 +53,7 @@ public class AdminController {
                     case Filter ignored -> "filter";
                     case Decision decision -> "decision:" + decision.id();
                     case Recovery recovery -> "recovery:" + recovery.name();
+                    case FanOut fanOut -> "fanout:" + fanOut.name();
                 })
                 .toList();
     }

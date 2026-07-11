@@ -4,6 +4,8 @@ import dev.nioflow.application.facade.DefaultNioEngine;
 import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.Segment;
+import dev.nioflow.springbootwithnioflow.model.Order;
 import dev.nioflow.springbootwithnioflow.model.OrderReceipt;
 import dev.nioflow.springbootwithnioflow.model.OrderRequest;
 import dev.nioflow.springbootwithnioflow.service.AuditService;
@@ -32,12 +34,10 @@ public class NioFlowConfig {
     }
 
     /**
-     * The COMPLETE order pipeline lives in the shared definition and is sealed
-     * at startup: seal() compiles the chain once (fusion runs, guard windows)
-     * and every request follows the precompiled plan — the controller becomes
-     * a one-liner. Runtime splices (AdminController) recompile once per edit.
-     * Convention for large flows: every step is a method reference to a
-     * service; the flow reads as the business spec.
+     * The pipeline is composed from reusable, independently testable segments
+     * — each one a named chapter of the business spec — then sealed at
+     * startup so every request runs the compiled plan. The controller stays a
+     * one-liner; runtime splices (AdminController) recompile once per edit.
      */
     @Bean(destroyMethod = "close")
     public NioFlow<OrderRequest, OrderReceipt> orderFlow(NioEngine orderEngine,
@@ -49,48 +49,69 @@ public class NioFlowConfig {
                                                          NotificationService notificationService,
                                                          AuditService auditService) {
         NioFlow<OrderRequest, OrderReceipt> flow = DefaultNioFlow.from(OrderRequest.class, orderEngine)
+                .use(platform(validationService, inventoryService, pricingService, auditService))
+                .use(fraudGate(riskService, pricingService))
+                .use(shippingTier(shippingService))
+                .use(notifications(notificationService))
+                .adapt(OrderReceipt::from);
 
-                // Platform: validation, pricing, stock, tax, audit.
+        // Freeze and compile: from here on, every request runs the plan.
+        orderEngine.seal();
+        return flow;
+    }
+
+    /** Platform: validation, pricing, stock control, tax and audit. */
+    private static Segment<OrderRequest, Order> platform(ValidationService validationService,
+                                                         InventoryService inventoryService,
+                                                         PricingService pricingService,
+                                                         AuditService auditService) {
+        return lane -> lane
                 .filter(validationService::isValid)
                 .handle("normalize", validationService::normalize)
                 .adapt(pricingService::price)
                 .filter(inventoryService::hasStock)
                 .handle("reserve", inventoryService::reserve, Duration.ofSeconds(2))
                 .handle("tax", pricingService::withTax)
-                .background("audit", auditService::record)
+                .background("audit", auditService::record);
+    }
 
-                // Fraud gate: risky orders go on hold and ops is alerted;
-                // trusted orders earn discounts (VIP, and bulk on top).
+    /**
+     * Fraud gate: risky orders go on hold and ops is alerted; trusted orders
+     * earn discounts (VIP, and bulk on top).
+     */
+    private static Segment<Order, Order> fraudGate(RiskService riskService,
+                                                   PricingService pricingService) {
+        return lane -> lane
                 .when(riskService::isRisky)
-                    .then(lane -> lane
+                    .then(risky -> risky
                             .handle("hold", riskService::hold)
                             .background("risk-alert", riskService::alert))
-                    .otherwise(lane -> lane
+                    .otherwise(trusted -> trusted
                             .handle("loyalty", pricingService::loyaltyDiscount)
                             .when(pricingService::qualifiesForBulkDiscount)
-                                .then(inner -> inner
-                                        .handle("bulk", pricingService::bulkDiscount)))
+                                .then(bulk -> bulk
+                                        .handle("bulk", pricingService::bulkDiscount)));
+    }
 
-                // Shipping tier: first match wins.
+    /** Shipping tier: first match wins. */
+    private static Segment<Order, Order> shippingTier(ShippingService shippingService) {
+        return lane -> lane
                 .match()
-                    .is(shippingService::isInternational, lane -> lane
+                    .is(shippingService::isInternational, intl -> intl
                             .handle("customs", shippingService::addCustoms)
                             .handle("intl", shippingService::international))
-                    .is(shippingService::qualifiesForExpress, lane -> lane
+                    .is(shippingService::qualifiesForExpress, express -> express
                             .handle("express", shippingService::express))
-                    .is(shippingService::qualifiesForStandard, lane -> lane
+                    .is(shippingService::qualifiesForStandard, standard -> standard
                             .handle("standard", shippingService::standard))
-                    .otherwise(lane -> lane
-                            .handle("economy", shippingService::economy))
+                    .otherwise(economy -> economy
+                            .handle("economy", shippingService::economy));
+    }
 
-                // Side effects off the critical path.
+    /** Side effects off the critical path. */
+    private static Segment<Order, Order> notifications(NotificationService notificationService) {
+        return lane -> lane
                 .background("notify-customer", notificationService::notifyCustomer)
-                .background("notify-warehouse", notificationService::notifyWarehouse)
-
-                .adapt(OrderReceipt::from);
-
-        // Freeze and compile: from here on, every request runs the plan.
-        orderEngine.seal();
-        return flow;
+                .background("notify-warehouse", notificationService::notifyWarehouse);
     }
 }

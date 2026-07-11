@@ -4,6 +4,7 @@ import dev.nioflow.core.facade.Cases;
 import dev.nioflow.core.facade.Condition;
 import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Guard;
 
 import java.util.ArrayList;
@@ -101,6 +102,11 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     @Override
     public NioFlow<I, T> filter(Predicate<T> predicate) {
         return flow.filter(predicate);
+    }
+
+    @Override
+    public <R> NioFlow<I, R> use(Segment<T, R> segment) {
+        return flow.use(segment);
     }
 
     @Override

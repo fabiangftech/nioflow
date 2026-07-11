@@ -29,6 +29,8 @@ public interface Lane<T> {
 
     <R, C> Lane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
+    <R> Lane<R> use(Segment<T, R> segment);
+
     Lane<T> filter(Predicate<T> predicate);
 
     /**

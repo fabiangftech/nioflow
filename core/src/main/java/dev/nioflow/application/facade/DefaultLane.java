@@ -3,6 +3,7 @@ package dev.nioflow.application.facade;
 import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.LaneCases;
 import dev.nioflow.core.facade.LaneCondition;
+import dev.nioflow.core.facade.Segment;
 
 import java.time.Duration;
 import java.util.List;
@@ -78,6 +79,13 @@ class DefaultLane<T> implements Lane<T> {
     public <R, C> Lane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join) {
         view.fanOut(name, branches, join);
         return (Lane<C>) this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R> Lane<R> use(Segment<T, R> segment) {
+        segment.define(new DefaultLane<>(view));
+        return (Lane<R>) this;
     }
 
     @Override
