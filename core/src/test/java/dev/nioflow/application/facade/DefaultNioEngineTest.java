@@ -180,6 +180,28 @@ class DefaultNioEngineTest {
     }
 
     @Test
+    void defaultEnginesShareTheBossAndSurviveEachOthersShutdown() {
+        var other = new DefaultNioEngine();
+        var bossOfThis = new AtomicReference<String>();
+        var bossOfOther = new AtomicReference<String>();
+        engine.append(new Decision(value -> {
+            bossOfThis.set(Thread.currentThread().getName());
+            return true;
+        }, engine.nextDecision(), List.of()));
+        other.append(new Decision(value -> {
+            bossOfOther.set(Thread.currentThread().getName());
+            return true;
+        }, other.nextDecision(), List.of()));
+
+        engine.call("x", new ConcurrentHashMap<>()).join();
+        // Apagar un engine no puede dejar sin threads a los demás: los executors son compartidos.
+        engine.shutdown(Duration.ofMillis(100));
+        assertEquals("y", other.call("y", new ConcurrentHashMap<>()).join());
+
+        assertEquals(bossOfThis.get(), bossOfOther.get());
+    }
+
+    @Test
     void injectIsAsyncAndAwaitCollectsTheResult() {
         engine.append(stage("upper", value -> value.toString().toUpperCase()));
 

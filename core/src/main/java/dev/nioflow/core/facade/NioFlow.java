@@ -5,30 +5,31 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * Pipeline tipado: T es el tipo del valor en el punto actual de la cadena.
- * adapt() es el único paso que cambia T; el resto lo preserva.
+ * Pipeline tipado de punta a punta: I es el tipo de entrada (lo que acepta
+ * just), T es el tipo del valor en el punto actual de la cadena. adapt() es
+ * el único paso que cambia T; el resto lo preserva.
  */
-public interface NioFlow<T> extends AutoCloseable {
+public interface NioFlow<I, T> extends AutoCloseable {
 
-    <I> NioFlow<T> just(I input);
+    NioFlow<I, T> just(I input);
 
-    <I> NioFlow<T> justAll(Iterable<I> inputs);
+    NioFlow<I, T> justAll(Iterable<I> inputs);
 
-    NioFlow<T> handle(Function<T, T> function);
+    NioFlow<I, T> handle(Function<T, T> function);
 
-    NioFlow<T> handle(String name, Function<T, T> function);
+    NioFlow<I, T> handle(String name, Function<T, T> function);
 
-    NioFlow<T> background(Consumer<T> effect);
+    NioFlow<I, T> background(Consumer<T> effect);
 
-    NioFlow<T> background(String name, Consumer<T> effect);
+    NioFlow<I, T> background(String name, Consumer<T> effect);
 
-    <R> NioFlow<R> adapt(Function<T, R> function);
+    <R> NioFlow<I, R> adapt(Function<T, R> function);
 
-    NioFlow<T> filter(Predicate<T> predicate);
+    NioFlow<I, T> filter(Predicate<T> predicate);
 
-    Condition<T> when(Predicate<T> predicate);
+    Condition<I, T> when(Predicate<T> predicate);
 
-    Cases<T> match();
+    Cases<I, T> match();
 
     T execute();
 }

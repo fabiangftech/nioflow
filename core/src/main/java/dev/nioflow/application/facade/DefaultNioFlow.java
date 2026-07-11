@@ -12,14 +12,13 @@ import dev.nioflow.core.model.Stage;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
-public class DefaultNioFlow<T> implements NioFlow<T> {
+public class DefaultNioFlow<I, T> implements NioFlow<I, T> {
 
     private final NioEngine nioEngine;
     private final AtomicInteger anonymousLinks = new AtomicInteger();
@@ -28,20 +27,20 @@ public class DefaultNioFlow<T> implements NioFlow<T> {
         this(new DefaultNioEngine());
     }
 
-    /**
-     * El Class solo ancla el tipo del pipeline en el punto de partida
-     * (evita inferir Object en los steps); no se usa en runtime.
-     */
-    public DefaultNioFlow(Class<T> type) {
-        this(new DefaultNioEngine());
-    }
-
-    public DefaultNioFlow(Class<T> type, NioEngine nioEngine) {
-        this(nioEngine);
-    }
-
     public DefaultNioFlow(NioEngine nioEngine) {
         this.nioEngine = nioEngine;
+    }
+
+    /**
+     * Punto de partida tipado: el Class ancla I (lo que acepta just) y el
+     * pipeline arranca con T = I; solo adapt() cambia T de ahí en adelante.
+     */
+    public static <I> NioFlow<I, I> from(Class<I> type) {
+        return new DefaultNioFlow<>();
+    }
+
+    public static <I> NioFlow<I, I> from(Class<I> type, NioEngine nioEngine) {
+        return new DefaultNioFlow<>(nioEngine);
     }
 
     /**
@@ -50,60 +49,60 @@ public class DefaultNioFlow<T> implements NioFlow<T> {
      * concurrentes pueden hacer just(...)...execute() sin chocar entre sí.
      */
     @Override
-    public <I> NioFlow<T> just(I input) {
+    public NioFlow<I, T> just(I input) {
         return new ExecutionNioFlow<>(nioEngine, input);
     }
 
     @Override
-    public <I> NioFlow<T> justAll(Iterable<I> inputs) {
+    public NioFlow<I, T> justAll(Iterable<I> inputs) {
         inputs.forEach(input -> nioEngine.inject(input, new ConcurrentHashMap<>()));
         return this;
     }
 
     @Override
-    public NioFlow<T> handle(Function<T, T> function) {
+    public NioFlow<I, T> handle(Function<T, T> function) {
         return handle(anonymousName("stage"), function);
     }
 
     @Override
-    public NioFlow<T> handle(String name, Function<T, T> function) {
+    public NioFlow<I, T> handle(String name, Function<T, T> function) {
         nioEngine.append(new Stage(name, asObjectFunction(function), false, null, List.of()));
         return this;
     }
 
     @Override
-    public NioFlow<T> background(Consumer<T> effect) {
+    public NioFlow<I, T> background(Consumer<T> effect) {
         return background(anonymousName("background"), effect);
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public NioFlow<T> background(String name, Consumer<T> effect) {
+    public NioFlow<I, T> background(String name, Consumer<T> effect) {
         nioEngine.append(new Background(name, (Consumer<Object>) effect, List.of()));
         return this;
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public <R> NioFlow<R> adapt(Function<T, R> function) {
+    public <R> NioFlow<I, R> adapt(Function<T, R> function) {
         nioEngine.append(new Stage(anonymousName("adapt"), asObjectFunction(function), false, null, List.of()));
-        return (NioFlow<R>) this;
+        return (NioFlow<I, R>) this;
     }
 
     @Override
     @SuppressWarnings("unchecked")
-    public NioFlow<T> filter(Predicate<T> predicate) {
+    public NioFlow<I, T> filter(Predicate<T> predicate) {
         nioEngine.append(new Filter((Predicate<Object>) predicate, List.of()));
         return this;
     }
 
     @Override
-    public Condition<T> when(Predicate<T> predicate) {
+    public Condition<I, T> when(Predicate<T> predicate) {
         throw new UnsupportedOperationException("when() is not implemented yet");
     }
 
     @Override
-    public Cases<T> match() {
+    public Cases<I, T> match() {
         throw new UnsupportedOperationException("match() is not implemented yet");
     }
 
@@ -127,87 +126,88 @@ public class DefaultNioFlow<T> implements NioFlow<T> {
     }
 
     /**
-     * Ejecución efímera creada por just(): chain local (snapshot compartido + links
-     * propios) que se ejecuta con engine.call(input, context, chain) sin sellar ni
-     * mutar la definición compartida. adapt() re-tipa el pipeline devolviendo la
-     * misma instancia vista como NioFlow<R>.
+     * Ejecución efímera creada por just(): usa la definición compartida tal cual
+     * (sin copiarla) hasta que se agrega el primer link local, y se ejecuta con
+     * engine.call(input, context, chain) sin sellar ni mutar nada compartido.
+     * adapt() re-tipa el pipeline devolviendo la misma instancia vista como R.
      */
-    private static final class ExecutionNioFlow<T> implements NioFlow<T> {
+    private static final class ExecutionNioFlow<I, T> implements NioFlow<I, T> {
 
         private final NioEngine nioEngine;
-        private final List<Link> links;
-        private final Map<String, Object> context = new ConcurrentHashMap<>();
-        private final AtomicInteger anonymousLinks = new AtomicInteger();
+        // null = solo la definición compartida; se copia recién al agregar links locales
+        private List<Link> links;
+        // La ejecución se construye en el hilo del request; no necesita contadores atómicos
+        private int anonymousLinks;
         private Object seed;
 
         private ExecutionNioFlow(NioEngine nioEngine, Object seed) {
             this.nioEngine = nioEngine;
             this.seed = seed;
-            this.links = new ArrayList<>(nioEngine.chain());
         }
 
         @Override
-        public <I> NioFlow<T> just(I input) {
+        public NioFlow<I, T> just(I input) {
             this.seed = input;
             return this;
         }
 
         @Override
-        public <I> NioFlow<T> justAll(Iterable<I> inputs) {
+        public NioFlow<I, T> justAll(Iterable<I> inputs) {
             throw new UnsupportedOperationException("justAll() applies to the shared flow, not to a just() execution");
         }
 
         @Override
-        public NioFlow<T> handle(Function<T, T> function) {
+        public NioFlow<I, T> handle(Function<T, T> function) {
             return handle(anonymousName("stage"), function);
         }
 
         @Override
-        public NioFlow<T> handle(String name, Function<T, T> function) {
-            links.add(new Stage(name, asObjectFunction(function), false, null, List.of()));
+        public NioFlow<I, T> handle(String name, Function<T, T> function) {
+            localLinks().add(new Stage(name, asObjectFunction(function), false, null, List.of()));
             return this;
         }
 
         @Override
-        public NioFlow<T> background(Consumer<T> effect) {
+        public NioFlow<I, T> background(Consumer<T> effect) {
             return background(anonymousName("background"), effect);
         }
 
         @Override
         @SuppressWarnings("unchecked")
-        public NioFlow<T> background(String name, Consumer<T> effect) {
-            links.add(new Background(name, (Consumer<Object>) effect, List.of()));
+        public NioFlow<I, T> background(String name, Consumer<T> effect) {
+            localLinks().add(new Background(name, (Consumer<Object>) effect, List.of()));
             return this;
         }
 
         @Override
         @SuppressWarnings("unchecked")
-        public <R> NioFlow<R> adapt(Function<T, R> function) {
-            links.add(new Stage(anonymousName("adapt"), asObjectFunction(function), false, null, List.of()));
-            return (NioFlow<R>) this;
+        public <R> NioFlow<I, R> adapt(Function<T, R> function) {
+            localLinks().add(new Stage(anonymousName("adapt"), asObjectFunction(function), false, null, List.of()));
+            return (NioFlow<I, R>) this;
         }
 
         @Override
         @SuppressWarnings("unchecked")
-        public NioFlow<T> filter(Predicate<T> predicate) {
-            links.add(new Filter((Predicate<Object>) predicate, List.of()));
+        public NioFlow<I, T> filter(Predicate<T> predicate) {
+            localLinks().add(new Filter((Predicate<Object>) predicate, List.of()));
             return this;
         }
 
         @Override
-        public Condition<T> when(Predicate<T> predicate) {
+        public Condition<I, T> when(Predicate<T> predicate) {
             throw new UnsupportedOperationException("when() is not implemented yet");
         }
 
         @Override
-        public Cases<T> match() {
+        public Cases<I, T> match() {
             throw new UnsupportedOperationException("match() is not implemented yet");
         }
 
         @Override
         @SuppressWarnings("unchecked")
         public T execute() {
-            return (T) nioEngine.call(seed, context, links).join();
+            List<Link> chain = links != null ? links : nioEngine.chain();
+            return (T) nioEngine.call(seed, null, chain).join();
         }
 
         @Override
@@ -215,8 +215,15 @@ public class DefaultNioFlow<T> implements NioFlow<T> {
             // La ejecución no es dueña del engine; no hay recursos propios que liberar.
         }
 
+        private List<Link> localLinks() {
+            if (links == null) {
+                links = new ArrayList<>(nioEngine.chain());
+            }
+            return links;
+        }
+
         private String anonymousName(String prefix) {
-            return prefix + "-" + anonymousLinks.getAndIncrement();
+            return prefix + "-" + anonymousLinks++;
         }
     }
 }

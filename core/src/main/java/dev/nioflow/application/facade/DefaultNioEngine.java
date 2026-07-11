@@ -34,8 +34,23 @@ public class DefaultNioEngine implements NioEngine {
 
     private static final String NIO_FLOW_BOSS = "nio-flow-boss-";
 
+    /**
+     * Executors compartidos por todos los engines del JVM (mismo patrón que
+     * ForkJoinPool.commonPool()): un solo boss y un solo pool de workers sin
+     * importar cuántos DefaultNioEngine/DefaultNioFlow se creen. El holder
+     * los inicializa perezosamente y el boss es daemon para no impedir el
+     * apagado del JVM.
+     */
+    private static final class SharedExecutors {
+
+        private static final ExecutorService BOSS = Executors.newSingleThreadExecutor(
+                Thread.ofPlatform().name(NIO_FLOW_BOSS, 0).daemon(true).factory());
+        private static final ExecutorService WORKERS = Executors.newVirtualThreadPerTaskExecutor();
+    }
+
     private final ExecutorService bossExecutorService;
     private final ExecutorService workersExecutorService;
+    private final boolean ownsExecutors;
 
     // Inmutable + swap atómico: los call() en vuelo conservan su snapshot aunque la chain se edite.
     private volatile List<Link> chain = List.of();
@@ -46,17 +61,16 @@ public class DefaultNioEngine implements NioEngine {
     private final BlockingQueue<CompletableFuture<Object>> inFlight = new LinkedBlockingQueue<>();
 
     public DefaultNioEngine() {
-        this(
-                Executors.newSingleThreadExecutor(Thread.ofPlatform().name(NIO_FLOW_BOSS, 0)
-                        .factory()),
-                Executors.newVirtualThreadPerTaskExecutor()
-        );
+        this.bossExecutorService = SharedExecutors.BOSS;
+        this.workersExecutorService = SharedExecutors.WORKERS;
+        this.ownsExecutors = false;
     }
 
     public DefaultNioEngine(ExecutorService bossExecutorService,
                             ExecutorService workersExecutorService) {
         this.bossExecutorService = bossExecutorService;
         this.workersExecutorService = workersExecutorService;
+        this.ownsExecutors = true;
     }
 
     @Override
@@ -177,6 +191,11 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public void shutdown(Duration gracePeriod) {
+        if (!ownsExecutors) {
+            // Los executors compartidos del JVM sobreviven al engine: apagar uno
+            // no puede dejar sin threads a los demás flows.
+            return;
+        }
         bossExecutorService.shutdown();
         workersExecutorService.shutdown();
         try {

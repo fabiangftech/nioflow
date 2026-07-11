@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
 public class NioFlowConfig {
 
     @Bean(destroyMethod = "close")
-    public NioFlow<String> nioFlow() {
-        return new DefaultNioFlow<>(String.class);
+    public NioFlow<String, String> nioFlow() {
+        return DefaultNioFlow.from(String.class);
     }
 }

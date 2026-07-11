@@ -3,9 +3,9 @@ package dev.nioflow.core.facade;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
-public interface Cases<T> extends NioFlow<T> {
+public interface Cases<I, T> extends NioFlow<I, T> {
 
-    Cases<T> is(Predicate<T> predicate, UnaryOperator<NioFlow<T>> lane);
+    Cases<I, T> is(Predicate<T> predicate, UnaryOperator<NioFlow<I, T>> lane);
 
-    NioFlow<T> otherwise(UnaryOperator<NioFlow<T>> lane);
+    NioFlow<I, T> otherwise(UnaryOperator<NioFlow<I, T>> lane);
 }

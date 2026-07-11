@@ -9,9 +9,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class GreetingController {
 
-    private final NioFlow<String> nioFlow;
+    private final NioFlow<String, String> nioFlow;
 
-    public GreetingController(NioFlow<String> nioFlow) {
+    public GreetingController(NioFlow<String, String> nioFlow) {
         this.nioFlow = nioFlow;
     }
 
