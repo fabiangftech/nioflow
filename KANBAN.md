@@ -31,12 +31,12 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **Graceful drain on shutdown** — `shutdown(grace)` now returns the pending count: rejects new call/inject immediately, waits for in-flight executions up to the grace (works for JVM-shared executors too — the old code was a no-op there), then terminates engine-owned executors; stragglers on shared executors still finish on their own; hot-path counter at parity `[scale]`
 - [x] **Distinguish filtered from null results** — public `FlowSignal.FILTERED` carried by raw engine futures (engine exits map it to null); `executeResult()` returns sealed `FlowResult<T>` (`Completed(value)` — even genuinely null — vs `Filtered`), pattern-matchable; `execute`/`executeAsync` keep the null mapping for compatibility; filter paths at parity `[maint]`
 - [x] **Retry policy per stage** — native `Retry` (attempts + backoff + multiplier, zero external deps: Resilience4j stays an optional adapter for circuit breaker/bulkhead); `handle(name, fn, Retry)` / `handle(name, fn, Duration, Retry)` on `NioFlow` and `Lane`; no-timeout retries loop inline on the (virtual) worker and never break fusion, timeout+retry applies the budget per attempt with non-blocking backoff scheduling; exhausted retries flow to recovery; observable via `stageRetried` metrics; declared-but-unused at parity, one retry costs ~15% `[scale]`
+- [x] **Validation at `seal()`** — `ChainValidationException` (with the full problem list) on dangling guards, contradictory guards, duplicate anchor names and dead recoveries; runs at seal (broken definitions stop the deploy) and on every splice over a sealed chain (a rejected runtime edit leaves the previous chain and plan untouched); build-time only, runtime at parity `[maint]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **Validation at `seal()`** — detect dangling guards, unreachable lanes, duplicate stage names, recovery with nothing upstream `[maint]`
 - [ ] **Chain diagnostics** — human-readable chain dump (names, guards, fusion runs), DOT/Mermaid export for architecture docs `[maint]`
 - [ ] **Decisions as bitset** — decision ids are dense ints; replace the per-execution `HashMap<Integer, Boolean>` with a long[] bitset (zero allocation, O(1) guards) `[perf]`
 

@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.Background;
@@ -259,6 +260,12 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public synchronized void seal() {
+        // Fail fast at seal time: a broken definition stops the deploy instead
+        // of producing runtime surprises.
+        List<String> problems = ChainValidator.validate(chain);
+        if (!problems.isEmpty()) {
+            throw new ChainValidationException(problems);
+        }
         sealed = true;
         compiled = CompiledChain.compile(chain);
     }
@@ -286,6 +293,14 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
         List<Link> edited = List.copyOf(next);
+        if (sealed) {
+            // A rejected runtime edit leaves the previous chain (and its plan)
+            // completely untouched.
+            List<String> problems = ChainValidator.validate(edited);
+            if (!problems.isEmpty()) {
+                throw new ChainValidationException(problems);
+            }
+        }
         chain = edited;
         // Runtime edits pay compilation once per edit, never per request.
         compiled = sealed ? CompiledChain.compile(edited) : null;
