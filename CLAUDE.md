@@ -4,11 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Working language
 
-Think and implement in English (code, identifiers, commit messages), but respond to the user in Spanish.
+Always think in English and implement in English (code, identifiers, comments, commit messages), but talk to the user in Spanish.
+
+## Feature workflow
+
+Every new feature must ship with unit tests (in `core/`) AND JMH benchmarks (in `tests/`) showing good results: run the relevant benchmarks before and after, compare, and report the numbers. A feature that regresses the hot path is not done — either fix it or surface the trade-off explicitly. Bug-hunting stress tests in `tests/` complement, not replace, functional coverage in core.
 
 ## Project
 
-nio-flow is a Java concurrency library: a fluent, typed pipeline API (`NioFlow<I, T>`) over an event-loop engine (one boss thread orchestrates, virtual-thread workers run user code). Zero required runtime dependencies (Resilience4j and OpenTelemetry are `compileOnly` integrations). Requires a modern JDK — uses virtual threads and pattern matching over sealed types; developed on JDK 25.
+nio-flow is a Java concurrency library: a fluent, typed pipeline API (`NioFlow<I, T>`) over an event-loop engine (a pool of boss threads orchestrates — each execution pinned to one boss — while virtual-thread workers run user code). Zero required runtime dependencies (Resilience4j and OpenTelemetry are `compileOnly` integrations). Requires a modern JDK — uses virtual threads and pattern matching over sealed types; developed on JDK 25.
 
 ## Build and test
 
@@ -56,12 +60,16 @@ Three packages under `core/src/main/java/dev/nioflow/`, dependency direction str
 
 Two rules define it:
 
-1. **Only the boss thread touches orchestration state.** `Execution.advance`/`recover` always run on the boss; workers hand results back via `whenCompleteAsync(..., bossExecutorService)`. This is the serialization mechanism — no locks in the hot path.
+1. **Each execution is pinned to one boss, and only that boss touches its orchestration state.** `Execution.advance`/`recover` always run on the execution's boss; workers hand results back via `whenCompleteAsync(..., boss)`. This is the serialization mechanism — no locks in the hot path. Concurrent executions spread across the boss pool (EventLoopGroup-style affinity), so one boss is never a JVM-wide ceiling.
 2. **The boss never runs user code** — `Stage`/`Background`/`Recovery` functions go to the virtual-thread workers. Exception by design: `Decision` and `Filter` predicates run on the boss, so they must stay cheap and non-blocking (same rule as Netty handlers).
 
-`advance` must stay **iterative**, never recursive: cheap links (Decision/Filter/Background/guard-skips) are walked in a loop on the boss, and a recursive version overflows the boss stack on deep chains, killing the task and leaving the request future hanging forever (regression: `DeepChainStressTest` in `tests/`).
+Hot-path rules the benchmarks enforce (see `tests/`):
 
-Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()` style): one daemon boss + one virtual-thread pool shared by every engine created with the default constructor, no matter how many `DefaultNioFlow`s exist. `shutdown()` only terminates executors that were explicitly passed in (`ownsExecutors`); shared ones survive so closing one flow never starves the others.
+- `advance` must stay **iterative**, never recursive: cheap links (Decision/Filter/Background/guard-skips) are walked in a loop on the boss, and a recursive version overflows the boss stack on deep chains, killing the task and leaving the request future hanging forever (regression: `DeepChainStressTest`).
+- **Stage fusion**: a run of consecutive no-timeout `Stage`s travels boss→worker→boss as ONE composed function (2 thread hops per run, not per stage — measured ~5x on an 8-stage chain). Guard-skipped links inside the run are stepped over (decisions can't change until the next passing `Decision`, which ends the run); a failure anywhere in the run recovers from the run's end, equivalent because runs contain no `Recovery` links by construction. Stages with a timeout dispatch alone.
+- No streams or allocations on the per-link path (`passesGuards` is a plain loop — the stream version cost ~20% on fork routing).
+
+Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()` style): a pool of daemon bosses (≥2, sized by available processors) + one virtual-thread worker pool shared by every engine created with the default constructor, no matter how many `DefaultNioFlow`s exist. `shutdown()` only terminates executors that were explicitly passed in (`ownsExecutors`); shared ones survive so closing one flow never starves the others.
 
 ### Concurrency and runtime-editing invariants (the tests enforce these)
 

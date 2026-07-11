@@ -180,7 +180,7 @@ class DefaultNioEngineTest {
     }
 
     @Test
-    void defaultEnginesShareTheBossAndSurviveEachOthersShutdown() {
+    void defaultEnginesShareTheBossPoolAndSurviveEachOthersShutdown() {
         var other = new DefaultNioEngine();
         var bossOfThis = new AtomicReference<String>();
         var bossOfOther = new AtomicReference<String>();
@@ -194,11 +194,12 @@ class DefaultNioEngineTest {
         }, other.nextDecision(), List.of()));
 
         engine.call("x", new ConcurrentHashMap<>()).join();
-        // Apagar un engine no puede dejar sin threads a los demás: los executors son compartidos.
+        // Shutting one engine down must never starve the others: executors are shared.
         engine.shutdown(Duration.ofMillis(100));
         assertEquals("y", other.call("y", new ConcurrentHashMap<>()).join());
 
-        assertEquals(bossOfThis.get(), bossOfOther.get());
+        assertTrue(bossOfThis.get().startsWith("nio-flow-boss-"));
+        assertTrue(bossOfOther.get().startsWith("nio-flow-boss-"));
     }
 
     @Test
