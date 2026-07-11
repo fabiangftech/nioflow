@@ -4,6 +4,7 @@ import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.LaneCases;
 import dev.nioflow.core.facade.LaneCondition;
 
+import java.time.Duration;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -30,6 +31,12 @@ class DefaultLane<T> implements Lane<T> {
     @Override
     public Lane<T> handle(String name, Function<T, T> function) {
         view.handle(name, function);
+        return this;
+    }
+
+    @Override
+    public Lane<T> handle(String name, Function<T, T> function, Duration timeout) {
+        view.handle(name, function, timeout);
         return this;
     }
 

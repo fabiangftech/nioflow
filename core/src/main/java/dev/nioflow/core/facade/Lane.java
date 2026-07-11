@@ -1,5 +1,6 @@
 package dev.nioflow.core.facade;
 
+import java.time.Duration;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -14,6 +15,8 @@ public interface Lane<T> {
     Lane<T> handle(Function<T, T> function);
 
     Lane<T> handle(String name, Function<T, T> function);
+
+    Lane<T> handle(String name, Function<T, T> function, Duration timeout);
 
     Lane<T> background(Consumer<T> effect);
 

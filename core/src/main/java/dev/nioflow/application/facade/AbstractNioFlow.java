@@ -12,6 +12,7 @@ import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Stage;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -46,6 +47,12 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function) {
         appendLink(new Stage(name, asObjectFunction(function), false, null, guards()));
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout) {
+        appendLink(new Stage(name, asObjectFunction(function), false, timeout, guards()));
         return this;
     }
 

@@ -1,5 +1,6 @@
 package dev.nioflow.core.facade;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -21,6 +22,13 @@ public interface NioFlow<I, T> {
     NioFlow<I, T> handle(Function<T, T> function);
 
     NioFlow<I, T> handle(String name, Function<T, T> function);
+
+    /**
+     * Stage with a time budget: if the function does not finish within the
+     * timeout, the value fails with a TimeoutException — catchable downstream
+     * by recover(), like any other stage failure.
+     */
+    NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout);
 
     NioFlow<I, T> background(Consumer<T> effect);
 

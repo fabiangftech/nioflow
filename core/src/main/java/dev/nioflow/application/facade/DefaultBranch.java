@@ -7,6 +7,7 @@ import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Guard;
 
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -53,6 +54,11 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function) {
         return flow.handle(name, function);
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout) {
+        return flow.handle(name, function, timeout);
     }
 
     @Override

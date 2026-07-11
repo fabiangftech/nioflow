@@ -13,6 +13,8 @@ import dev.nioflow.springbootwithnioflow.service.ValidationService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Duration;
+
 @Configuration
 public class NioFlowConfig {
 
@@ -45,7 +47,9 @@ public class NioFlowConfig {
                 .handle("normalize", validationService::normalize)
                 .adapt(pricingService::price)
                 .filter(inventoryService::hasStock)
-                .handle("reserve", inventoryService::reserve)
+                // Time budget: if the inventory system hangs, the order fails
+                // fast with a TimeoutException instead of stalling the request.
+                .handle("reserve", inventoryService::reserve, Duration.ofSeconds(2))
                 .handle("tax", pricingService::withTax)
                 .background("audit", auditService::record);
     }

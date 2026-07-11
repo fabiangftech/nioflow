@@ -8,6 +8,7 @@ import dev.nioflow.core.model.Guard;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -65,6 +66,11 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function) {
         return flow.handle(name, function);
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout) {
+        return flow.handle(name, function, timeout);
     }
 
     @Override
