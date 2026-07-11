@@ -37,7 +37,6 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **Chain diagnostics** — human-readable chain dump (names, guards, fusion runs), DOT/Mermaid export for architecture docs `[maint]`
 - [ ] **Decisions as bitset** — decision ids are dense ints; replace the per-execution `HashMap<Integer, Boolean>` with a long[] bitset (zero allocation, O(1) guards) `[perf]`
 
 ## 📋 Backlog
