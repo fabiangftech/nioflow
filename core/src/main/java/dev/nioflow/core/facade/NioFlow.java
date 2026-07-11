@@ -10,7 +10,7 @@ import java.util.function.Predicate;
  */
 public interface NioFlow<T> extends AutoCloseable {
 
-    <I> NioFlow<I> just(I input);
+    <I> NioFlow<T> just(I input);
 
     <I> NioFlow<T> justAll(Iterable<I> inputs);
 

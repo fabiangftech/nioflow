@@ -51,6 +51,20 @@ class DefaultNioFlowTest {
     }
 
     @Test
+    void sharedAdaptTypesTheStepsAfterJust() throws Exception {
+        try (NioFlow<Integer> flow = new DefaultNioFlow<>(String.class)
+                .handle(String::trim)
+                .adapt(String::length)) {
+
+            Integer result = flow.just("  hola  ")
+                    .handle(value -> value * 2)
+                    .execute();
+
+            assertEquals(8, result);
+        }
+    }
+
+    @Test
     void executeIsIsolatedPerThread() throws Exception {
         try (NioFlow<Integer> flow = new DefaultNioFlow<>(Integer.class)) {
             flow.handle("double", value -> value * 2);

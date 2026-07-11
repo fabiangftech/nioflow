@@ -50,7 +50,7 @@ public class DefaultNioFlow<T> implements NioFlow<T> {
      * concurrentes pueden hacer just(...)...execute() sin chocar entre sí.
      */
     @Override
-    public <I> NioFlow<I> just(I input) {
+    public <I> NioFlow<T> just(I input) {
         return new ExecutionNioFlow<>(nioEngine, input);
     }
 
@@ -147,10 +147,9 @@ public class DefaultNioFlow<T> implements NioFlow<T> {
         }
 
         @Override
-        @SuppressWarnings("unchecked")
-        public <I> NioFlow<I> just(I input) {
+        public <I> NioFlow<T> just(I input) {
             this.seed = input;
-            return (NioFlow<I>) this;
+            return this;
         }
 
         @Override

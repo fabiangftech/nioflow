@@ -16,20 +16,28 @@ public class GreetingController {
     }
 
     @GetMapping("/greeting")
-    public String greeting() {
+    public int greeting() {
         return this.nioFlow
                 .just("Hello World! - " + System.currentTimeMillis())
                 .handle(String::toUpperCase)
                 .background(value -> {
                     try {
-                        Thread.sleep(3000);
+                        Thread.sleep(5000);
                     } catch (InterruptedException e) {
                         throw new RuntimeException(e);
                     }
                     log.info("Background task executed");
                 })
                 .adapt(String::length)
-                .adapt(length -> "chars: " + length)
+                .handle(value -> value + 1)
+                .background(value -> {
+                    try {
+                        Thread.sleep(3000);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    log.info("Background task executed 2");
+                })
                 .execute();
     }
 }
