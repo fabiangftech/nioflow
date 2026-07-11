@@ -62,15 +62,7 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 
 - [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links)
 - [ ] **Context API** — typed accessors for the per-execution context map (`ctx.get(Key<T>)`), available to stages that opt in
-- [ ] **Kotlin DSL** — indentation-native branches for Kotlin consumers
 
 ### Resilience (cross-cutting)
 
 - [ ] **Resilience4j adapter** — circuit breaker / bulkhead as stage decorators; the `compileOnly` dependency is already declared `[scale]`
-
-## 🧊 Icebox (revisit later)
-
-- [ ] Persistent/resumable flows (checkpoint the value + cursor, resume after restart)
-- [ ] Distributed execution across nodes
-- [ ] Visual flow designer / live chain editor UI on top of splice + diagnostics
-- [ ] Reactive Streams (`Flow.Publisher`) bridge
