@@ -6,6 +6,7 @@ import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
+import dev.nioflow.core.model.FlowSignal;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.OverflowPolicy;
@@ -40,9 +41,10 @@ public class DefaultNioEngine implements NioEngine {
 
     private static final String NIO_FLOW_BOSS = "nio-flow-boss-";
 
-    // Sentinel returned by a fused run when a Filter rejected the value; never
-    // escapes the engine (the flow completes with null, as with a boss-side cut).
-    private static final Object FILTERED = new Object();
+    // Public sentinel carried by raw call() futures when a Filter cut the
+    // execution. Engine exits (await, complete handlers) and the flow-level
+    // execute()/executeAsync() map it to null; executeResult() observes it.
+    private static final Object FILTERED = FlowSignal.FILTERED;
 
     /**
      * Executors shared by every engine in the JVM (commonPool style): a pool of
@@ -217,7 +219,7 @@ public class DefaultNioEngine implements NioEngine {
                 long elapsed = System.nanoTime() - execution.startNanos;
                 if (error != null) {
                     execution.metrics.executionFailed(unwrap(error), elapsed);
-                } else if (execution.filtered) {
+                } else if (value == FILTERED) {
                     execution.metrics.executionFiltered(elapsed);
                 } else {
                     execution.metrics.executionCompleted(elapsed);
@@ -226,7 +228,8 @@ public class DefaultNioEngine implements NioEngine {
             if (error != null) {
                 errorHandlers.forEach(handler -> handler.accept(unwrap(error)));
             } else {
-                completeHandlers.forEach(handler -> handler.accept(value));
+                Object exposed = value == FILTERED ? null : value;
+                completeHandlers.forEach(handler -> handler.accept(exposed));
             }
         });
     }
@@ -310,7 +313,8 @@ public class DefaultNioEngine implements NioEngine {
             if (metrics != null) {
                 metrics.queueDepth(inFlight.size());
             }
-            return pending.join();
+            Object value = pending.join();
+            return value == FILTERED ? null : value;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while awaiting a result", e);
@@ -326,7 +330,8 @@ public class DefaultNioEngine implements NioEngine {
                 throw new IllegalStateException("No result available within " + timeout);
             }
             releasePermit();
-            return pending.get(Math.max(deadline - System.nanoTime(), 0), TimeUnit.NANOSECONDS);
+            Object value = pending.get(Math.max(deadline - System.nanoTime(), 0), TimeUnit.NANOSECONDS);
+            return value == FILTERED ? null : value;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while awaiting a result", e);
@@ -483,9 +488,6 @@ public class DefaultNioEngine implements NioEngine {
         // Snapshot of the installed metrics for this execution; null = untimed.
         private final NioFlowMetrics metrics;
         private final long startNanos;
-        // Written on the boss right before completing; read by the whenComplete
-        // handler on that same thread.
-        private boolean filtered;
 
         private Execution(ExecutorService boss, List<Link> links, Map<String, Object> context,
                           CompiledChain plan) {
@@ -512,8 +514,7 @@ public class DefaultNioEngine implements NioEngine {
                             case Decision decision -> decisions.put(decision.id(), decision.predicate().test(value));
                             case Filter filter -> {
                                 if (!filter.predicate().test(value)) {
-                                    filtered = true;
-                                    result.complete(null);
+                                    result.complete(FILTERED);
                                     return;
                                 }
                             }
@@ -602,8 +603,7 @@ public class DefaultNioEngine implements NioEngine {
                 if (error != null) {
                     recover(resume, unwrap(error));
                 } else if (nextValue == FILTERED) {
-                    filtered = true;
-                    result.complete(null);
+                    result.complete(FILTERED);
                 } else {
                     advance(resume, nextValue);
                 }

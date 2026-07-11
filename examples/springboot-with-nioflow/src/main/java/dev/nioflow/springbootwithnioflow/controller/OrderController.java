@@ -1,5 +1,7 @@
 package dev.nioflow.springbootwithnioflow.controller;
 
+import dev.nioflow.core.facade.FlowResult.Completed;
+import dev.nioflow.core.facade.FlowResult.Filtered;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.springbootwithnioflow.model.OrderReceipt;
 import dev.nioflow.springbootwithnioflow.model.OrderRequest;
@@ -24,9 +26,11 @@ public class OrderController {
      */
     @PostMapping("/orders")
     public ResponseEntity<OrderReceipt> create(@RequestBody OrderRequest request) {
-        OrderReceipt receipt = orderFlow.just(request).execute();
-
-        // Null means a shared filter cut the flow: invalid request or no stock.
-        return receipt == null ? ResponseEntity.unprocessableContent().build() : ResponseEntity.ok(receipt);
+        // executeResult() tells a deliberate filter cut (invalid request or no
+        // stock) apart from a completed receipt — no null ambiguity.
+        return switch (orderFlow.just(request).executeResult()) {
+            case Completed<OrderReceipt>(OrderReceipt receipt) -> ResponseEntity.ok(receipt);
+            case Filtered<OrderReceipt>() -> ResponseEntity.unprocessableContent().build();
+        };
     }
 }

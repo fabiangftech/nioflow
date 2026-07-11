@@ -1,7 +1,9 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.model.FlowSignal;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 
@@ -42,15 +44,30 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public T execute() {
-        return executeAsync().join();
+        Object value = rawFuture().join();
+        return value == FlowSignal.FILTERED ? null : (T) value;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public CompletableFuture<T> executeAsync() {
+        return rawFuture().thenApply(value -> value == FlowSignal.FILTERED ? null : (T) value);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public FlowResult<T> executeResult() {
+        Object value = rawFuture().join();
+        return value == FlowSignal.FILTERED
+                ? new FlowResult.Filtered<>()
+                : new FlowResult.Completed<>((T) value);
+    }
+
+    private CompletableFuture<Object> rawFuture() {
         List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
-        return (CompletableFuture<T>) state.nioEngine.call(state.seed, null, chain);
+        return state.nioEngine.call(state.seed, null, chain);
     }
 
     @Override

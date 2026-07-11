@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Guard;
@@ -66,6 +67,11 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
 
     @Override
     public CompletableFuture<T> executeAsync() {
+        throw new IllegalStateException("This flow has no input; start an execution with just(input)");
+    }
+
+    @Override
+    public FlowResult<T> executeResult() {
         throw new IllegalStateException("This flow has no input; start an execution with just(input)");
     }
 

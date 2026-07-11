@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.Cases;
+import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.Condition;
 import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
@@ -137,5 +138,10 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     @Override
     public CompletableFuture<T> executeAsync() {
         return flow.executeAsync();
+    }
+
+    @Override
+    public FlowResult<T> executeResult() {
+        return flow.executeResult();
     }
 }

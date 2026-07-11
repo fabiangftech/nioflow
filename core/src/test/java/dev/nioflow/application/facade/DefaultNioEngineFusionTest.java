@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.model.Filter;
+import dev.nioflow.core.model.FlowSignal;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -17,12 +18,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class DefaultNioEngineFusionTest extends EngineTestSupport {
 
     @Test
-    void filterCutsTheFlow() {
+    void filterCutsTheFlowWithTheFilteredSignal() {
         engine.append(new Filter(value -> (int) value > 0, List.of()));
         engine.append(stage("after-filter", value -> "reached"));
 
         assertEquals("reached", engine.call(1, new ConcurrentHashMap<>()).join());
-        assertNull(engine.call(-1, new ConcurrentHashMap<>()).join());
+        // Raw engine futures carry the sentinel; flow-level APIs map it to null.
+        assertEquals(FlowSignal.FILTERED, engine.call(-1, new ConcurrentHashMap<>()).join());
     }
 
     @Test
@@ -32,7 +34,7 @@ class DefaultNioEngineFusionTest extends EngineTestSupport {
         engine.append(stage("tail", value -> (int) value * 2));
 
         assertEquals(42, engine.call(20, new ConcurrentHashMap<>()).join());
-        assertNull(engine.call(3, new ConcurrentHashMap<>()).join());
+        assertEquals(FlowSignal.FILTERED, engine.call(3, new ConcurrentHashMap<>()).join());
     }
 
     @Test

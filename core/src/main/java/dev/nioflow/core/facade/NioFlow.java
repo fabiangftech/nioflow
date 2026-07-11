@@ -82,4 +82,11 @@ public interface NioFlow<I, T> {
      * exceptionally with the terminal failure when no recover() caught it.
      */
     CompletableFuture<T> executeAsync();
+
+    /**
+     * Like execute(), but the outcome distinguishes a deliberate Filter cut
+     * (Filtered) from a completed value (Completed) — including a genuinely
+     * null one, which execute() cannot tell apart from a cut.
+     */
+    FlowResult<T> executeResult();
 }

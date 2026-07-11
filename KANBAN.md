@@ -29,18 +29,21 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **`fanOut`/`fanIn`** — `fanOut(name, branches, join)` on `NioFlow` and `Lane`: branches run concurrently on workers (one each), join combines in declaration order on a worker, failures recoverable downstream; 2.2x on 3×50µs branches, ~28% overhead on trivial branches (use it for real work); works in lanes and on compiled chains `[scale]`
 - [x] **Reusable sub-flows (`Segment<T, R>` + `use`)** — a segment defines a chain piece over `Lane<T>` ending at `Lane<R>`; embedded inline with the caller's guards (lane-scoped when used in forks), segments compose and are independently testable; build-time only, runtime at parity with inline definitions `[maint]`
 - [x] **Graceful drain on shutdown** — `shutdown(grace)` now returns the pending count: rejects new call/inject immediately, waits for in-flight executions up to the grace (works for JVM-shared executors too — the old code was a no-op there), then terminates engine-owned executors; stragglers on shared executors still finish on their own; hot-path counter at parity `[scale]`
+- [x] **Distinguish filtered from null results** — public `FlowSignal.FILTERED` carried by raw engine futures (engine exits map it to null); `executeResult()` returns sealed `FlowResult<T>` (`Completed(value)` — even genuinely null — vs `Filtered`), pattern-matchable; `execute`/`executeAsync` keep the null mapping for compatibility; filter paths at parity `[maint]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **Distinguish filtered from null results** — `Optional<T> executeOptional()` or a result object; today a cut flow and a null-producing stage both return null `[maint]`
+- [ ] **Retry policy per stage** — attempts + backoff on named stages, composing with timeout and recovery `[scale]`
+- [ ] **Validation at `seal()`** — detect dangling guards, unreachable lanes, duplicate stage names, recovery with nothing upstream `[maint]`
+- [ ] **Chain diagnostics** — human-readable chain dump (names, guards, fusion runs), DOT/Mermaid export for architecture docs `[maint]`
+- [ ] **Decisions as bitset** — decision ids are dense ints; replace the per-execution `HashMap<Integer, Boolean>` with a long[] bitset (zero allocation, O(1) guards) `[perf]`
 
 ## 📋 Backlog
 
 ### Performance `[perf]`
 
-- [ ] **Decisions as bitset** — decision ids are dense ints; replace the per-execution `HashMap<Integer, Boolean>` with a long[] bitset (zero allocation, O(1) guards)
 - [ ] **Inline cheap stages on the boss (opt-in)** — `sync` marker for stages that are pure CPU and sub-microsecond; skips both thread hops (measured: 2 hops ≈ 10-18µs)
 - [ ] **Fusion across recorded decisions** — a Decision whose guards already failed cannot change routing; extend runs through it
 - [ ] **Allocation audit per call** — Execution, snapshot, context map; target near-zero garbage for the common path
@@ -58,15 +61,12 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 ### Maintainability / DX `[maint]`
 
 - [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links)
-- [ ] **Chain diagnostics** — human-readable chain dump (names, guards, fusion runs), DOT/Mermaid export for architecture docs
-- [ ] **Validation at `seal()`** — detect dangling guards, unreachable lanes, duplicate stage names, recovery with nothing upstream
 - [ ] **Flow-level `onComplete`/`onError` in the fluent API** — engine handlers exist; expose them per flow and per execution
 - [ ] **Context API** — typed accessors for the per-execution context map (`ctx.get(Key<T>)`), available to stages that opt in
 - [ ] **Kotlin DSL** — indentation-native branches for Kotlin consumers
 
 ### Resilience (cross-cutting)
 
-- [ ] **Retry policy per stage** — attempts + backoff on named stages, composing with timeout and recovery `[scale]`
 - [ ] **Resilience4j adapter** — circuit breaker / bulkhead as stage decorators; the `compileOnly` dependency is already declared `[scale]`
 - [ ] **Dead-letter handler** — terminal failures routed to a configurable sink with the original input and failing stage name `[maint]`
 
