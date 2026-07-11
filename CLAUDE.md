@@ -18,8 +18,8 @@ The Gradle project lives in `core/` — run all Gradle commands from there, not 
 cd core
 ./gradlew build                                          # compile + test
 ./gradlew test                                           # all tests
-./gradlew test --tests 'dev.nioflow.unit.DefaultNioFlowBatchTest'                 # one class
-./gradlew test --tests 'dev.nioflow.unit.DefaultNioFlowBatchTest.someTestMethod'  # one method
+./gradlew test --tests 'dev.nioflow.unit.deprecated.DefaultNioFlowBatchTest'                 # one class
+./gradlew test --tests 'dev.nioflow.unit.deprecated.DefaultNioFlowBatchTest.someTestMethod'  # one method
 ```
 
 Requires a modern JDK (uses virtual threads; developed on JDK 25). Tests are JUnit 6 (Jupiter).
