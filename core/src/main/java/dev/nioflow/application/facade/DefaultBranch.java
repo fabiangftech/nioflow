@@ -8,6 +8,7 @@ import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Guard;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -74,6 +75,18 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     @Override
     public <R> NioFlow<I, R> adapt(Function<T, R> function) {
         return flow.adapt(function);
+    }
+
+    @Override
+    public <R, C> NioFlow<I, C> fanOut(List<Function<T, R>> branches,
+                                       Function<List<R>, C> join) {
+        return flow.fanOut(branches, join);
+    }
+
+    @Override
+    public <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches,
+                                       Function<List<R>, C> join) {
+        return flow.fanOut(name, branches, join);
     }
 
     @Override

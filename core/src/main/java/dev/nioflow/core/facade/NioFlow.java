@@ -1,6 +1,7 @@
 package dev.nioflow.core.facade;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -35,6 +36,16 @@ public interface NioFlow<I, T> {
     NioFlow<I, T> background(String name, Consumer<T> effect);
 
     <R> NioFlow<I, R> adapt(Function<T, R> function);
+
+    /**
+     * Parallel split-join: every branch receives the current value and runs
+     * concurrently on the workers; join combines the branch results (in
+     * declaration order) into the value that continues down the chain. Any
+     * branch failure fails the fan-out — recoverable downstream.
+     */
+    <R, C> NioFlow<I, C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join);
+
+    <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
     NioFlow<I, T> filter(Predicate<T> predicate);
 

@@ -6,6 +6,7 @@ import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Decision;
+import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
@@ -80,6 +81,21 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     public NioFlow<I, T> filter(Predicate<T> predicate) {
         appendLink(new Filter((Predicate<Object>) predicate, guards()));
         return this;
+    }
+
+    @Override
+    public <R, C> NioFlow<I, C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join) {
+        return fanOut(anonymousName("fanout"), branches, join);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join) {
+        appendLink(new FanOut(name,
+                (List<Function<Object, Object>>) (List<?>) List.copyOf(branches),
+                (Function<List<Object>, Object>) (Function<?, ?>) join,
+                guards()));
+        return (NioFlow<I, C>) this;
     }
 
     @Override

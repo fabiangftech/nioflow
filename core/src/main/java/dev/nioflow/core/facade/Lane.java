@@ -1,6 +1,7 @@
 package dev.nioflow.core.facade;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -23,6 +24,10 @@ public interface Lane<T> {
     Lane<T> background(String name, Consumer<T> effect);
 
     <R> Lane<R> adapt(Function<T, R> function);
+
+    <R, C> Lane<C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join);
+
+    <R, C> Lane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
     Lane<T> filter(Predicate<T> predicate);
 

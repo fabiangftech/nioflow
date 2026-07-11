@@ -5,6 +5,7 @@ import dev.nioflow.core.facade.LaneCases;
 import dev.nioflow.core.facade.LaneCondition;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -63,6 +64,20 @@ class DefaultLane<T> implements Lane<T> {
     public Lane<T> filter(Predicate<T> predicate) {
         view.filter(predicate);
         return this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R, C> Lane<C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join) {
+        view.fanOut(branches, join);
+        return (Lane<C>) this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R, C> Lane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join) {
+        view.fanOut(name, branches, join);
+        return (Lane<C>) this;
     }
 
     @Override

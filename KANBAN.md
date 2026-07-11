@@ -26,12 +26,12 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **Backpressure for `inject`/`justAll`** — `DefaultNioEngine(capacity, OverflowPolicy)`: BLOCK parks the producer, DROP discards (reported to error handlers), FAIL throws; admission happens BEFORE the execution runs, slots free on `await()`; uncontended cost at parity with unbounded `[scale]`
 - [x] **Metrics SPI + OpenTelemetry adapter** — `NioFlowMetrics` (no-op defaults) installed via `engine.metrics()`: execution/stage latency, failed/filtered classification, recoveries, drops, queue depth; `infrastructure/OpenTelemetryMetrics` exports histograms/counters/gauge with cached attributes; instrumentation cost at parity with metrics off `[maint] [scale]`
 - [x] **Chain compilation at `seal()`** — precomputed fusion windows and unguarded runs per chain version; splice recompiles once per edit; execution-local chains fall back to interpreting. Measured honestly: throughput at parity (thread hops dominate — the "biggest win" framing was wrong), but **~13% less garbage per request** (1170 → 1017 B/op) and the compiler pass is the foundation for seal-time validation and the decisions bitset `[perf]`
+- [x] **`fanOut`/`fanIn`** — `fanOut(name, branches, join)` on `NioFlow` and `Lane`: branches run concurrently on workers (one each), join combines in declaration order on a worker, failures recoverable downstream; 2.2x on 3×50µs branches, ~28% overhead on trivial branches (use it for real work); works in lanes and on compiled chains `[scale]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **`fanOut`/`fanIn`** — split one value into N parallel lane executions and join results (the missing sibling of when/match) `[scale]`
 - [ ] **Reusable sub-flows** — `use(subFlow)` / named segments: compose large pipelines from smaller tested pieces `[maint]`
 - [ ] **Graceful drain on shutdown** — stop accepting, finish in-flight executions within the grace period, report the rest `[scale]`
 - [ ] **Distinguish filtered from null results** — `Optional<T> executeOptional()` or a result object; today a cut flow and a null-producing stage both return null `[maint]`

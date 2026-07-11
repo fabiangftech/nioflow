@@ -4,6 +4,7 @@ import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Decision;
+import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
@@ -33,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 public class DefaultNioEngine implements NioEngine {
 
@@ -354,6 +356,7 @@ public class DefaultNioEngine implements NioEngine {
                 case Stage stage -> stage.name();
                 case Background background -> background.name();
                 case Recovery recovery -> recovery.name();
+                case FanOut fanOut -> fanOut.name();
                 default -> null;
             };
             if (anchor.equals(name)) {
@@ -469,6 +472,10 @@ public class DefaultNioEngine implements NioEngine {
                             }
                             case Background background ->
                                     workersExecutorService.execute(() -> runBackground(background, value));
+                            case FanOut fanOut -> {
+                                dispatchFanOut(fanOut, index + 1, value);
+                                return; // the join resumes on the boss when all branches finish
+                            }
                             case Recovery ignored -> {
                                 // Only applies on the error path (see recover)
                             }
@@ -598,6 +605,37 @@ public class DefaultNioEngine implements NioEngine {
                 }
                 return current;
             }, workersExecutorService);
+        }
+
+        /**
+         * Parallel split-join: every branch gets the same value and its own
+         * worker; the join runs on a worker once all branches finish (user code
+         * never touches the boss) and the combined value resumes on the boss.
+         * A failing branch fails the whole fan-out through the recovery path.
+         */
+        private void dispatchFanOut(FanOut fanOut, int resume, Object value) {
+            List<Function<Object, Object>> branches = fanOut.branches();
+            @SuppressWarnings("unchecked")
+            CompletableFuture<Object>[] tasks = new CompletableFuture[branches.size()];
+            for (int i = 0; i < branches.size(); i++) {
+                var branch = branches.get(i);
+                tasks[i] = CompletableFuture.supplyAsync(() -> branch.apply(value), workersExecutorService);
+            }
+            CompletableFuture.allOf(tasks)
+                    .thenApplyAsync(ignored -> {
+                        List<Object> results = new ArrayList<>(tasks.length);
+                        for (CompletableFuture<Object> task : tasks) {
+                            results.add(task.join());
+                        }
+                        return fanOut.join().apply(results);
+                    }, workersExecutorService)
+                    .whenCompleteAsync((nextValue, error) -> {
+                        if (error != null) {
+                            recover(resume, unwrap(error));
+                        } else {
+                            advance(resume, nextValue);
+                        }
+                    }, boss);
         }
 
         private void dispatchWithTimeout(Stage stage, int resume, Object value) {

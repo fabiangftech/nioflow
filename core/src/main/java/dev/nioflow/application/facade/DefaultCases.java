@@ -89,6 +89,16 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     }
 
     @Override
+    public <R, C> NioFlow<I, C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join) {
+        return flow.fanOut(branches, join);
+    }
+
+    @Override
+    public <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join) {
+        return flow.fanOut(name, branches, join);
+    }
+
+    @Override
     public NioFlow<I, T> filter(Predicate<T> predicate) {
         return flow.filter(predicate);
     }
