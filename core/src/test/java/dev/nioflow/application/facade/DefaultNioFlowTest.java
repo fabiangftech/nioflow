@@ -22,15 +22,14 @@ class DefaultNioFlowTest {
             var effects = new CopyOnWriteArrayList<Object>();
             var backgroundRan = new CountDownLatch(1);
 
-            flow.handle("plus-one", (Integer value) -> value + 1)
+            String result = flow.just(5)
+                    .handle("plus-one", (Integer value) -> value + 1)
                     .background("audit", value -> {
                         effects.add(value);
                         backgroundRan.countDown();
                     })
-                    .adapt((Integer value) -> "value:" + value);
-
-            flow.just(5);
-            String result = flow.execute();
+                    .adapt((Integer value) -> "value:" + value)
+                    .execute();
 
             assertEquals("value:6", result);
             assertTrue(backgroundRan.await(1, TimeUnit.SECONDS));
@@ -47,10 +46,7 @@ class DefaultNioFlowTest {
             try (var requests = Executors.newVirtualThreadPerTaskExecutor()) {
                 for (int i = 0; i < 50; i++) {
                     int input = i;
-                    requests.execute(() -> {
-                        flow.just(input);
-                        results.put(input, flow.execute());
-                    });
+                    requests.execute(() -> results.put(input, flow.just(input).execute()));
                 }
             }
 
@@ -61,14 +57,41 @@ class DefaultNioFlowTest {
     }
 
     @Test
-    void executeSealsTheDefinition() throws Exception {
+    void repeatedExecutionsAreIndependent() throws Exception {
         try (NioFlow flow = new DefaultNioFlow()) {
-            flow.handle("noop", (Object value) -> value);
+            String first = flow.just("hola")
+                    .handle((String value) -> value.toUpperCase())
+                    .execute();
+            String second = flow.just("mundo")
+                    .handle((String value) -> value.toUpperCase())
+                    .execute();
 
-            flow.just("x");
-            flow.execute();
+            assertEquals("HOLA", first);
+            assertEquals("MUNDO", second);
+            // Los handle() de las ejecuciones anteriores no contaminan la definición compartida.
+            assertEquals("intacto", flow.just("intacto").execute());
+        }
+    }
 
-            assertThrows(IllegalStateException.class, () -> flow.handle("late", (Object value) -> value));
+    @Test
+    void sharedDefinitionRunsBeforeExecutionLinks() throws Exception {
+        try (NioFlow flow = new DefaultNioFlow()) {
+            flow.handle("trim", (String value) -> value.trim());
+
+            String withLocal = flow.just("  hola  ")
+                    .handle((String value) -> value.toUpperCase())
+                    .execute();
+            String sharedOnly = flow.just("  mundo  ").execute();
+
+            assertEquals("HOLA", withLocal);
+            assertEquals("mundo", sharedOnly);
+        }
+    }
+
+    @Test
+    void executeWithoutJustIsRejected() throws Exception {
+        try (NioFlow flow = new DefaultNioFlow()) {
+            assertThrows(IllegalStateException.class, flow::execute);
         }
     }
 }
