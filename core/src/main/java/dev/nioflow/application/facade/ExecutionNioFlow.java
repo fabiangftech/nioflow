@@ -48,11 +48,6 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
     }
 
     @Override
-    public void close() {
-        // La ejecución no es dueña del engine; no hay recursos propios que liberar.
-    }
-
-    @Override
     NioEngine engine() {
         return state.nioEngine;
     }

@@ -18,24 +18,23 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class ConcurrentForkRoutingStressTest {
 
     @Test
-    void concurrentExecutionsNeverLeakForkDecisions() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            flow.when(value -> value % 2 == 0)
-                    .then(lane -> lane.handle("even", value -> value * 10))
-                    .otherwise(lane -> lane.handle("odd", value -> value * -1));
+    void concurrentExecutionsNeverLeakForkDecisions() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        flow.when(value -> value % 2 == 0)
+                .then(lane -> lane.handle("even", value -> value * 10))
+                .otherwise(lane -> lane.handle("odd", value -> value * -1));
 
-            var results = new ConcurrentHashMap<Integer, Integer>();
-            try (var requests = Executors.newVirtualThreadPerTaskExecutor()) {
-                for (int i = 0; i < 10_000; i++) {
-                    int input = i;
-                    requests.execute(() -> results.put(input, flow.just(input).execute()));
-                }
-            }
-
+        var results = new ConcurrentHashMap<Integer, Integer>();
+        try (var requests = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int i = 0; i < 10_000; i++) {
-                int expected = i % 2 == 0 ? i * 10 : -i;
-                assertEquals(expected, results.get(i), "input " + i + " took the wrong lane");
+                int input = i;
+                requests.execute(() -> results.put(input, flow.just(input).execute()));
             }
+        }
+
+        for (int i = 0; i < 10_000; i++) {
+            int expected = i % 2 == 0 ? i * 10 : -i;
+            assertEquals(expected, results.get(i), "input " + i + " took the wrong lane");
         }
     }
 }

@@ -3,6 +3,7 @@ package dev.nioflow.application.facade;
 import dev.nioflow.core.facade.Branch;
 import dev.nioflow.core.facade.Cases;
 import dev.nioflow.core.facade.Condition;
+import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Guard;
 
@@ -12,9 +13,9 @@ import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
- * Rama abierta por when().then(): otherwise() declara el lane contrario y el
- * resto de la API delega en el flow original — encadenar después de un fork
- * vuelve a la línea principal (sin guards del fork).
+ * Branch opened by when().then(): otherwise() declares the opposite lane and
+ * the rest of the API delegates to the original flow — chaining after a fork
+ * returns to the main line (without the fork's guards).
  */
 final class DefaultBranch<I, T> implements Branch<I, T> {
 
@@ -27,8 +28,9 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     }
 
     @Override
-    public NioFlow<I, T> otherwise(UnaryOperator<NioFlow<I, T>> lane) {
-        lane.apply(flow.withGuards(AbstractNioFlow.withGuard(flow.guards(), new Guard(decision, false))));
+    public NioFlow<I, T> otherwise(UnaryOperator<Lane<T>> lane) {
+        lane.apply(new DefaultLane<>(flow.withGuards(
+                AbstractNioFlow.withGuard(flow.guards(), new Guard(decision, false)))));
         return flow;
     }
 
@@ -85,10 +87,5 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     @Override
     public T execute() {
         return flow.execute();
-    }
-
-    @Override
-    public void close() throws Exception {
-        flow.close();
     }
 }

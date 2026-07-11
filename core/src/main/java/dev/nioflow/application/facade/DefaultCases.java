@@ -2,8 +2,8 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.Cases;
 import dev.nioflow.core.facade.Condition;
+import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
-import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.Guard;
 
 import java.util.ArrayList;
@@ -14,10 +14,10 @@ import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
- * match() con semántica first-match-wins: el Decision del caso k solo se
- * evalúa si los anteriores fueron false (lleva sus guards en false), su lane
- * exige además su propio decision en true, y otherwise() exige todos en false.
- * Encadenar después (con o sin otherwise) vuelve a la línea principal.
+ * match() with first-match-wins semantics: case k's Decision only evaluates
+ * if previous cases were false (it carries their guards in false), its lane
+ * additionally requires its own decision true, and otherwise() requires all
+ * false. Chaining after (with or without otherwise) returns to the main line.
  */
 final class DefaultCases<I, T> implements Cases<I, T> {
 
@@ -29,19 +29,20 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public Cases<I, T> is(Predicate<T> predicate, UnaryOperator<NioFlow<I, T>> lane) {
-        int decision = flow.engine().nextDecision();
-        List<Guard> evaluationGuards = AbstractNioFlow.withGuards(flow.guards(), priorCasesFalse);
-        flow.appendLink(new Decision((Predicate<Object>) predicate, decision, evaluationGuards));
-        lane.apply(flow.withGuards(AbstractNioFlow.withGuard(evaluationGuards, new Guard(decision, true))));
+    public Cases<I, T> is(Predicate<T> predicate, UnaryOperator<Lane<T>> lane) {
+        AbstractNioFlow<I, T> evaluation = flow.withGuards(
+                AbstractNioFlow.withGuards(flow.guards(), priorCasesFalse));
+        int decision = evaluation.appendDecision(predicate);
+        lane.apply(new DefaultLane<>(evaluation.withGuards(
+                AbstractNioFlow.withGuard(evaluation.guards(), new Guard(decision, true)))));
         priorCasesFalse.add(new Guard(decision, false));
         return this;
     }
 
     @Override
-    public NioFlow<I, T> otherwise(UnaryOperator<NioFlow<I, T>> lane) {
-        lane.apply(flow.withGuards(AbstractNioFlow.withGuards(flow.guards(), priorCasesFalse)));
+    public NioFlow<I, T> otherwise(UnaryOperator<Lane<T>> lane) {
+        lane.apply(new DefaultLane<>(flow.withGuards(
+                AbstractNioFlow.withGuards(flow.guards(), priorCasesFalse))));
         return flow;
     }
 
@@ -98,10 +99,5 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     @Override
     public T execute() {
         return flow.execute();
-    }
-
-    @Override
-    public void close() throws Exception {
-        flow.close();
     }
 }

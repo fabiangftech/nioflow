@@ -18,11 +18,12 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * Lógica común de construcción de la chain para la definición compartida
- * (DefaultNioFlow) y las ejecuciones (ExecutionNioFlow). Los forks (when/match)
- * funcionan con vistas: withGuards() devuelve el mismo flow con Guards activos,
- * así cada link declarado dentro de un lane queda condicionado a su Decision
- * y los forks anidados componen guards automáticamente.
+ * Shared chain-building logic for the shared definition (DefaultNioFlow) and
+ * per-request executions (ExecutionNioFlow). Forks (when/match) work through
+ * views: withGuards() returns the same flow with active Guards, and lanes wrap
+ * those views behind the restricted Lane interface, so every link declared
+ * inside a lane is conditioned on its Decision and nested forks compose
+ * guards automatically.
  */
 abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
 
@@ -74,16 +75,20 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public Condition<I, T> when(Predicate<T> predicate) {
-        int decision = engine().nextDecision();
-        appendLink(new Decision((Predicate<Object>) predicate, decision, guards()));
-        return new DefaultCondition<>(this, decision);
+        return new DefaultCondition<>(this, appendDecision(predicate));
     }
 
     @Override
     public Cases<I, T> match() {
         return new DefaultCases<>(this);
+    }
+
+    @SuppressWarnings("unchecked")
+    int appendDecision(Predicate<T> predicate) {
+        int decision = engine().nextDecision();
+        appendLink(new Decision((Predicate<Object>) predicate, decision, guards()));
+        return decision;
     }
 
     static List<Guard> withGuard(List<Guard> guards, Guard extra) {

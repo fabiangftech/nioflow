@@ -2,7 +2,7 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.Branch;
 import dev.nioflow.core.facade.Condition;
-import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.model.Guard;
 
 import java.util.function.UnaryOperator;
@@ -18,8 +18,9 @@ final class DefaultCondition<I, T> implements Condition<I, T> {
     }
 
     @Override
-    public Branch<I, T> then(UnaryOperator<NioFlow<I, T>> lane) {
-        lane.apply(flow.withGuards(AbstractNioFlow.withGuard(flow.guards(), new Guard(decision, true))));
+    public Branch<I, T> then(UnaryOperator<Lane<T>> lane) {
+        lane.apply(new DefaultLane<>(flow.withGuards(
+                AbstractNioFlow.withGuard(flow.guards(), new Guard(decision, true)))));
         return new DefaultBranch<>(flow, decision);
     }
 }

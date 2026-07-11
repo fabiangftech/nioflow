@@ -9,6 +9,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -19,237 +20,235 @@ class DefaultNioFlowTest {
 
     @Test
     void buildsAndExecutesAFullFlow() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            var effects = new CopyOnWriteArrayList<Object>();
-            var backgroundRan = new CountDownLatch(1);
+        var effects = new CopyOnWriteArrayList<Object>();
+        var backgroundRan = new CountDownLatch(1);
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
 
-            String result = flow.just(5)
-                    .handle("plus-one", value -> value + 1)
-                    .background("audit", value -> {
-                        effects.add(value);
-                        backgroundRan.countDown();
-                    })
-                    .adapt(value -> "value:" + value)
-                    .execute();
+        String result = flow.just(5)
+                .handle("plus-one", value -> value + 1)
+                .background("audit", value -> {
+                    effects.add(value);
+                    backgroundRan.countDown();
+                })
+                .adapt(value -> "value:" + value)
+                .execute();
 
-            assertEquals("value:6", result);
-            assertTrue(backgroundRan.await(1, TimeUnit.SECONDS));
-            assertEquals(List.of(6), effects);
-        }
+        assertEquals("value:6", result);
+        assertTrue(backgroundRan.await(1, TimeUnit.SECONDS));
+        assertEquals(List.of(6), effects);
     }
 
     @Test
-    void adaptChangesThePipelineType() throws Exception {
-        try (NioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
-            Integer length = flow.just("hola mundo")
-                    .handle(String::toUpperCase)
-                    .adapt(String::length)
-                    .handle(value -> value * 2)
-                    .execute();
+    void adaptChangesThePipelineType() {
+        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
 
-            assertEquals(20, length);
-        }
+        Integer length = flow.just("hola mundo")
+                .handle(String::toUpperCase)
+                .adapt(String::length)
+                .handle(value -> value * 2)
+                .execute();
+
+        assertEquals(20, length);
     }
 
     @Test
-    void sharedAdaptTypesTheStepsAfterJust() throws Exception {
-        try (NioFlow<String, Integer> flow = DefaultNioFlow.from(String.class)
+    void sharedAdaptTypesTheStepsAfterJust() {
+        NioFlow<String, Integer> flow = DefaultNioFlow.from(String.class)
                 .handle(String::trim)
-                .adapt(String::length)) {
+                .adapt(String::length);
 
-            Integer result = flow.just("  hola  ")
-                    .handle(value -> value * 2)
-                    .execute();
+        Integer result = flow.just("  hola  ")
+                .handle(value -> value * 2)
+                .execute();
 
-            assertEquals(8, result);
-        }
+        assertEquals(8, result);
     }
 
     @Test
     void executeIsIsolatedPerThread() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            flow.handle("double", value -> value * 2);
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        flow.handle("double", value -> value * 2);
 
-            var results = new ConcurrentHashMap<Integer, Integer>();
-            try (var requests = Executors.newVirtualThreadPerTaskExecutor()) {
-                for (int i = 0; i < 50; i++) {
-                    int input = i;
-                    requests.execute(() -> results.put(input, flow.just(input).execute()));
-                }
-            }
-
+        var results = new ConcurrentHashMap<Integer, Integer>();
+        try (var requests = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int i = 0; i < 50; i++) {
-                assertEquals(i * 2, results.get(i));
+                int input = i;
+                requests.execute(() -> results.put(input, flow.just(input).execute()));
             }
         }
-    }
 
-    @Test
-    void repeatedExecutionsAreIndependent() throws Exception {
-        try (NioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
-            String first = flow.just("hola")
-                    .handle(String::toUpperCase)
-                    .execute();
-            String second = flow.just("mundo")
-                    .handle(String::toUpperCase)
-                    .execute();
-
-            assertEquals("HOLA", first);
-            assertEquals("MUNDO", second);
-            // Los handle() de las ejecuciones anteriores no contaminan la definición compartida.
-            assertEquals("intacto", flow.just("intacto").execute());
+        for (int i = 0; i < 50; i++) {
+            assertEquals(i * 2, results.get(i));
         }
     }
 
     @Test
-    void sharedDefinitionRunsBeforeExecutionLinks() throws Exception {
-        try (NioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
-            flow.handle("trim", String::trim);
+    void repeatedExecutionsAreIndependent() {
+        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
 
-            String withLocal = flow.just("  hola  ")
-                    .handle(String::toUpperCase)
-                    .execute();
-            String sharedOnly = flow.just("  mundo  ").execute();
+        String first = flow.just("hola")
+                .handle(String::toUpperCase)
+                .execute();
+        String second = flow.just("mundo")
+                .handle(String::toUpperCase)
+                .execute();
 
-            assertEquals("HOLA", withLocal);
-            assertEquals("mundo", sharedOnly);
-        }
+        assertEquals("HOLA", first);
+        assertEquals("MUNDO", second);
+        // handle() calls from previous executions must not pollute the shared definition.
+        assertEquals("intacto", flow.just("intacto").execute());
     }
 
     @Test
-    void whenRoutesEachExecutionThroughItsLane() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            Integer big = flow.just(42)
-                    .when(value -> value > 10)
-                    .then(lane -> lane.handle(value -> value * 2))
-                    .otherwise(lane -> lane.handle(value -> value - 1))
-                    .handle(value -> value + 100)
-                    .execute();
-            Integer small = flow.just(3)
-                    .when(value -> value > 10)
-                    .then(lane -> lane.handle(value -> value * 2))
-                    .otherwise(lane -> lane.handle(value -> value - 1))
-                    .handle(value -> value + 100)
-                    .execute();
+    void sharedDefinitionRunsBeforeExecutionLinks() {
+        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
+        flow.handle("trim", String::trim);
 
-            assertEquals(184, big);   // (42 * 2) + 100: solo el lane then
-            assertEquals(102, small); // (3 - 1) + 100: solo el lane otherwise
-        }
+        String withLocal = flow.just("  hola  ")
+                .handle(String::toUpperCase)
+                .execute();
+        String sharedOnly = flow.just("  mundo  ").execute();
+
+        assertEquals("HOLA", withLocal);
+        assertEquals("mundo", sharedOnly);
     }
 
     @Test
-    void whenWithoutOtherwiseSkipsTheLaneAndContinuesTheMainLine() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            Integer result = flow.just(3)
-                    .when(value -> value > 10)
-                    .then(lane -> lane.handle(value -> value * 1000))
-                    .handle(value -> value + 1)
-                    .execute();
+    void whenRoutesEachExecutionThroughItsLane() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        Function<Integer, Integer> route = input -> flow.just(input)
+                .when(value -> value > 10)
+                .then(lane -> lane
+                        .handle(value -> value * 2))
+                .otherwise(lane -> lane
+                        .handle(value -> value - 1))
+                .handle(value -> value + 100)
+                .execute();
 
-            assertEquals(4, result);
-        }
+        assertEquals(184, route.apply(42)); // (42 * 2) + 100: only the then lane
+        assertEquals(102, route.apply(3));  // (3 - 1) + 100: only the otherwise lane
     }
 
     @Test
-    void whenOnSharedDefinitionRoutesPerRequest() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            flow.when(value -> value % 2 == 0)
-                    .then(lane -> lane.handle("even", value -> value * 10))
-                    .otherwise(lane -> lane.handle("odd", value -> value * -1));
+    void whenWithoutOtherwiseSkipsTheLaneAndContinuesTheMainLine() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
 
-            assertEquals(40, flow.just(4).execute());
-            assertEquals(-7, flow.just(7).execute());
-        }
+        Integer result = flow.just(3)
+                .when(value -> value > 10)
+                .then(lane -> lane
+                        .handle(value -> value * 1000))
+                .handle(value -> value + 1)
+                .execute();
+
+        assertEquals(4, result);
     }
 
     @Test
-    void matchFirstMatchingCaseWins() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            java.util.function.Function<Integer, Integer> route = input -> flow.just(input)
-                    .match()
-                    .is(value -> value % 2 == 0, lane -> lane.handle(value -> value * 2))
-                    .is(value -> value > 10, lane -> lane.handle(value -> value + 1000))
-                    .otherwise(lane -> lane.handle(value -> -value))
-                    .execute();
+    void whenOnSharedDefinitionRoutesPerRequest() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        flow.when(value -> value % 2 == 0)
+                .then(lane -> lane
+                        .handle("even", value -> value * 10))
+                .otherwise(lane -> lane
+                        .handle("odd", value -> value * -1));
 
-            assertEquals(40, route.apply(20));   // par Y > 10: gana el primer caso, el segundo no corre
-            assertEquals(1015, route.apply(15)); // impar y > 10: segundo caso
-            assertEquals(-3, route.apply(3));    // ningún caso: otherwise
-        }
+        assertEquals(40, flow.just(4).execute());
+        assertEquals(-7, flow.just(7).execute());
     }
 
     @Test
-    void matchWithoutOtherwiseFallsThroughToTheMainLine() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            Integer result = flow.just(3)
-                    .match()
-                    .is(value -> value > 10, lane -> lane.handle(value -> value * 1000))
-                    .handle(value -> value + 1)
-                    .execute();
+    void matchFirstMatchingCaseWins() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        Function<Integer, Integer> route = input -> flow.just(input)
+                .match()
+                .is(value -> value % 2 == 0, lane -> lane
+                        .handle(value -> value * 2))
+                .is(value -> value > 10, lane -> lane
+                        .handle(value -> value + 1000))
+                .otherwise(lane -> lane
+                        .handle(value -> -value))
+                .execute();
 
-            assertEquals(4, result);
-        }
+        assertEquals(40, route.apply(20));   // even AND > 10: first case wins, second never runs
+        assertEquals(1015, route.apply(15)); // odd and > 10: second case
+        assertEquals(-3, route.apply(3));    // no case: otherwise
     }
 
     @Test
-    void nestedForksComposeGuards() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            java.util.function.Function<Integer, Integer> route = input -> flow.just(input)
-                    .when(value -> value > 5)
-                    .then(lane -> lane
-                            .when(value -> value % 2 == 0)
-                            .then(inner -> inner.handle(value -> value + 10))
-                            .otherwise(inner -> inner.handle(value -> value + 20)))
-                    .otherwise(lane -> lane.handle(value -> value + 30))
-                    .execute();
+    void matchWithoutOtherwiseFallsThroughToTheMainLine() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
 
-            assertEquals(16, route.apply(6)); // grande y par
-            assertEquals(27, route.apply(7)); // grande e impar
-            assertEquals(32, route.apply(2)); // pequeño: el fork interno ni se evalúa
-        }
+        Integer result = flow.just(3)
+                .match()
+                .is(value -> value > 10, lane -> lane
+                        .handle(value -> value * 1000))
+                .handle(value -> value + 1)
+                .execute();
+
+        assertEquals(4, result);
     }
 
     @Test
-    void filterCutsThePerRequestExecution() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            java.util.function.Function<Integer, Integer> route = input -> flow.just(input)
-                    .handle(value -> value + 1)
-                    .filter(value -> value > 10)
-                    .handle(value -> value * 2)
-                    .execute();
+    void nestedForksComposeGuards() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        Function<Integer, Integer> route = input -> flow.just(input)
+                .when(value -> value > 5)
+                .then(lane -> lane
+                        .when(value -> value % 2 == 0)
+                        .then(inner -> inner
+                                .handle(value -> value + 10))
+                        .otherwise(inner -> inner
+                                .handle(value -> value + 20)))
+                .otherwise(lane -> lane
+                        .handle(value -> value + 30))
+                .execute();
 
-            assertEquals(42, route.apply(20)); // (20 + 1) pasa el filtro → * 2
-            assertNull(route.apply(3));        // (3 + 1) no pasa: corta sin ejecutar la cola
-        }
+        assertEquals(16, route.apply(6)); // big and even
+        assertEquals(27, route.apply(7)); // big and odd
+        assertEquals(32, route.apply(2)); // small: the inner fork is never evaluated
     }
 
     @Test
-    void filterOnSharedDefinitionAppliesToEveryExecution() throws Exception {
-        try (NioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
-            flow.filter(value -> !value.isBlank());
+    void filterCutsThePerRequestExecution() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        Function<Integer, Integer> route = input -> flow.just(input)
+                .handle(value -> value + 1)
+                .filter(value -> value > 10)
+                .handle(value -> value * 2)
+                .execute();
 
-            assertEquals("HOLA", flow.just("hola").handle(String::toUpperCase).execute());
-            assertNull(flow.just("   ").handle(String::toUpperCase).execute());
-        }
+        assertEquals(42, route.apply(20)); // (20 + 1) passes the filter → * 2
+        assertNull(route.apply(3));        // (3 + 1) rejected: cuts without running the tail
     }
 
     @Test
-    void filterInsideALaneOnlyCutsValuesRoutedThroughThatLane() throws Exception {
-        try (NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class)) {
-            flow.when(value -> value % 2 == 0)
-                    .then(lane -> lane.filter(value -> value > 10).handle(value -> value * 10))
-                    .otherwise(lane -> lane.handle(value -> -value));
+    void filterOnSharedDefinitionAppliesToEveryExecution() {
+        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
+        flow.filter(value -> !value.isBlank());
 
-            assertEquals(200, flow.just(20).execute()); // par y grande: pasa el filtro del lane
-            assertNull(flow.just(4).execute());         // par y chico: el filtro del lane corta
-            assertEquals(-3, flow.just(3).execute());   // impar: el filtro del otro lane no le aplica
-        }
+        assertEquals("HOLA", flow.just("hola").handle(String::toUpperCase).execute());
+        assertNull(flow.just("   ").handle(String::toUpperCase).execute());
     }
 
     @Test
-    void executeWithoutJustIsRejected() throws Exception {
-        try (NioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
-            assertThrows(IllegalStateException.class, flow::execute);
-        }
+    void filterInsideALaneOnlyCutsValuesRoutedThroughThatLane() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
+        flow.when(value -> value % 2 == 0)
+                .then(lane -> lane
+                        .filter(value -> value > 10)
+                        .handle(value -> value * 10))
+                .otherwise(lane -> lane
+                        .handle(value -> -value));
+
+        assertEquals(200, flow.just(20).execute()); // even and big: passes the lane's filter
+        assertNull(flow.just(4).execute());         // even and small: the lane's filter cuts
+        assertEquals(-3, flow.just(3).execute());   // odd: the other lane's filter does not apply
+    }
+
+    @Test
+    void executeWithoutJustIsRejected() {
+        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
+
+        assertThrows(IllegalStateException.class, flow::execute);
     }
 }

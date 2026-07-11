@@ -5,11 +5,13 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * Pipeline tipado de punta a punta: I es el tipo de entrada (lo que acepta
- * just), T es el tipo del valor en el punto actual de la cadena. adapt() es
- * el único paso que cambia T; el resto lo preserva.
+ * End-to-end typed pipeline: I is the input type (what just accepts), T is
+ * the value's type at the current point of the chain. adapt() is the only
+ * step that changes T; everything else preserves it. Lifecycle (close) is
+ * NOT part of this contract: it belongs to the root implementation that owns
+ * the engine, never to branches or executions.
  */
-public interface NioFlow<I, T> extends AutoCloseable {
+public interface NioFlow<I, T> {
 
     NioFlow<I, T> just(I input);
 

@@ -5,7 +5,7 @@ import java.util.function.UnaryOperator;
 
 public interface Cases<I, T> extends NioFlow<I, T> {
 
-    Cases<I, T> is(Predicate<T> predicate, UnaryOperator<NioFlow<I, T>> lane);
+    Cases<I, T> is(Predicate<T> predicate, UnaryOperator<Lane<T>> lane);
 
-    NioFlow<I, T> otherwise(UnaryOperator<NioFlow<I, T>> lane);
+    NioFlow<I, T> otherwise(UnaryOperator<Lane<T>> lane);
 }

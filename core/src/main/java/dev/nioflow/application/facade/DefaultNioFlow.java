@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> {
+public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoCloseable {
 
     private final NioEngine nioEngine;
     private final AtomicInteger anonymousLinks;
@@ -31,21 +31,21 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> {
     }
 
     /**
-     * Punto de partida tipado: el Class ancla I (lo que acepta just) y el
-     * pipeline arranca con T = I; solo adapt() cambia T de ahí en adelante.
+     * Typed entry point: the Class anchors I (what just accepts) and the
+     * pipeline starts with T = I; only adapt() changes T from there on.
      */
-    public static <I> NioFlow<I, I> from(Class<I> type) {
+    public static <I> DefaultNioFlow<I, I> from(Class<I> type) {
         return new DefaultNioFlow<>();
     }
 
-    public static <I> NioFlow<I, I> from(Class<I> type, NioEngine nioEngine) {
+    public static <I> DefaultNioFlow<I, I> from(Class<I> type, NioEngine nioEngine) {
         return new DefaultNioFlow<>(nioEngine);
     }
 
     /**
-     * Abre una ejecución independiente: parte de un snapshot de la chain compartida
-     * y los links que se agreguen después viven solo en esa ejecución. N requests
-     * concurrentes pueden hacer just(...)...execute() sin chocar entre sí.
+     * Opens an independent execution: it starts from a snapshot of the shared
+     * chain and any links added afterwards live only in that execution. N
+     * concurrent requests can each do just(...)...execute() without clashing.
      */
     @Override
     public NioFlow<I, T> just(I input) {
@@ -63,6 +63,10 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> {
         throw new IllegalStateException("This flow has no input; start an execution with just(input)");
     }
 
+    /**
+     * Lifecycle lives ONLY here, on the root flow that owns the engine — the
+     * NioFlow contract, branches, lanes and executions do not expose close().
+     */
     @Override
     public void close() {
         nioEngine.shutdown(Duration.ofSeconds(5));
