@@ -8,6 +8,7 @@ import dev.nioflow.core.model.Guard;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -109,5 +110,10 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     @Override
     public T execute() {
         return flow.execute();
+    }
+
+    @Override
+    public CompletableFuture<T> executeAsync() {
+        return flow.executeAsync();
     }
 }

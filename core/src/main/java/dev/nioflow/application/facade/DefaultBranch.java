@@ -7,6 +7,7 @@ import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Guard;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -97,5 +98,10 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     @Override
     public T execute() {
         return flow.execute();
+    }
+
+    @Override
+    public CompletableFuture<T> executeAsync() {
+        return flow.executeAsync();
     }
 }

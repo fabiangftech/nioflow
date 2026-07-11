@@ -21,12 +21,12 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **`background`** — fire-and-forget side effects; errors reported to handlers, never fail the flow `[scale]`
 - [x] **Recovery links (engine)** — positional error handling, catches stage failures and timeouts `[maint]`
 - [x] **`recover` in the fluent API** — `recover(fn)` / `recover(name, fn)` on `NioFlow` and `Lane` (lane-scoped via guards); recoveries fuse into worker runs: happy path at parity with plain stages, error path 2x faster `[maint] [perf]`
+- [x] **`executeAsync()` returning `CompletableFuture<T>`** — non-blocking endpoints by returning the future from the controller; `execute()` is now `executeAsync().join()`; single-call parity, 2.6x on 16 pipelined executions `[scale]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **`executeAsync()` returning `CompletableFuture<T>`** — the engine's `call()` already returns one; exposing it enables non-blocking Spring MVC/WebFlux controllers without touching the engine `[scale]`
 - [ ] **Stage timeout in the fluent API** — `handle(name, fn, Duration)`; `Stage.timeout` exists and works, only the builder lacks it `[maint]`
 - [ ] **Backpressure for `inject`/`justAll`** — bounded in-flight queue with overflow policies (BLOCK / DROP / FAIL); today `inFlight` grows unbounded `[scale]`
 - [ ] **Metrics SPI + OpenTelemetry adapter** — per-stage latency, queue depth, executions in flight; `infrastructure/` package and the `compileOnly` otel dependency are already reserved for this `[maint] [scale]`

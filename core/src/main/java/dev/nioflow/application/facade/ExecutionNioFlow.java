@@ -7,6 +7,7 @@ import dev.nioflow.core.model.Link;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Ejecución efímera creada por just(): usa la definición compartida tal cual
@@ -41,10 +42,15 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public T execute() {
+        return executeAsync().join();
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public CompletableFuture<T> executeAsync() {
         List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
-        return (T) state.nioEngine.call(state.seed, null, chain).join();
+        return (CompletableFuture<T>) state.nioEngine.call(state.seed, null, chain);
     }
 
     @Override

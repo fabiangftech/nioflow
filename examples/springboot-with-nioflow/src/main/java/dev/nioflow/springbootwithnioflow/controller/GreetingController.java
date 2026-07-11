@@ -5,6 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.concurrent.CompletableFuture;
+
 @Slf4j
 @RestController
 public class GreetingController {
@@ -15,8 +17,13 @@ public class GreetingController {
         this.nioFlow = nioFlow;
     }
 
+    /**
+     * Non-blocking endpoint: the flow returns its ticket (CompletableFuture)
+     * and Spring completes the response when it resolves — the request thread
+     * is released immediately instead of waiting on execute().
+     */
     @GetMapping("/greeting")
-    public int greeting() {
+    public CompletableFuture<Integer> greeting() {
         return this.nioFlow
                 .just("Hello World! - " + System.currentTimeMillis())
                 .handle(String::toUpperCase)
@@ -38,6 +45,6 @@ public class GreetingController {
                     }
                     log.info("Background task executed 2");
                 })
-                .execute();
+                .executeAsync();
     }
 }

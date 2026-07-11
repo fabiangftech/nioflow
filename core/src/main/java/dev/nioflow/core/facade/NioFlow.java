@@ -1,5 +1,6 @@
 package dev.nioflow.core.facade;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -42,5 +43,17 @@ public interface NioFlow<I, T> {
 
     Cases<I, T> match();
 
+    /**
+     * Runs the execution and blocks the caller until the result is ready.
+     * Equivalent to executeAsync().join().
+     */
     T execute();
+
+    /**
+     * Runs the execution and returns immediately with the promise of the
+     * result — the caller's thread never blocks. Returning this future from
+     * a Spring controller yields a non-blocking endpoint. It completes
+     * exceptionally with the terminal failure when no recover() caught it.
+     */
+    CompletableFuture<T> executeAsync();
 }

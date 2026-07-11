@@ -7,6 +7,7 @@ import dev.nioflow.core.model.Link;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -60,6 +61,11 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
 
     @Override
     public T execute() {
+        throw new IllegalStateException("This flow has no input; start an execution with just(input)");
+    }
+
+    @Override
+    public CompletableFuture<T> executeAsync() {
         throw new IllegalStateException("This flow has no input; start an execution with just(input)");
     }
 
