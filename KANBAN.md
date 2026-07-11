@@ -24,18 +24,22 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **`executeAsync()` returning `CompletableFuture<T>`** — non-blocking endpoints by returning the future from the controller; `execute()` is now `executeAsync().join()`; single-call parity, 2.6x on 16 pipelined executions `[scale]`
 - [x] **Stage timeout in the fluent API** — `handle(name, fn, Duration)` on `NioFlow` and `Lane`; timeout failures are recoverable downstream; armed budget costs ~40% on that stage only (fusion break + orTimeout timer, by design) `[maint]`
 - [x] **Backpressure for `inject`/`justAll`** — `DefaultNioEngine(capacity, OverflowPolicy)`: BLOCK parks the producer, DROP discards (reported to error handlers), FAIL throws; admission happens BEFORE the execution runs, slots free on `await()`; uncontended cost at parity with unbounded `[scale]`
+- [x] **Metrics SPI + OpenTelemetry adapter** — `NioFlowMetrics` (no-op defaults) installed via `engine.metrics()`: execution/stage latency, failed/filtered classification, recoveries, drops, queue depth; `infrastructure/OpenTelemetryMetrics` exports histograms/counters/gauge with cached attributes; instrumentation cost at parity with metrics off `[maint] [scale]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **Metrics SPI + OpenTelemetry adapter** — per-stage latency, queue depth, executions in flight; `infrastructure/` package and the `compileOnly` otel dependency are already reserved for this `[maint] [scale]`
+- [ ] **Chain compilation at `seal()`** — precompute fusion runs, guard tables and dispatch plan once instead of scanning per execution; biggest remaining hot-path win `[perf]`
+- [ ] **`fanOut`/`fanIn`** — split one value into N parallel lane executions and join results (the missing sibling of when/match) `[scale]`
+- [ ] **Reusable sub-flows** — `use(subFlow)` / named segments: compose large pipelines from smaller tested pieces `[maint]`
+- [ ] **Graceful drain on shutdown** — stop accepting, finish in-flight executions within the grace period, report the rest `[scale]`
+- [ ] **Distinguish filtered from null results** — `Optional<T> executeOptional()` or a result object; today a cut flow and a null-producing stage both return null `[maint]`
 
 ## 📋 Backlog
 
 ### Performance `[perf]`
 
-- [ ] **Chain compilation at `seal()`** — precompute fusion runs, guard tables and dispatch plan once instead of scanning per execution; biggest remaining hot-path win
 - [ ] **Decisions as bitset** — decision ids are dense ints; replace the per-execution `HashMap<Integer, Boolean>` with a long[] bitset (zero allocation, O(1) guards)
 - [ ] **Inline cheap stages on the boss (opt-in)** — `sync` marker for stages that are pure CPU and sub-microsecond; skips both thread hops (measured: 2 hops ≈ 10-18µs)
 - [ ] **Fusion across recorded decisions** — a Decision whose guards already failed cannot change routing; extend runs through it
@@ -45,21 +49,17 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 
 ### Scalability `[scale]`
 
-- [ ] **`fanOut`/`fanIn`** — split one value into N parallel lane executions and join results (the missing sibling of when/match)
 - [ ] **Batching** — `batch(size, window)` link: accumulate values and process them as one unit (bulk inserts, bulk API calls)
 - [ ] **Async stages** — give `Stage.async` (already in the record, unused) semantics: launch without awaiting, join later in the chain
 - [ ] **Rate limiting per stage** — token bucket on named stages; protects downstream dependencies
 - [ ] **Boss pool tuning** — configurable pool size, dedicated (non-shared) event loop option per engine for latency-critical flows
-- [ ] **Graceful drain on shutdown** — stop accepting, finish in-flight executions within the grace period, report the rest
 - [ ] **Sharded/keyed execution** — pin executions with the same business key to the same boss for ordered processing per key (Kafka-partition style)
 
 ### Maintainability / DX `[maint]`
 
-- [ ] **Reusable sub-flows** — `use(subFlow)` / named segments: compose large pipelines from smaller tested pieces; the flow calls external methods, segments group them
 - [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links)
 - [ ] **Chain diagnostics** — human-readable chain dump (names, guards, fusion runs), DOT/Mermaid export for architecture docs
 - [ ] **Validation at `seal()`** — detect dangling guards, unreachable lanes, duplicate stage names, recovery with nothing upstream
-- [ ] **Distinguish filtered from null results** — `Optional<T> executeOptional()` or a result object; today a cut flow and a null-producing stage both return null
 - [ ] **Flow-level `onComplete`/`onError` in the fluent API** — engine handlers exist; expose them per flow and per execution
 - [ ] **Context API** — typed accessors for the per-execution context map (`ctx.get(Key<T>)`), available to stages that opt in
 - [ ] **Kotlin DSL** — indentation-native branches for Kotlin consumers

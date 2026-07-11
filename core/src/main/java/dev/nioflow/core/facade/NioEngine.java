@@ -31,6 +31,8 @@ public interface NioEngine {
 
     int nextDecision();
 
+    void metrics(NioFlowMetrics metrics);
+
     void addErrorHandler(Consumer<Throwable> handler);
 
     void addCompleteHandler(Consumer<Object> handler);

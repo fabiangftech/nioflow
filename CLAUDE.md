@@ -54,7 +54,7 @@ Three packages under `core/src/main/java/dev/nioflow/`, dependency direction str
 - **`core/facade`** — public contracts. `NioFlow<I, T>` is the fluent typed API: `I` is the input type (`just` is compile-checked against it), `T` is the value's type at the current point of the chain; `adapt(Function<T, R>)` is the only step that changes `T` (returning `NioFlow<I, R>`), everything else preserves it. `NioFlow` is deliberately NOT `AutoCloseable` — lifecycle lives only on `DefaultNioFlow.close()` (the engine owner); branches, lanes and executions never expose it. `NioEngine` is the engine contract behind it — untyped (`Object`) on purpose; all unchecked casts are encapsulated in the flow implementations. `Condition`/`Branch`/`Cases` are the fork contracts behind `when()`/`match()`; `Lane`/`LaneCondition`/`LaneBranch`/`LaneCases` are their restricted lane-side counterparts.
 - **`core/model`** — the chain model: `Link` is a sealed interface permitting `Stage` (transform, optional timeout), `Decision` (records a boolean per value), `Filter` (short-circuits the flow), `Background` (fire-and-forget side effect), `Recovery` (positional error handler). Every link carries `Guard`s (`decision id` + `expected`) for lane routing. `Splice` (BEFORE/AFTER/REPLACE) names the runtime-edit positions.
 - **`application/facade`** — `DefaultNioEngine`; `AbstractNioFlow` (shared builder + fork logic) extended by `DefaultNioFlow` (shared definition) and `ExecutionNioFlow` (per-request execution); `DefaultCondition`/`DefaultBranch`/`DefaultCases` (forks).
-- **`infrastructure`** — reserved for optional adapters (currently empty).
+- **`infrastructure`** — optional adapters over `compileOnly` dependencies: `OpenTelemetryMetrics` (metrics SPI → otel histograms/counters/gauge; only loads if the consumer brings `opentelemetry-api`).
 
 ### DefaultNioEngine: the event loop
 
@@ -80,6 +80,7 @@ Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()`
 - `Filter` short-circuits by completing the flow with `null`. `Background` never waits and never fails the flow; a throwing effect reports to `errorHandlers` only.
 - `inject`/`await` are the fire-and-forget pair (results queue up in `inFlight`); `call` is the request/response form returning a `CompletableFuture`. At the flow level, `execute()` blocks and `executeAsync()` returns the future (`execute()` IS `executeAsync().join()`) — return the future from a controller for a non-blocking endpoint.
 - `inFlight` is unbounded by default; `new DefaultNioEngine(capacity, OverflowPolicy)` bounds it with BLOCK (park the producer), DROP (discard, reported to error handlers) or FAIL (throw `RejectedExecutionException`). Admission happens BEFORE the execution starts — rejecting an already-run value is not backpressure — and the slot frees when `await()` collects the result.
+- Observability: `engine.metrics(NioFlowMetrics)` installs the metrics SPI (no-op defaults, null = zero instrumentation). The engine pushes execution latency classified as completed/failed/filtered, per-stage latency (timed on the worker inside fused runs), applied recoveries, dropped values and queue depth. Callbacks run on engine threads: keep them fast and never throw.
 
 ### DefaultNioFlow: shared definition vs per-request execution
 

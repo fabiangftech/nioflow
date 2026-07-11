@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.NioEngine;
+import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.Filter;
@@ -77,6 +78,9 @@ public class DefaultNioEngine implements NioEngine {
     private final OverflowPolicy overflowPolicy;
     private final int inFlightCapacity;
 
+    // Metrics SPI: null (default) means zero instrumentation on the hot path.
+    private volatile NioFlowMetrics metrics;
+
     // Immutable list swapped atomically: in-flight calls keep their snapshot even
     // while the chain is being edited at runtime.
     private volatile List<Link> chain = List.of();
@@ -116,14 +120,21 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public void inject(Object input, Map<String, Object> context) {
+        NioFlowMetrics metrics = this.metrics;
         if (!admit()) {
             // DROP: the value never runs; observable through the error handlers.
             RejectedExecutionException rejection = new RejectedExecutionException(
                     "In-flight capacity " + inFlightCapacity + " reached; value dropped");
+            if (metrics != null) {
+                metrics.valueDropped();
+            }
             errorHandlers.forEach(handler -> handler.accept(rejection));
             return;
         }
         inFlight.add(call(input, context));
+        if (metrics != null) {
+            metrics.queueDepth(inFlight.size());
+        }
     }
 
     private boolean admit() {
@@ -167,12 +178,27 @@ public class DefaultNioEngine implements NioEngine {
                 context != null ? context : new ConcurrentHashMap<>());
         execution.boss.execute(() -> execution.advance(0, input));
         return execution.result.whenComplete((value, error) -> {
+            if (execution.metrics != null) {
+                long elapsed = System.nanoTime() - execution.startNanos;
+                if (error != null) {
+                    execution.metrics.executionFailed(unwrap(error), elapsed);
+                } else if (execution.filtered) {
+                    execution.metrics.executionFiltered(elapsed);
+                } else {
+                    execution.metrics.executionCompleted(elapsed);
+                }
+            }
             if (error != null) {
                 errorHandlers.forEach(handler -> handler.accept(unwrap(error)));
             } else {
                 completeHandlers.forEach(handler -> handler.accept(value));
             }
         });
+    }
+
+    @Override
+    public void metrics(NioFlowMetrics metrics) {
+        this.metrics = metrics;
     }
 
     @Override
@@ -238,6 +264,10 @@ public class DefaultNioEngine implements NioEngine {
         try {
             CompletableFuture<Object> pending = inFlight.take();
             releasePermit();
+            NioFlowMetrics metrics = this.metrics;
+            if (metrics != null) {
+                metrics.queueDepth(inFlight.size());
+            }
             return pending.join();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -332,11 +362,19 @@ public class DefaultNioEngine implements NioEngine {
         private final Map<String, Object> context;
         private final Map<Integer, Boolean> decisions = new HashMap<>();
         private final CompletableFuture<Object> result = new CompletableFuture<>();
+        // Snapshot of the installed metrics for this execution; null = untimed.
+        private final NioFlowMetrics metrics;
+        private final long startNanos;
+        // Written on the boss right before completing; read by the whenComplete
+        // handler on that same thread.
+        private boolean filtered;
 
         private Execution(ExecutorService boss, List<Link> links, Map<String, Object> context) {
             this.boss = boss;
             this.links = links;
             this.context = context;
+            this.metrics = DefaultNioEngine.this.metrics;
+            this.startNanos = metrics != null ? System.nanoTime() : 0;
         }
 
         // Iterative, never recursive: a deep chain of cheap links is walked
@@ -354,6 +392,7 @@ public class DefaultNioEngine implements NioEngine {
                             case Decision decision -> decisions.put(decision.id(), decision.predicate().test(value));
                             case Filter filter -> {
                                 if (!filter.predicate().test(value)) {
+                                    filtered = true;
                                     result.complete(null);
                                     return;
                                 }
@@ -420,12 +459,13 @@ public class DefaultNioEngine implements NioEngine {
             }
             int resume = next;
             CompletableFuture<Object> task = run == null
-                    ? CompletableFuture.supplyAsync(() -> first.function().apply(value), workersExecutorService)
+                    ? CompletableFuture.supplyAsync(() -> timedApply(first, value), workersExecutorService)
                     : fusedTask(run, value);
             task.whenCompleteAsync((nextValue, error) -> {
                 if (error != null) {
                     recover(resume, unwrap(error));
                 } else if (nextValue == FILTERED) {
+                    filtered = true;
                     result.complete(null);
                 } else {
                     advance(resume, nextValue);
@@ -439,7 +479,7 @@ public class DefaultNioEngine implements NioEngine {
                 for (int i = 0; i < run.size(); i++) {
                     try {
                         if (run.get(i) instanceof Stage stage) {
-                            current = stage.function().apply(current);
+                            current = timedApply(stage, current);
                         } else if (run.get(i) instanceof Filter filter && !filter.predicate().test(current)) {
                             return FILTERED;
                         }
@@ -456,6 +496,9 @@ public class DefaultNioEngine implements NioEngine {
                             if (run.get(next) instanceof Recovery recovery) {
                                 try {
                                     current = recovery.function().apply(pending);
+                                    if (metrics != null) {
+                                        metrics.recoveryApplied(recovery.name());
+                                    }
                                     recovered = true;
                                     break;
                                 } catch (Throwable failure) {
@@ -475,7 +518,7 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         private void dispatchWithTimeout(Stage stage, int resume, Object value) {
-            CompletableFuture.supplyAsync(() -> stage.function().apply(value), workersExecutorService)
+            CompletableFuture.supplyAsync(() -> timedApply(stage, value), workersExecutorService)
                     .orTimeout(stage.timeout().toMillis(), TimeUnit.MILLISECONDS)
                     .whenCompleteAsync((nextValue, error) -> {
                         if (error != null) {
@@ -486,11 +529,23 @@ public class DefaultNioEngine implements NioEngine {
                     }, boss);
         }
 
+        // Runs the stage function, timing it when metrics are installed. Always
+        // called on a worker thread.
+        private Object timedApply(Stage stage, Object value) {
+            if (metrics == null) {
+                return stage.function().apply(value);
+            }
+            long start = System.nanoTime();
+            Object next = stage.function().apply(value);
+            metrics.stageCompleted(stage.name(), System.nanoTime() - start);
+            return next;
+        }
+
         private void recover(int from, Throwable error) {
             for (int i = from; i < links.size(); i++) {
                 if (links.get(i) instanceof Recovery recovery && passesGuards(recovery)) {
                     int next = i + 1;
-                    CompletableFuture.supplyAsync(() -> recovery.function().apply(error), workersExecutorService)
+                    CompletableFuture.supplyAsync(() -> applyRecovery(recovery, error), workersExecutorService)
                             .whenCompleteAsync((value, failure) -> {
                                 if (failure != null) {
                                     recover(next, unwrap(failure));
@@ -502,6 +557,14 @@ public class DefaultNioEngine implements NioEngine {
                 }
             }
             result.completeExceptionally(error);
+        }
+
+        private Object applyRecovery(Recovery recovery, Throwable error) {
+            Object value = recovery.function().apply(error);
+            if (metrics != null) {
+                metrics.recoveryApplied(recovery.name());
+            }
+            return value;
         }
 
         private void runBackground(Background background, Object value) {
