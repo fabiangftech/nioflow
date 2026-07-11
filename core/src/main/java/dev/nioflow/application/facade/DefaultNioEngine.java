@@ -475,7 +475,7 @@ public class DefaultNioEngine implements NioEngine {
                     continue;
                 }
                 int end = i + 1;
-                while (end < size && staticallyFusable(links.get(end))) {
+                while (end < size && extendsWindow(links.get(end))) {
                     end++;
                 }
                 runEnds[i] = end;
@@ -490,6 +490,23 @@ public class DefaultNioEngine implements NioEngine {
             return link instanceof Filter
                     || link instanceof Recovery
                     || (link instanceof Stage stage && stage.timeout() == null);
+        }
+
+        // Fusion across recorded decisions: a GUARDED non-fusable link (a
+        // match() case's Decision, a lane's Background/FanOut) might be
+        // skipped at runtime — its guards depend on decisions already
+        // recorded — so the window extends through it and the per-execution
+        // scan decides: guard-failed links are stepped over (a skipped
+        // Decision records nothing), a passing one still ends the run there.
+        // An UNGUARDED non-fusable link always executes: hard boundary, same
+        // as before. This matches what the interpreted scan (no plan) already
+        // does with its links.size() bound.
+        private static boolean extendsWindow(Link link) {
+            if (staticallyFusable(link)) {
+                return true;
+            }
+            List<Guard> guards = link.guards();
+            return guards != null && !guards.isEmpty();
         }
 
         private static boolean unguarded(List<Link> links, int from, int to) {
