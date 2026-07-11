@@ -1,8 +1,10 @@
 package dev.nioflow.springbootwithnioflow.service;
 
 import dev.nioflow.springbootwithnioflow.model.Order;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 public class RiskService {
 
@@ -14,5 +16,11 @@ public class RiskService {
 
     public Order hold(Order order) {
         return order.withStatus("ON_HOLD");
+    }
+
+    // Background link: fire-and-forget, never blocks the flow.
+    public void alert(Order order) {
+        log.warn("risk: order for {} flagged for manual review (subtotal {})",
+                order.customer(), order.subtotal());
     }
 }

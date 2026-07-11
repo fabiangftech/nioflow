@@ -7,7 +7,9 @@ import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.springbootwithnioflow.model.Order;
 import dev.nioflow.springbootwithnioflow.model.OrderRequest;
 import dev.nioflow.springbootwithnioflow.service.AuditService;
+import dev.nioflow.springbootwithnioflow.service.InventoryService;
 import dev.nioflow.springbootwithnioflow.service.PricingService;
+import dev.nioflow.springbootwithnioflow.service.ValidationService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -25,17 +27,25 @@ public class NioFlowConfig {
     }
 
     /**
-     * Shared definition, built once: every request inherits validation, pricing,
-     * tax and audit. The "tax" stage is named so it can be replaced at runtime
-     * (see AdminController) without touching in-flight requests.
+     * Platform pipeline, defined once: every order inherits validation,
+     * normalization, pricing, stock control, tax and audit. Convention for
+     * large flows: every step is a method reference to a service — the flow
+     * reads as the business spec and the logic stays testable in plain classes.
+     * Named stages ("tax", "reserve") are the anchors for runtime splices
+     * (see AdminController).
      */
     @Bean(destroyMethod = "close")
     public NioFlow<OrderRequest, Order> orderFlow(NioEngine orderEngine,
+                                                  ValidationService validationService,
+                                                  InventoryService inventoryService,
                                                   PricingService pricingService,
                                                   AuditService auditService) {
         return DefaultNioFlow.from(OrderRequest.class, orderEngine)
-                .filter(pricingService::isValid)
+                .filter(validationService::isValid)
+                .handle("normalize", validationService::normalize)
                 .adapt(pricingService::price)
+                .filter(inventoryService::hasStock)
+                .handle("reserve", inventoryService::reserve)
                 .handle("tax", pricingService::withTax)
                 .background("audit", auditService::record);
     }
