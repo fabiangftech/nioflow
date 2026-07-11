@@ -6,6 +6,7 @@ import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
+import dev.nioflow.core.model.OverflowPolicy;
 import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Splice;
 import dev.nioflow.core.model.Stage;
@@ -24,6 +25,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -67,6 +70,13 @@ public class DefaultNioEngine implements NioEngine {
     private final boolean ownsExecutors;
     private final AtomicInteger bossCursor = new AtomicInteger();
 
+    // Backpressure for inject/await: permits are acquired BEFORE the execution
+    // starts and released when await() collects the result — the bounded
+    // resource is the pending-results queue. null = unbounded (default).
+    private final Semaphore inFlightPermits;
+    private final OverflowPolicy overflowPolicy;
+    private final int inFlightCapacity;
+
     // Immutable list swapped atomically: in-flight calls keep their snapshot even
     // while the chain is being edited at runtime.
     private volatile List<Link> chain = List.of();
@@ -77,16 +87,26 @@ public class DefaultNioEngine implements NioEngine {
     private final BlockingQueue<CompletableFuture<Object>> inFlight = new LinkedBlockingQueue<>();
 
     public DefaultNioEngine() {
-        this.bossExecutorServices = SharedExecutors.BOSSES;
-        this.workersExecutorService = SharedExecutors.WORKERS;
-        this.ownsExecutors = false;
+        this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, 0, OverflowPolicy.BLOCK);
+    }
+
+    public DefaultNioEngine(int inFlightCapacity, OverflowPolicy overflowPolicy) {
+        this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, inFlightCapacity, overflowPolicy);
     }
 
     public DefaultNioEngine(ExecutorService bossExecutorService,
                             ExecutorService workersExecutorService) {
-        this.bossExecutorServices = new ExecutorService[]{bossExecutorService};
+        this(new ExecutorService[]{bossExecutorService}, workersExecutorService, true, 0, OverflowPolicy.BLOCK);
+    }
+
+    private DefaultNioEngine(ExecutorService[] bossExecutorServices, ExecutorService workersExecutorService,
+                             boolean ownsExecutors, int inFlightCapacity, OverflowPolicy overflowPolicy) {
+        this.bossExecutorServices = bossExecutorServices;
         this.workersExecutorService = workersExecutorService;
-        this.ownsExecutors = true;
+        this.ownsExecutors = ownsExecutors;
+        this.inFlightCapacity = inFlightCapacity;
+        this.inFlightPermits = inFlightCapacity > 0 ? new Semaphore(inFlightCapacity) : null;
+        this.overflowPolicy = overflowPolicy;
     }
 
     @Override
@@ -96,7 +116,44 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public void inject(Object input, Map<String, Object> context) {
+        if (!admit()) {
+            // DROP: the value never runs; observable through the error handlers.
+            RejectedExecutionException rejection = new RejectedExecutionException(
+                    "In-flight capacity " + inFlightCapacity + " reached; value dropped");
+            errorHandlers.forEach(handler -> handler.accept(rejection));
+            return;
+        }
         inFlight.add(call(input, context));
+    }
+
+    private boolean admit() {
+        if (inFlightPermits == null) {
+            return true;
+        }
+        return switch (overflowPolicy) {
+            case BLOCK -> {
+                try {
+                    inFlightPermits.acquire();
+                    yield true;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while waiting for in-flight capacity", e);
+                }
+            }
+            case DROP -> inFlightPermits.tryAcquire();
+            case FAIL -> {
+                if (!inFlightPermits.tryAcquire()) {
+                    throw new RejectedExecutionException("In-flight capacity " + inFlightCapacity + " reached");
+                }
+                yield true;
+            }
+        };
+    }
+
+    private void releasePermit() {
+        if (inFlightPermits != null) {
+            inFlightPermits.release();
+        }
     }
 
     @Override
@@ -179,7 +236,9 @@ public class DefaultNioEngine implements NioEngine {
     @Override
     public Object await() {
         try {
-            return inFlight.take().join();
+            CompletableFuture<Object> pending = inFlight.take();
+            releasePermit();
+            return pending.join();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while awaiting a result", e);
@@ -194,6 +253,7 @@ public class DefaultNioEngine implements NioEngine {
             if (pending == null) {
                 throw new IllegalStateException("No result available within " + timeout);
             }
+            releasePermit();
             return pending.get(Math.max(deadline - System.nanoTime(), 0), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

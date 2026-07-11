@@ -79,6 +79,7 @@ Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()`
 - `Recovery` is positional: it catches failures (including `Stage` timeouts via `orTimeout`) from links upstream of it; execution continues after it with the recovered value. With no matching recovery, the failure reaches `errorHandlers` and the call's future. Declared fluently via `recover(fn)` / `recover(name, fn)` on `NioFlow` and `Lane` — a lane-scoped recover inherits the lane's guards and only catches failures of values routed through that branch. Named recoveries are splice anchors like stages.
 - `Filter` short-circuits by completing the flow with `null`. `Background` never waits and never fails the flow; a throwing effect reports to `errorHandlers` only.
 - `inject`/`await` are the fire-and-forget pair (results queue up in `inFlight`); `call` is the request/response form returning a `CompletableFuture`. At the flow level, `execute()` blocks and `executeAsync()` returns the future (`execute()` IS `executeAsync().join()`) — return the future from a controller for a non-blocking endpoint.
+- `inFlight` is unbounded by default; `new DefaultNioEngine(capacity, OverflowPolicy)` bounds it with BLOCK (park the producer), DROP (discard, reported to error handlers) or FAIL (throw `RejectedExecutionException`). Admission happens BEFORE the execution starts — rejecting an already-run value is not backpressure — and the slot frees when `await()` collects the result.
 
 ### DefaultNioFlow: shared definition vs per-request execution
 

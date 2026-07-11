@@ -23,12 +23,12 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 - [x] **`recover` in the fluent API** — `recover(fn)` / `recover(name, fn)` on `NioFlow` and `Lane` (lane-scoped via guards); recoveries fuse into worker runs: happy path at parity with plain stages, error path 2x faster `[maint] [perf]`
 - [x] **`executeAsync()` returning `CompletableFuture<T>`** — non-blocking endpoints by returning the future from the controller; `execute()` is now `executeAsync().join()`; single-call parity, 2.6x on 16 pipelined executions `[scale]`
 - [x] **Stage timeout in the fluent API** — `handle(name, fn, Duration)` on `NioFlow` and `Lane`; timeout failures are recoverable downstream; armed budget costs ~40% on that stage only (fusion break + orTimeout timer, by design) `[maint]`
+- [x] **Backpressure for `inject`/`justAll`** — `DefaultNioEngine(capacity, OverflowPolicy)`: BLOCK parks the producer, DROP discards (reported to error handlers), FAIL throws; admission happens BEFORE the execution runs, slots free on `await()`; uncontended cost at parity with unbounded `[scale]`
 - [x] **Boss safety invariants** — iterative `advance` (no stack overflow on deep chains), throwing predicates fail the value never the boss task `[scale]`
 - [x] **Quality harness** — JMH benchmarks (`tests/`), bug-hunting stress tests, Spring Boot showcase example `[maint]`
 
 ## 🚀 Ready (next up, in priority order)
 
-- [ ] **Backpressure for `inject`/`justAll`** — bounded in-flight queue with overflow policies (BLOCK / DROP / FAIL); today `inFlight` grows unbounded `[scale]`
 - [ ] **Metrics SPI + OpenTelemetry adapter** — per-stage latency, queue depth, executions in flight; `infrastructure/` package and the `compileOnly` otel dependency are already reserved for this `[maint] [scale]`
 
 ## 📋 Backlog
