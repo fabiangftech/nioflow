@@ -85,6 +85,10 @@ public class DefaultNioEngine implements NioEngine {
     // while the chain is being edited at runtime.
     private volatile List<Link> chain = List.of();
     private volatile boolean sealed;
+    // Execution plan compiled at seal() for the current chain version (null =
+    // interpreted). splice() recompiles; append() invalidates. Executions match
+    // it by chain identity, so local per-request chains simply fall back.
+    private volatile CompiledChain compiled;
     private final AtomicInteger decisionIds = new AtomicInteger();
     private final List<Consumer<Throwable>> errorHandlers = new CopyOnWriteArrayList<>();
     private final List<Consumer<Object>> completeHandlers = new CopyOnWriteArrayList<>();
@@ -174,8 +178,14 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain) {
-        Execution execution = new Execution(nextBoss(), List.copyOf(chain),
-                context != null ? context : new ConcurrentHashMap<>());
+        // The plan only applies to the exact chain version it was built for;
+        // execution-local chains (identity mismatch) fall back to interpreting.
+        CompiledChain plan = this.compiled;
+        if (plan != null && plan.links() != chain) {
+            plan = null;
+        }
+        Execution execution = new Execution(nextBoss(), plan != null ? chain : List.copyOf(chain),
+                context != null ? context : new ConcurrentHashMap<>(), plan);
         execution.boss.execute(() -> execution.advance(0, input));
         return execution.result.whenComplete((value, error) -> {
             if (execution.metrics != null) {
@@ -214,15 +224,19 @@ public class DefaultNioEngine implements NioEngine {
         List<Link> next = new ArrayList<>(chain);
         next.add(link);
         chain = List.copyOf(next);
+        compiled = null;
     }
 
     @Override
-    public void seal() {
+    public synchronized void seal() {
         sealed = true;
+        compiled = CompiledChain.compile(chain);
     }
 
     @Override
     public void release() {
+        // The chain itself is unchanged: the compiled plan stays valid until the
+        // next append() invalidates it.
         sealed = false;
     }
 
@@ -241,7 +255,10 @@ public class DefaultNioEngine implements NioEngine {
                 next.addAll(index, links);
             }
         }
-        chain = List.copyOf(next);
+        List<Link> edited = List.copyOf(next);
+        chain = edited;
+        // Runtime edits pay compilation once per edit, never per request.
+        compiled = sealed ? CompiledChain.compile(edited) : null;
     }
 
     @Override
@@ -351,6 +368,55 @@ public class DefaultNioEngine implements NioEngine {
     }
 
     /**
+     * Dispatch plan precomputed once per chain version (at seal() and after
+     * each splice) instead of rescanned per execution. For every no-timeout
+     * Stage it records the static fusion window [i, runEnds[i]) — bounded
+     * conservatively at the first link that can never fuse (Decision,
+     * Background, timeout Stage) — and, when NO link in the window carries
+     * guards, the precollected runs[i] array: those dispatches do zero
+     * scanning and zero allocation. Windows containing guarded links keep the
+     * per-execution guard selection, just bounded to the window.
+     */
+    private record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds) {
+
+        static CompiledChain compile(List<Link> links) {
+            int size = links.size();
+            Link[][] runs = new Link[size][];
+            int[] runEnds = new int[size];
+            for (int i = 0; i < size; i++) {
+                if (!(links.get(i) instanceof Stage stage) || stage.timeout() != null) {
+                    continue;
+                }
+                int end = i + 1;
+                while (end < size && staticallyFusable(links.get(end))) {
+                    end++;
+                }
+                runEnds[i] = end;
+                if (unguarded(links, i, end)) {
+                    runs[i] = links.subList(i, end).toArray(Link[]::new);
+                }
+            }
+            return new CompiledChain(links, runs, runEnds);
+        }
+
+        private static boolean staticallyFusable(Link link) {
+            return link instanceof Filter
+                    || link instanceof Recovery
+                    || (link instanceof Stage stage && stage.timeout() == null);
+        }
+
+        private static boolean unguarded(List<Link> links, int from, int to) {
+            for (int i = from; i < to; i++) {
+                List<Guard> guards = links.get(i).guards();
+                if (guards != null && !guards.isEmpty()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
      * One execution per request: chain snapshot, decisions and result of its own,
      * pinned to one boss. Orchestration (advance/recover) always runs on that
      * boss; user code from Stage/Background/Recovery runs on the workers.
@@ -362,6 +428,8 @@ public class DefaultNioEngine implements NioEngine {
         private final Map<String, Object> context;
         private final Map<Integer, Boolean> decisions = new HashMap<>();
         private final CompletableFuture<Object> result = new CompletableFuture<>();
+        // Precompiled dispatch plan for this exact chain version; null = interpret.
+        private final CompiledChain plan;
         // Snapshot of the installed metrics for this execution; null = untimed.
         private final NioFlowMetrics metrics;
         private final long startNanos;
@@ -369,10 +437,12 @@ public class DefaultNioEngine implements NioEngine {
         // handler on that same thread.
         private boolean filtered;
 
-        private Execution(ExecutorService boss, List<Link> links, Map<String, Object> context) {
+        private Execution(ExecutorService boss, List<Link> links, Map<String, Object> context,
+                          CompiledChain plan) {
             this.boss = boss;
             this.links = links;
             this.context = context;
+            this.plan = plan;
             this.metrics = DefaultNioEngine.this.metrics;
             this.startNanos = metrics != null ? System.nanoTime() : 0;
         }
@@ -436,29 +506,42 @@ public class DefaultNioEngine implements NioEngine {
                 dispatchWithTimeout(first, index + 1, value);
                 return;
             }
-            List<Link> run = null;
-            int next = index + 1;
-            while (next < links.size()) {
-                Link link = links.get(next);
-                if (!passesGuards(link)) {
+            Link[] run;
+            int resume;
+            if (plan != null && plan.runs()[index] != null) {
+                // Precompiled unguarded run: zero scanning, zero allocation.
+                run = plan.runs()[index];
+                resume = plan.runEnds()[index];
+            } else {
+                // Interpreted scan (no plan, or the window contains guarded links
+                // whose selection depends on this execution's decisions), bounded
+                // to the precompiled window when one exists.
+                int limit = plan != null ? plan.runEnds()[index] : links.size();
+                List<Link> selected = null;
+                int next = index + 1;
+                while (next < limit) {
+                    Link link = links.get(next);
+                    if (!passesGuards(link)) {
+                        next++;
+                        continue;
+                    }
+                    boolean fusable = link instanceof Filter
+                            || link instanceof Recovery
+                            || (link instanceof Stage stage && stage.timeout() == null);
+                    if (!fusable) {
+                        break;
+                    }
+                    if (selected == null) {
+                        selected = new ArrayList<>();
+                        selected.add(first);
+                    }
+                    selected.add(link);
                     next++;
-                    continue;
                 }
-                boolean fusable = link instanceof Filter
-                        || link instanceof Recovery
-                        || (link instanceof Stage stage && stage.timeout() == null);
-                if (!fusable) {
-                    break;
-                }
-                if (run == null) {
-                    run = new ArrayList<>();
-                    run.add(first);
-                }
-                run.add(link);
-                next++;
+                resume = next;
+                run = selected == null ? null : selected.toArray(Link[]::new);
             }
-            int resume = next;
-            CompletableFuture<Object> task = run == null
+            CompletableFuture<Object> task = run == null || run.length == 1
                     ? CompletableFuture.supplyAsync(() -> timedApply(first, value), workersExecutorService)
                     : fusedTask(run, value);
             task.whenCompleteAsync((nextValue, error) -> {
@@ -473,14 +556,14 @@ public class DefaultNioEngine implements NioEngine {
             }, boss);
         }
 
-        private CompletableFuture<Object> fusedTask(List<Link> run, Object value) {
+        private CompletableFuture<Object> fusedTask(Link[] run, Object value) {
             return CompletableFuture.supplyAsync(() -> {
                 Object current = value;
-                for (int i = 0; i < run.size(); i++) {
+                for (int i = 0; i < run.length; i++) {
                     try {
-                        if (run.get(i) instanceof Stage stage) {
+                        if (run[i] instanceof Stage stage) {
                             current = timedApply(stage, current);
-                        } else if (run.get(i) instanceof Filter filter && !filter.predicate().test(current)) {
+                        } else if (run[i] instanceof Filter filter && !filter.predicate().test(current)) {
                             return FILTERED;
                         }
                         // Recovery: skipped on the happy path
@@ -492,8 +575,8 @@ public class DefaultNioEngine implements NioEngine {
                         Throwable pending = error;
                         int next = i + 1;
                         boolean recovered = false;
-                        while (next < run.size()) {
-                            if (run.get(next) instanceof Recovery recovery) {
+                        while (next < run.length) {
+                            if (run[next] instanceof Recovery recovery) {
                                 try {
                                     current = recovery.function().apply(pending);
                                     if (metrics != null) {
