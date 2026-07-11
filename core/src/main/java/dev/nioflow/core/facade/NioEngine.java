@@ -41,5 +41,12 @@ public interface NioEngine {
 
     Object await(Duration timeout);
 
-    void shutdown(Duration gracePeriod);
+    /**
+     * Graceful drain: stops accepting new work immediately (call/inject are
+     * rejected), waits up to the grace period for in-flight executions to
+     * finish, and returns how many were still running when it gave up
+     * (0 = clean drain). Engine-owned executors are terminated afterwards;
+     * JVM-shared executors survive and stragglers complete on their own.
+     */
+    int shutdown(Duration gracePeriod);
 }

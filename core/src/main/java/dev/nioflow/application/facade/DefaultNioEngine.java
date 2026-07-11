@@ -83,6 +83,12 @@ public class DefaultNioEngine implements NioEngine {
     // Metrics SPI: null (default) means zero instrumentation on the hot path.
     private volatile NioFlowMetrics metrics;
 
+    // Graceful drain: closed rejects new work; activeExecutions tracks
+    // in-flight ones so shutdown() can wait for them to finish.
+    private volatile boolean closed;
+    private final AtomicInteger activeExecutions = new AtomicInteger();
+    private final Object drainLock = new Object();
+
     // Immutable list swapped atomically: in-flight calls keep their snapshot even
     // while the chain is being edited at runtime.
     private volatile List<Link> chain = List.of();
@@ -127,6 +133,11 @@ public class DefaultNioEngine implements NioEngine {
     @Override
     public void inject(Object input, Map<String, Object> context) {
         NioFlowMetrics metrics = this.metrics;
+        if (closed) {
+            errorHandlers.forEach(handler -> handler.accept(
+                    new RejectedExecutionException("Engine is shut down; value rejected")));
+            return;
+        }
         if (!admit()) {
             // DROP: the value never runs; observable through the error handlers.
             RejectedExecutionException rejection = new RejectedExecutionException(
@@ -180,6 +191,12 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain) {
+        if (closed) {
+            RejectedExecutionException rejection =
+                    new RejectedExecutionException("Engine is shut down; call rejected");
+            errorHandlers.forEach(handler -> handler.accept(rejection));
+            return CompletableFuture.failedFuture(rejection);
+        }
         // The plan only applies to the exact chain version it was built for;
         // execution-local chains (identity mismatch) fall back to interpreting.
         CompiledChain plan = this.compiled;
@@ -188,8 +205,14 @@ public class DefaultNioEngine implements NioEngine {
         }
         Execution execution = new Execution(nextBoss(), plan != null ? chain : List.copyOf(chain),
                 context != null ? context : new ConcurrentHashMap<>(), plan);
+        activeExecutions.incrementAndGet();
         execution.boss.execute(() -> execution.advance(0, input));
         return execution.result.whenComplete((value, error) -> {
+            if (activeExecutions.decrementAndGet() == 0) {
+                synchronized (drainLock) {
+                    drainLock.notifyAll();
+                }
+            }
             if (execution.metrics != null) {
                 long elapsed = System.nanoTime() - execution.startNanos;
                 if (error != null) {
@@ -315,32 +338,56 @@ public class DefaultNioEngine implements NioEngine {
     }
 
     @Override
-    public void shutdown(Duration gracePeriod) {
-        if (!ownsExecutors) {
-            // JVM-shared executors outlive the engine: shutting one flow down must
-            // never starve the others.
-            return;
-        }
-        for (ExecutorService boss : bossExecutorServices) {
-            boss.shutdown();
-        }
-        workersExecutorService.shutdown();
-        try {
-            if (!workersExecutorService.awaitTermination(gracePeriod.toMillis(), TimeUnit.MILLISECONDS)) {
-                workersExecutorService.shutdownNow();
-            }
+    public int shutdown(Duration gracePeriod) {
+        // 1. Stop accepting: call/inject reject from this point on.
+        closed = true;
+        // 2. Drain: wait up to the grace period for in-flight executions.
+        int pending = awaitDrain(gracePeriod);
+        // 3. Engine-owned executors are terminated; JVM-shared ones outlive the
+        //    engine (shutting one flow down must never starve the others) and
+        //    stragglers complete on their own threads.
+        if (ownsExecutors) {
             for (ExecutorService boss : bossExecutorServices) {
-                if (!boss.awaitTermination(gracePeriod.toMillis(), TimeUnit.MILLISECONDS)) {
+                boss.shutdown();
+            }
+            workersExecutorService.shutdown();
+            try {
+                if (!workersExecutorService.awaitTermination(gracePeriod.toMillis(), TimeUnit.MILLISECONDS)) {
+                    workersExecutorService.shutdownNow();
+                }
+                for (ExecutorService boss : bossExecutorServices) {
+                    if (!boss.awaitTermination(gracePeriod.toMillis(), TimeUnit.MILLISECONDS)) {
+                        boss.shutdownNow();
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                workersExecutorService.shutdownNow();
+                for (ExecutorService boss : bossExecutorServices) {
                     boss.shutdownNow();
                 }
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            workersExecutorService.shutdownNow();
-            for (ExecutorService boss : bossExecutorServices) {
-                boss.shutdownNow();
+        }
+        return pending;
+    }
+
+    private int awaitDrain(Duration gracePeriod) {
+        long deadline = System.nanoTime() + gracePeriod.toNanos();
+        synchronized (drainLock) {
+            while (activeExecutions.get() > 0) {
+                long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (remainingMillis <= 0) {
+                    break;
+                }
+                try {
+                    drainLock.wait(remainingMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
         }
+        return activeExecutions.get();
     }
 
     private ExecutorService nextBoss() {
