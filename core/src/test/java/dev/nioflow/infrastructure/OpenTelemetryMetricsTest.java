@@ -5,6 +5,7 @@ import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.OverflowPolicy;
 import io.opentelemetry.sdk.metrics.SdkMeterProvider;
+import io.opentelemetry.sdk.metrics.data.LongPointData;
 import io.opentelemetry.sdk.metrics.data.MetricData;
 import io.opentelemetry.sdk.testing.exporter.InMemoryMetricReader;
 import org.junit.jupiter.api.Test;
@@ -59,7 +60,7 @@ class OpenTelemetryMetricsTest {
 
     private static long sum(MetricData metric) {
         return metric.getLongSumData().getPoints().stream()
-                .mapToLong(point -> point.getValue())
+                .mapToLong(LongPointData::getValue)
                 .sum();
     }
 
@@ -105,6 +106,6 @@ class OpenTelemetryMetricsTest {
         if (data == null) {
             return 0;
         }
-        return data.getLongSumData().getPoints().stream().mapToLong(point -> point.getValue()).sum();
+        return data.getLongSumData().getPoints().stream().mapToLong(LongPointData::getValue).sum();
     }
 }

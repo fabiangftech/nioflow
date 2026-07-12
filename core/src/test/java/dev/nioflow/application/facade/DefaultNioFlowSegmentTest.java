@@ -36,7 +36,7 @@ class DefaultNioFlowSegmentTest {
 
         String result = flow.just(5)
                 .use(describe)
-                .handle(value -> value.toUpperCase())
+                .handle(String::toUpperCase)
                 .execute();
 
         assertEquals("VALUE:6", result);

@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class DefaultNioFlowAsyncTest {
 
     @Test
-    void executeAsyncReturnsImmediatelyWithoutBlockingTheCaller() throws Exception {
+    void executeAsyncReturnsImmediatelyWithoutBlockingTheCaller() {
         var gate = new CountDownLatch(1);
         NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
 

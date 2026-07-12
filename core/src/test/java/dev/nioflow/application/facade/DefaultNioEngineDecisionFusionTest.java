@@ -42,8 +42,6 @@ class DefaultNioEngineDecisionFusionTest extends EngineTestSupport {
         engine.seal();
 
         assertEquals(41, flow.just(4).execute());
-        // One fused dispatch = one virtual worker thread for lane AND tail;
-        // without fusion across the case-2 Decision they are two tasks.
         assertSame(laneThread.get(), tailThread.get());
     }
 
