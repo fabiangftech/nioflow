@@ -22,6 +22,7 @@ import dev.nioflow.core.model.Stage;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -98,7 +100,10 @@ public class DefaultNioEngine implements NioEngine {
     private final int inFlightCapacity;
 
     // Metrics SPI: null (default) means zero instrumentation on the hot path.
-    private volatile NioFlowMetrics metrics;
+    // AtomicReference for the publication semantics (a plain volatile field of a
+    // non-primitive type is what SonarQube's S3077 flags); readers snapshot it
+    // once with get() and use that reference for the whole execution.
+    private final AtomicReference<NioFlowMetrics> metrics = new AtomicReference<>();
 
     // Graceful drain: closed rejects new work; activeExecutions tracks
     // in-flight ones so shutdown() can wait for them to finish.
@@ -193,7 +198,7 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public void inject(Object input, Map<String, Object> context) {
-        NioFlowMetrics metrics = this.metrics;
+        NioFlowMetrics metrics = this.metrics.get();
         if (closed) {
             notifyError(new RejectedExecutionException("Engine is shut down; value rejected"));
             return;
@@ -284,7 +289,7 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public void metrics(NioFlowMetrics metrics) {
-        this.metrics = metrics;
+        this.metrics.set(metrics);
     }
 
     @Override
@@ -421,7 +426,7 @@ public class DefaultNioEngine implements NioEngine {
         try {
             CompletableFuture<Object> pending = inFlight.take();
             releasePermit();
-            NioFlowMetrics metrics = this.metrics;
+            NioFlowMetrics metrics = this.metrics.get();
             if (metrics != null) {
                 metrics.queueDepth(inFlight.size());
             }
@@ -607,6 +612,36 @@ public class DefaultNioEngine implements NioEngine {
                 }
             }
             return new CompiledChain(links, runs, runEnds, DefaultNioEngine.maxDecisionId(links));
+        }
+
+        // The record's generated equals/hashCode/toString would compare the two
+        // array components by reference, which never matches the value semantics
+        // a record promises. The engine only ever compares plans by identity
+        // (plan.links() != chain), so these exist to keep the contract honest.
+        @Override
+        public boolean equals(Object other) {
+            return this == other
+                    || other instanceof CompiledChain that
+                    && maxDecisionId == that.maxDecisionId
+                    && links.equals(that.links)
+                    && Arrays.deepEquals(runs, that.runs)
+                    && Arrays.equals(runEnds, that.runEnds);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = links.hashCode();
+            result = 31 * result + Arrays.deepHashCode(runs);
+            result = 31 * result + Arrays.hashCode(runEnds);
+            return 31 * result + maxDecisionId;
+        }
+
+        @Override
+        public String toString() {
+            return "CompiledChain[links=" + links
+                    + ", runs=" + Arrays.deepToString(runs)
+                    + ", runEnds=" + Arrays.toString(runEnds)
+                    + ", maxDecisionId=" + maxDecisionId + "]";
         }
 
         private static boolean staticallyFusable(Link link) {
@@ -802,7 +837,7 @@ public class DefaultNioEngine implements NioEngine {
             this.decisionBits = maxDecision >= 0 && maxDecision <= MAX_BITSET_DECISION_ID
                     ? new long[(maxDecision >>> 5) + 1]
                     : null;
-            this.metrics = DefaultNioEngine.this.metrics;
+            this.metrics = DefaultNioEngine.this.metrics.get();
             this.startNanos = metrics != null ? System.nanoTime() : 0;
         }
 
