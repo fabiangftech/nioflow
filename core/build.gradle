@@ -1,9 +1,10 @@
 plugins {
     id 'java'
+    id 'com.vanniktech.maven.publish' version '0.37.0'
 }
 
 group = 'dev.nioflow'
-version = '1.0.0'
+version = findProperty('releaseVersion') ?: '1.0.0'
 
 repositories {
     mavenCentral()
@@ -24,4 +25,45 @@ dependencies {
 
 test {
     useJUnitPlatform()
+}
+
+// A missing @param must not turn a release red.
+tasks.withType(Javadoc).configureEach {
+    options.addStringOption('Xdoclint:none', '-quiet')
+    options.addStringOption('encoding', 'UTF-8')
+}
+
+mavenPublishing {
+    // rootProject.name is 'core'; the published artifact is the one the docs promise
+    coordinates('dev.nioflow', 'nioflow-core', version.toString())
+
+    publishToMavenCentral()
+    signAllPublications()
+
+    pom {
+        name = 'nio-flow'
+        description = 'A fluent, typed pipeline API over an event-loop engine: boss threads orchestrate, virtual-thread workers run user code.'
+        url = 'https://nioflow.dev'
+        inceptionYear = '2026'
+
+        licenses {
+            license {
+                name = 'The Apache License, Version 2.0'
+                url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                distribution = 'repo'
+            }
+        }
+        developers {
+            developer {
+                id = 'fabiangftech'
+                name = 'Fabián Guamán'
+                url = 'https://github.com/fabiangftech'
+            }
+        }
+        scm {
+            url = 'https://github.com/fabiangftech/nioflow'
+            connection = 'scm:git:https://github.com/fabiangftech/nioflow.git'
+            developerConnection = 'scm:git:ssh://git@github.com/fabiangftech/nioflow.git'
+        }
+    }
 }
