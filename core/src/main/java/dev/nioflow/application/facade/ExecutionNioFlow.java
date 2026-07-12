@@ -81,9 +81,15 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
         return this;
     }
 
+    @Override
+    public NioFlow<I, T> key(Object key) {
+        state.key = key;
+        return this;
+    }
+
     private CompletableFuture<Object> rawFuture() {
         List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
-        CompletableFuture<Object> raw = state.nioEngine.call(state.seed, null, chain);
+        CompletableFuture<Object> raw = state.nioEngine.call(state.seed, null, chain, state.key);
         if (state.onComplete == null && state.onError == null) {
             // Pay for what you use: no callbacks, no dependent future.
             return raw;
@@ -146,6 +152,8 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
         // andThen si se registran varios. Compartidos con las vistas de lane.
         private Consumer<Object> onComplete;
         private Consumer<Throwable> onError;
+        // Clave de orden (null = sin orden): misma clave → mismo boss, FIFO.
+        private Object key;
 
         private State(NioEngine nioEngine, Object seed) {
             this.nioEngine = nioEngine;

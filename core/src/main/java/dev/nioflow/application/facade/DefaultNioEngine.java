@@ -20,6 +20,7 @@ import dev.nioflow.core.model.Splice;
 import dev.nioflow.core.model.Stage;
 
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -116,6 +117,16 @@ public class DefaultNioEngine implements NioEngine {
     // One in-flight group per Batch link instance (identity equality by
     // design): executions from ANY boss park here until size or window.
     private final ConcurrentHashMap<Batch, BatchGroup> batchGroups = new ConcurrentHashMap<>();
+    // FIFO lane per active business key. The map is concurrent because
+    // different keys live on different bosses; each lane's INTERNALS are
+    // only touched by its key's boss (deterministic affinity), and the
+    // entry is removed as soon as the lane drains — no key leak.
+    private final ConcurrentHashMap<Object, KeyLane> keyLanes = new ConcurrentHashMap<>();
+
+    private static final class KeyLane {
+        private final ArrayDeque<Execution> waiting = new ArrayDeque<>();
+        private boolean active;
+    }
 
     public DefaultNioEngine() {
         this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, 0, OverflowPolicy.BLOCK);
@@ -228,6 +239,11 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain) {
+        return call(input, context, chain, null);
+    }
+
+    @Override
+    public CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain, Object key) {
         if (closed) {
             RejectedExecutionException rejection =
                     new RejectedExecutionException("Engine is shut down; call rejected");
@@ -243,8 +259,8 @@ public class DefaultNioEngine implements NioEngine {
         // The raw result future goes straight to the caller: bookkeeping
         // (drain slot, metrics, handlers) runs inside Execution BEFORE the
         // future completes, so no dependent whenComplete future is allocated.
-        Execution execution = new Execution(nextBoss(), plan != null ? chain : List.copyOf(chain),
-                context, plan, input);
+        Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
+                plan != null ? chain : List.copyOf(chain), context, plan, input, key);
         activeExecutions.incrementAndGet();
         try {
             execution.boss.execute(execution);
@@ -441,11 +457,22 @@ public class DefaultNioEngine implements NioEngine {
         }
     }
 
+    // Test hook: drained key lanes must disappear (no key leak).
+    int activeKeyLanes() {
+        return keyLanes.size();
+    }
+
     private ExecutorService nextBoss() {
         if (bossExecutorServices.length == 1) {
             return bossExecutorServices[0];
         }
         return bossExecutorServices[Math.floorMod(bossCursor.getAndIncrement(), bossExecutorServices.length)];
+    }
+
+    // Deterministic affinity: the same key always lands on the same boss, so
+    // its lane state is only ever touched by one thread — no locks.
+    private ExecutorService bossFor(Object key) {
+        return bossExecutorServices[Math.floorMod(key.hashCode(), bossExecutorServices.length)];
     }
 
     private static int anchorIndex(List<Link> links, String anchor) {
@@ -670,6 +697,13 @@ public class DefaultNioEngine implements NioEngine {
         private final ExecutorService boss;
         private final List<Link> links;
         private final Object input;
+        // Non-null = ordered lane: executions of this key run one at a time,
+        // in submission order, all on the same boss.
+        private final Object key;
+        // True only while this execution HOLDS its key's lane: a keyed
+        // execution that failed before enrolling (submission rejected at
+        // shutdown) must not release a lane it never took.
+        private boolean laneHeld;
         // Per-execution context: null until a contextual stage puts the first
         // entry (or the caller handed a map to call/inject). Stage
         // applications are serialized by the executor handoffs — one
@@ -695,12 +729,13 @@ public class DefaultNioEngine implements NioEngine {
         private final long startNanos;
 
         private Execution(ExecutorService boss, List<Link> links, Map<String, Object> context,
-                          CompiledChain plan, Object input) {
+                          CompiledChain plan, Object input, Object key) {
             this.boss = boss;
             this.links = links;
             this.context = context;
             this.plan = plan;
             this.input = input;
+            this.key = key;
             int maxDecision = plan != null ? plan.maxDecisionId() : maxDecisionId(links);
             this.decisionBits = maxDecision >= 0 && maxDecision <= MAX_BITSET_DECISION_ID
                     ? new long[(maxDecision >>> 5) + 1]
@@ -711,7 +746,39 @@ public class DefaultNioEngine implements NioEngine {
 
         @Override
         public void run() {
-            advance(0, input);
+            // Runs on this execution's boss. Keyed executions enroll in
+            // their key's FIFO lane; only the lane's head advances.
+            if (key == null) {
+                advance(0, input);
+                return;
+            }
+            KeyLane lane = keyLanes.computeIfAbsent(key, ignored -> new KeyLane());
+            if (lane.active) {
+                lane.waiting.add(this);
+            } else {
+                lane.active = true;
+                laneHeld = true;
+                advance(0, input);
+            }
+        }
+
+        // Called exactly once from complete()/fail(): hand the lane to the
+        // next same-key execution, or retire it. Normally on the key's boss;
+        // the only off-boss caller is the shutdown-rejection path, where the
+        // boss is gone and nothing can race — the successor unwinds through
+        // the same rejections until the lane drains.
+        private void releaseKey() {
+            KeyLane lane = keyLanes.get(key);
+            if (lane == null) {
+                return;
+            }
+            Execution next = lane.waiting.poll();
+            if (next == null) {
+                keyLanes.remove(key);
+            } else {
+                next.laneHeld = true;
+                next.advance(0, next.input);
+            }
         }
 
         /**
@@ -727,6 +794,9 @@ public class DefaultNioEngine implements NioEngine {
             finished = true;
             finishBookkeeping(value, null);
             result.complete(value);
+            if (laneHeld) {
+                releaseKey();
+            }
         }
 
         private void fail(Throwable error) {
@@ -736,6 +806,9 @@ public class DefaultNioEngine implements NioEngine {
             finished = true;
             finishBookkeeping(null, unwrap(error));
             result.completeExceptionally(error);
+            if (laneHeld) {
+                releaseKey();
+            }
         }
 
         private void finishBookkeeping(Object value, Throwable error) {

@@ -19,6 +19,14 @@ public interface NioEngine {
 
     CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain);
 
+    /**
+     * Keyed call: executions sharing a (non-null) key are pinned to the same
+     * boss and processed strictly one at a time, in submission order —
+     * Kafka-partition style ordering per business key. Distinct keys keep
+     * full parallelism; a null key behaves exactly like the unkeyed call.
+     */
+    CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain, Object key);
+
     List<Link> chain();
 
     void append(Link link);

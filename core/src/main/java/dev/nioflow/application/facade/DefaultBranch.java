@@ -171,6 +171,11 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     }
 
     @Override
+    public NioFlow<I, T> key(Object key) {
+        return flow.key(key);
+    }
+
+    @Override
     public Condition<I, T> when(Predicate<T> predicate) {
         return flow.when(predicate);
     }

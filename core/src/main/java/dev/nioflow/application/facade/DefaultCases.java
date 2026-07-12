@@ -180,6 +180,11 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     }
 
     @Override
+    public NioFlow<I, T> key(Object key) {
+        return flow.key(key);
+    }
+
+    @Override
     public Condition<I, T> when(Predicate<T> predicate) {
         return flow.when(predicate);
     }

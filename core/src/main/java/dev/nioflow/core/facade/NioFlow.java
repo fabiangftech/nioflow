@@ -146,6 +146,17 @@ public interface NioFlow<I, T> {
      */
     NioFlow<I, T> onError(Consumer<Throwable> callback);
 
+    /**
+     * Orders this execution by business key, Kafka-partition style:
+     * executions sharing a (non-null) key run strictly one at a time in
+     * submission order, pinned to the same boss; distinct keys keep full
+     * parallelism. Only meaningful on a just() execution — the shared
+     * definition has no execution to key. A slow execution delays the
+     * NEXT ones of its own key only (head-of-line by design; a stage
+     * timeout bounds it).
+     */
+    NioFlow<I, T> key(Object key);
+
     Condition<I, T> when(Predicate<T> predicate);
 
     Cases<I, T> match();

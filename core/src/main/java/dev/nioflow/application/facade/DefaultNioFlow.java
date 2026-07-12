@@ -75,6 +75,11 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
     }
 
     @Override
+    public NioFlow<I, T> key(Object key) {
+        throw new IllegalStateException("key() orders one execution; start it with just(input) first");
+    }
+
+    @Override
     public T execute() {
         throw new IllegalStateException("This flow has no input; start an execution with just(input)");
     }
