@@ -5,6 +5,7 @@ import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.LaneCases;
 import dev.nioflow.core.facade.LaneCondition;
 import dev.nioflow.core.facade.Segment;
+import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
@@ -54,6 +55,12 @@ class DefaultLane<T> implements Lane<T> {
     @Override
     public Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
         view.handle(name, function, timeout, retry);
+        return this;
+    }
+
+    @Override
+    public Lane<T> handle(String name, Function<T, T> function, RateLimit rateLimit) {
+        view.handle(name, function, rateLimit);
         return this;
     }
 

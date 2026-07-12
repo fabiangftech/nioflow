@@ -9,6 +9,7 @@ import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Guard;
+import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
@@ -75,6 +76,11 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
         return flow.handle(name, function, timeout, retry);
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, RateLimit rateLimit) {
+        return flow.handle(name, function, rateLimit);
     }
 
     @Override

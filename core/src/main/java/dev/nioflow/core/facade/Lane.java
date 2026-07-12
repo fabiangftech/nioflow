@@ -1,5 +1,6 @@
 package dev.nioflow.core.facade;
 
+import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
@@ -25,6 +26,11 @@ public interface Lane<T> {
     Lane<T> handle(String name, Function<T, T> function, Retry retry);
 
     Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
+
+    /**
+     * Rate-limited stage; see NioFlow#handle(String, Function, RateLimit).
+     */
+    Lane<T> handle(String name, Function<T, T> function, RateLimit rateLimit);
 
     /**
      * Context-aware stage; see NioFlow#handleContextual for the contract.

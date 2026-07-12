@@ -1,5 +1,6 @@
 package dev.nioflow.core.facade;
 
+import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
@@ -43,6 +44,15 @@ public interface NioFlow<I, T> {
     NioFlow<I, T> handle(String name, Function<T, T> function, Retry retry);
 
     NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
+
+    /**
+     * Rate-limited stage: acquires a token from the bucket before each
+     * application, parking the (virtual) worker until one is due — the boss
+     * never waits, fusion is preserved, and the wait shows up in the stage's
+     * latency metric. Pass the SAME RateLimit instance to several stages to
+     * protect one downstream dependency behind all of them.
+     */
+    NioFlow<I, T> handle(String name, Function<T, T> function, RateLimit rateLimit);
 
     /**
      * Context-aware stage: besides the value it receives the typed

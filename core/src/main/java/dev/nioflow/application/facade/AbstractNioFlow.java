@@ -12,6 +12,7 @@ import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
+import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Retry;
 import dev.nioflow.core.model.Stage;
@@ -70,6 +71,19 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     @Override
     public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
         appendLink(new Stage(name, asObjectFunction(function), false, timeout, retry, guards()));
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, T> handle(String name, Function<T, T> function, RateLimit rateLimit) {
+        Function<Object, Object> body = asObjectFunction(function);
+        // The acquire runs where the stage runs — a virtual worker — so the
+        // wait parks cheaply, never blocks the boss, and fuses like any
+        // other no-timeout stage.
+        appendLink(new Stage(name, value -> {
+            rateLimit.acquire();
+            return body.apply(value);
+        }, false, null, null, guards()));
         return this;
     }
 
