@@ -9,7 +9,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='16' r='6' fill='%234F46E5'/><circle cx='23' cy='16' r='6' fill='%230891B2'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
   <style>
     :root {
@@ -22,7 +22,7 @@
       --boss-soft: #EEF2FF;
       --worker: #0891B2;    /* execution: cyan        */
       --worker-soft: #E0F7FA;
-      --display: 'Space Grotesk', sans-serif;
+      --display: 'Inter', -apple-system, sans-serif;
       --body: 'Inter', -apple-system, sans-serif;
       --mono: 'JetBrains Mono', ui-monospace, monospace;
 
@@ -50,9 +50,9 @@
     }
     section.cover h1 {
       font-family: var(--display);
-      font-weight: 700;
-      font-size: clamp(2.6rem, 7vw, 4.2rem);
-      letter-spacing: -0.03em;
+      font-weight: 800;
+      font-size: clamp(2.5rem, 6.5vw, 3.9rem);
+      letter-spacing: -0.045em;
       color: var(--ink);
       margin: 0 0 4px;
     }
@@ -164,20 +164,82 @@
       .pipeline .link::after { animation: none; opacity: 0; }
     }
 
+    /* ============ Navbar ============ */
+    nav.app-nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 58px;
+      margin: 0;
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      background: rgba(255, 255, 255, .85);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--line);
+      z-index: 40;
+    }
+    nav.app-nav::before {
+      content: '';
+      width: 22px;
+      height: 22px;
+      margin-right: 10px;
+      background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='16' r='6' fill='%234F46E5'/><circle cx='23' cy='16' r='6' fill='%230891B2'/></svg>") no-repeat center / contain;
+    }
+    nav.app-nav::after {
+      content: 'nio—flow';
+      order: -1;
+      margin-right: auto;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+    }
+    nav.app-nav::before { order: -2; }
+    nav.app-nav ul {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin: 0;
+      padding: 0;
+    }
+    nav.app-nav li { display: block; margin: 0; padding: 0; }
+    nav.app-nav li a {
+      display: block;
+      padding: 7px 13px;
+      border-radius: 8px;
+      color: var(--ink-soft);
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+    }
+    nav.app-nav li a:hover { background: var(--mist); color: var(--ink); }
+    nav.app-nav li a.active {
+      color: var(--boss);
+      background: var(--boss-soft);
+      border-bottom: none;
+    }
+    @media (max-width: 640px) {
+      nav.app-nav { padding: 0 14px; overflow-x: auto; }
+      nav.app-nav::after { display: none; }
+      nav.app-nav li a { padding: 7px 9px; font-size: 13px; }
+    }
+
+    /* Everything sits below the fixed bar */
+    section.cover { padding-top: 58px; box-sizing: border-box; }
+    .sidebar { top: 58px; }
+    .content { top: 58px; }
+
     /* ============ Sidebar ============ */
     .sidebar {
       background: var(--mist);
       border-right: 1px solid var(--line);
       padding: 28px 0 40px;
     }
-    .sidebar > h1 {
-      font-family: var(--display);
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      margin: 0 auto .5rem;
-    }
-    .sidebar > h1 a { color: var(--ink); font-size: 1.35rem; }
-    .sidebar > h1 a .flow-accent { color: var(--boss); }
+    /* The fixed navbar already carries the brand. */
+    .sidebar > h1 { display: none; }
     .sidebar ul li a {
       color: var(--ink-soft);
       font-size: 14px;
@@ -219,10 +281,11 @@
       letter-spacing: -0.02em;
       color: var(--ink);
     }
-    .markdown-section h1 { font-size: 2.1rem; font-weight: 700; }
+    .markdown-section h1 { font-size: 2rem; font-weight: 800; letter-spacing: -0.035em; }
     .markdown-section h2 {
-      font-size: 1.45rem;
-      font-weight: 600;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
       margin-top: 2.6em;
       padding-top: 1.2em;
       border-top: 1px solid var(--line);
@@ -353,10 +416,11 @@
 <script>
   window.$docsify = {
     name: 'nio<span class="flow-accent">—</span>flow',
-    repo: 'https://github.com/fabiangftech/nioflow',
     coverpage: true,
-    onlyCover: false,
+    onlyCover: true,
     loadSidebar: true,
+    loadNavbar: true,
+    alias: { '/overview': '/README.md' },
     subMaxLevel: 2,
     auto2top: true,
     search: {
@@ -380,6 +444,23 @@
         hook.doneEach(function () {
           if (window.mermaid) {
             window.mermaid.run({ querySelector: '.mermaid' });
+          }
+        });
+      },
+      // Docsify clears the navbar on the cover-only route; keep it there.
+      // Mirror of _navbar.md — update both together.
+      function (hook) {
+        var NAV = '<ul>'
+            + '<li><a href="#/overview" title="Overview">Overview</a></li>'
+            + '<li><a href="#/quickstart" title="Quickstart">Quickstart</a></li>'
+            + '<li><a href="#/api-reference" title="API reference">API reference</a></li>'
+            + '<li><a href="https://github.com/fabiangftech/nioflow" title="GitHub">GitHub</a></li>'
+            + '<li><a href="https://central.sonatype.com/artifact/dev.nioflow/nioflow-core" title="Maven Central">Maven Central</a></li>'
+            + '</ul>';
+        hook.doneEach(function () {
+          var nav = document.querySelector('nav.app-nav');
+          if (nav && !nav.querySelector('ul')) {
+            nav.innerHTML = NAV;
           }
         });
       }
