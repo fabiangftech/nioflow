@@ -46,12 +46,12 @@ benchmarks in `tests/` showing good results — no hot-path regressions.
 ## 🚀 Ready (next up, in priority order)
 
 1. [ ] **Timer wheel for stage timeouts** — replace per-call `orTimeout` scheduling (measured ~40% on timeout-armed stages) with a shared hashed timer wheel. Do BEFORE batching: the batch window will want this timer `[perf]`
-2. [ ] **Async stages** — launch a stage without awaiting and join later in the chain (needs its own marker on `Stage`; the old unused `async` flag became the `sync` boss-inline marker) `[scale]`
-3. [ ] **Batching** — `batch(size, window)` link: accumulate values and process them as one unit (bulk inserts, bulk API calls); the window timer rides on the timer wheel (#1) `[scale]`
-4. [ ] **Sharded/keyed execution** — pin executions with the same business key to the same boss for ordered processing per key (Kafka-partition style); builds on the dedicated pools from boss pool tuning (done) `[scale]`
-5. [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links) `[maint]`
-6. [ ] **Resilience4j adapter** — circuit breaker / bulkhead as stage decorators; the `compileOnly` dependency is already declared. With native rate limiting done, its scope is what stays external: circuit breaker + bulkhead `[scale]`
-7. [ ] **JMH regression gate in CI** — fail the build if a benchmark drops beyond a threshold vs the recorded baseline. Last on purpose: blocked until a CI pipeline exists (setting one up is part of the card) `[perf]`
+2. [ ] **Batching** — `batch(size, window)` link: accumulate values and process them as one unit (bulk inserts, bulk API calls); the window timer rides on the timer wheel (#1) `[scale]`
+3. [ ] **Sharded/keyed execution** — pin executions with the same business key to the same boss for ordered processing per key (Kafka-partition style); builds on the dedicated pools from boss pool tuning (done) `[scale]`
+4. [ ] **Splice regions** — REPLACE remembers named segments so a whole region can be swapped atomically (today splice targets single links) `[maint]`
+5. [ ] **Resilience4j adapter** — circuit breaker / bulkhead as stage decorators; the `compileOnly` dependency is already declared. With native rate limiting done, its scope is what stays external: circuit breaker + bulkhead `[scale]`
+6. [ ] **JMH regression gate in CI** — fail the build if a benchmark drops beyond a threshold vs the recorded baseline. Last on purpose: blocked until a CI pipeline exists (setting one up is part of the card) `[perf]`
+7. [ ] **Async stages** — launch a stage without awaiting and join later in the chain (needs its own marker on `Stage`; the old unused `async` flag became the `sync` boss-inline marker) `[scale]`
 
 ## 📋 Backlog
 
