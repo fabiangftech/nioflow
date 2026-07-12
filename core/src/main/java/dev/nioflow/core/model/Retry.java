@@ -32,6 +32,7 @@ public record Retry(int attempts, Duration backoff, double multiplier) {
 
     /** Delay before the next attempt, given how many attempts already ran. */
     public long delayNanos(int completedAttempts) {
-        return (long) (backoff.toNanos() * Math.pow(multiplier, completedAttempts - 1));
+        return (long) (backoff.toNanos()
+                       * Math.pow(multiplier, (double) completedAttempts - 1));
     }
 }
