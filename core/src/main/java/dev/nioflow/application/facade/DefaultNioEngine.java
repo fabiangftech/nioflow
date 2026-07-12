@@ -54,6 +54,10 @@ public class DefaultNioEngine implements NioEngine {
     // execute()/executeAsync() map it to null; executeResult() observes it.
     private static final Object FILTERED = FlowSignal.FILTERED;
 
+    // Internal to advance(): the link took the execution over (dispatched to a
+    // worker, forked, batched) or ended it, so the boss must stop walking.
+    private static final Object HANDED_OFF = new Object();
+
     /**
      * Executors shared by every engine in the JVM (commonPool style): a pool of
      * daemon boss threads plus one virtual-thread worker pool, no matter how many
@@ -910,55 +914,71 @@ public class DefaultNioEngine implements NioEngine {
             while (index < links.size()) {
                 Link link = links.get(index);
                 if (passesGuards(link)) {
+                    Object next;
                     try {
-                        switch (link) {
-                            case Stage stage -> {
-                                // Opt-in boss inline: a sync stage skips both thread
-                                // hops. timeout/retry force the dispatch path (they
-                                // need a worker); validation flags that combination.
-                                if (stage.sync() && stage.timeout() == null && stage.retry() == null) {
-                                    current = timedApply(stage, current);
-                                } else {
-                                    dispatch(index, current);
-                                    return; // the worker resumes on the boss when done
-                                }
-                            }
-                            case Decision decision -> recordDecision(decision.id(), decision.predicate().test(current));
-                            case Filter filter -> {
-                                if (!filter.predicate().test(current)) {
-                                    complete(FILTERED);
-                                    return;
-                                }
-                            }
-                            case Background background -> {
-                                Object snapshot = current;
-                                workersExecutorService.execute(() -> runBackground(background, snapshot));
-                            }
-                            case FanOut fanOut -> {
-                                dispatchFanOut(fanOut, index + 1, current);
-                                return; // the join resumes on the boss when all branches finish
-                            }
-                            case Batch batch -> {
-                                // Parks this execution in the link's shared group; the
-                                // flush (size or window) resumes it on ITS boss with
-                                // its own element of the bulk result.
-                                joinBatch(batch, index + 1, current);
-                                return;
-                            }
-                            case Recovery ignored -> {
-                                // Only applies on the error path (see recover)
-                            }
-                        }
+                        next = step(link, index, current);
                     } catch (Throwable error) {
                         // A throwing Decision/Filter predicate fails the value, never
                         // the boss task — otherwise the request future hangs forever.
                         recover(index + 1, error);
                         return;
                     }
+                    if (next == HANDED_OFF) {
+                        return;
+                    }
+                    current = next;
                 }
                 index++;
             }
             complete(current);
+        }
+
+        /**
+         * Runs one link on the boss and returns the value the next link sees, or
+         * HANDED_OFF when this link took the execution off the boss (worker
+         * dispatch, fan-out, batch) or ended it (a Filter cut) — the caller must
+         * then stop walking.
+         */
+        private Object step(Link link, int index, Object current) {
+            switch (link) {
+                case Stage stage -> {
+                    // Opt-in boss inline: a sync stage skips both thread hops.
+                    // timeout/retry force the dispatch path (they need a worker);
+                    // validation flags that combination.
+                    if (stage.sync() && stage.timeout() == null && stage.retry() == null) {
+                        return timedApply(stage, current);
+                    }
+                    dispatch(index, current); // the worker resumes on the boss when done
+                    return HANDED_OFF;
+                }
+                case Decision decision -> recordDecision(decision.id(), decision.predicate().test(current));
+                case Filter filter -> {
+                    if (!filter.predicate().test(current)) {
+                        complete(FILTERED);
+                        return HANDED_OFF;
+                    }
+                }
+                case Background background -> {
+                    Object snapshot = current;
+                    workersExecutorService.execute(() -> runBackground(background, snapshot));
+                }
+                case FanOut fanOut -> {
+                    // the join resumes on the boss when all branches finish
+                    dispatchFanOut(fanOut, index + 1, current);
+                    return HANDED_OFF;
+                }
+                case Batch batch -> {
+                    // Parks this execution in the link's shared group; the flush
+                    // (size or window) resumes it on ITS boss with its own element
+                    // of the bulk result.
+                    joinBatch(batch, index + 1, current);
+                    return HANDED_OFF;
+                }
+                case Recovery ignored -> {
+                    // Only applies on the error path (see recover)
+                }
+            }
+            return current;
         }
 
         /**

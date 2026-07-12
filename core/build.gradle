@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'jacoco'
     id 'com.vanniktech.maven.publish' version '0.37.0'
     id "org.sonarqube" version "7.3.1.8318"
 }
@@ -26,6 +27,15 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    finalizedBy jacocoTestReport
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true   // what Sonar reads
+        html.required = true  // build/reports/jacoco/test/html/index.html
+    }
 }
 
 // A missing @param must not turn a release red.
@@ -38,7 +48,14 @@ sonar {
     properties {
         property "sonar.projectKey", "fabiangftech_nioflow"
         property "sonar.organization", "guaman"
+        property "sonar.coverage.jacoco.xmlReportPaths",
+                layout.buildDirectory.file("reports/jacoco/test/jacocoTestReport.xml").get().asFile.path
     }
+}
+
+// `gradlew sonar` alone must still ship coverage: the analysis needs the XML.
+tasks.named('sonar') {
+    dependsOn jacocoTestReport
 }
 
 mavenPublishing {
