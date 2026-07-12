@@ -58,6 +58,13 @@ class SampleServiceTest {
     }
 
     @Test
+    void aFlowCanTakeOneTypeInAndGiveAnotherOut() {
+        // The bean is a NioFlow<Integer, String>: the shared chain applies VAT
+        // (1_000 -> 1_210 cents) and formats it; the service continues from String.
+        assertEquals("EUR 12.10 (VAT included)", sampleService.invoice(1_000));
+    }
+
+    @Test
     void matchIsFirstMatchWins() {
         assertTrue(sampleService.route(5_000).contains("manual review"));
         assertTrue(sampleService.route(500).contains("auto approved"));

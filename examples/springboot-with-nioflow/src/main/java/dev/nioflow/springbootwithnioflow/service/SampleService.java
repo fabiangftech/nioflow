@@ -53,16 +53,20 @@ public class SampleService {
     /** One downstream dependency, one bucket: 5 calls per second, shared by every stage that uses it. */
     private static final RateLimit PROVIDER_LIMIT = RateLimit.of(5, Duration.ofMillis(200));
 
-    // Each injection point gets its own flow (the bean is prototype-scoped).
+    // One shared definition per contract (see NioFlowConfig): each declares what
+    // just() takes and what execute() gives back. A flow with no shared steps
+    // starts at T = I — adapt() is what moves the output type, per request.
     private final NioFlow<String, String> greetingFlow;
-    private final NioFlow<Integer, Integer> numberFlow;
     private final NioFlow<String, String> textFlow;
     private final NioFlow<String, String> gatewayFlow;
     private final NioFlow<String, String> enrichFlow;
     private final NioFlow<String, String> bulkFlow;
+    private final NioFlow<Integer, Integer> numberFlow;
     private final NioFlow<Integer, Integer> orderedFlow;
-    // An empty flow starts with T = I: adapt() is what turns the Integer into a String.
     private final NioFlow<Integer, Integer> reportFlow;
+    // Input and output of different types: the SHARED chain adapts Integer -> String,
+    // so just() takes cents and everything chained after it starts from String.
+    private final NioFlow<Integer, String> invoiceFlow;
 
     // Observability for the tests and the demo endpoints.
     private final AtomicInteger bulkCalls = new AtomicInteger();
@@ -120,6 +124,18 @@ public class SampleService {
                 .adapt(item -> "  Report #" + item + "  ")   // Integer -> String
                 .use(NORMALIZE)                              // reusable piece, zero runtime cost
                 .execute();
+    }
+
+    /**
+     * 3b. A flow whose input and output are different types. The bean is a
+     * NioFlow&lt;Integer, String&gt;: just() takes cents, the shared chain applies VAT
+     * and formats them, and everything chained here continues from String — the
+     * generics say exactly what goes in and what comes out.
+     */
+    public String invoice(int cents) {
+        return invoiceFlow.just(cents)                 // Integer in
+                .handle("stamp", amount -> amount + " (VAT included)")   // already a String here
+                .execute();                            // String out
     }
 
     /** 4. match is first-match-wins: a small order never evaluates the "bulk" case. */

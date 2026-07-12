@@ -18,7 +18,7 @@ Receipt receipt = orders.just(request).execute();
 
 Every step is a **link** in an immutable chain. A pool of **boss threads** orchestrates each execution; your functions run on **virtual-thread workers**. The result is a pipeline that is:
 
-- **Typed end to end** — `NioFlow<I, T>` tracks the input type and the value's current type; `adapt` is the only step that changes it.
+- **Typed end to end** — `NioFlow<I, T>` is a promise: `just()` takes an `I`, `execute()` returns a `T`. A new flow is always `<I, I>`, only `adapt` moves the output type, and `just()` rejects an input of the wrong type — the generics cannot lie.
 - **Editable at runtime** — `splice` single links or swap whole named **regions** atomically; in-flight requests keep their snapshot and never notice. [Runtime editing →](runtime-editing.md)
 - **Resilient by composition** — rate limit → per-attempt timeout → retry → `recover()`, all native. [Resilience →](resilience.md)
 - **Built for load** — stage fusion, batching, per-key ordering, backpressure, dedicated event loops. [Scaling →](scaling.md)

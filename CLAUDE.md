@@ -92,7 +92,7 @@ Executors are JVM-wide singletons (`SharedExecutors` lazy holder, `commonPool()`
 
 The root `DefaultNioFlow` is the **shared definition** (a Spring singleton bean): `handle`/`background`/`adapt`/`filter` on it append to the engine's shared chain. `just(input)` opens an **independent ephemeral execution** (`ExecutionNioFlow`): it lazily copies the shared chain only if local links are added, and `execute()` runs it via `engine.call(input, context, chain)` — never sealing or mutating anything shared. That is why N concurrent requests can each do `just(...)...execute()` on the same bean.
 
-`just()` returns `NioFlow<I, T>` typed by the *pipeline's current type* (not the input's), so an `adapt` in the shared definition correctly types the steps chained after `just()`. The typed entry point is the factory:
+`just()` returns `NioFlow<I, T>` typed by the *pipeline's current type* (not the input's), so an `adapt` in the shared definition correctly types the steps chained after `just()`. **The type parameters are enforced, not decorative**: `DefaultNioFlow.from(Class<I>)` is the ONLY public way to open a root flow and it always yields `<I, I>` (the constructors are private — they used to let a caller claim an empty `DefaultNioFlow<Integer, String>`, a type that lies about what `execute()` returns). Only `adapt` — compile-checked — moves `T`. The `Class` token is kept, and `just`/`justAll` reject an input that is not an `I` with a clear `IllegalArgumentException`: that is the net for unchecked casts arriving from raw types or from frameworks that inject by generics (Spring happily resolves a `NioFlow<?, ?>` bean into ANY `NioFlow<X, Y>` field). The typed entry point is the factory:
 
 ```java
 @Bean(destroyMethod = "close")

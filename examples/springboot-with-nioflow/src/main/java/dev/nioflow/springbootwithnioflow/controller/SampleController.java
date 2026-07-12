@@ -42,6 +42,12 @@ public class SampleController {
         return this.sampleService.report(value);
     }
 
+    /** 3b. Different input and output types: cents in, formatted invoice out. */
+    @GetMapping("/invoice/{cents}")
+    public String invoice(@PathVariable int cents) {
+        return this.sampleService.invoice(cents);
+    }
+
     /** 4. match: the first case that hits wins. */
     @GetMapping("/route/{amount}")
     public String route(@PathVariable int amount) {

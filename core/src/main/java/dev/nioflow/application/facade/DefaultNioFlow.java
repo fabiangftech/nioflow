@@ -14,21 +14,34 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
+/**
+ * Root flow: the shared definition that owns the engine.
+ *
+ * <p>The two type parameters are a promise the API keeps: {@code I} is what
+ * {@link #just(Object)} accepts, {@code T} is what the pipeline holds at this
+ * point — so {@code execute()} returns {@code T}. A brand-new flow is always
+ * {@code <I, I>} (nothing has transformed the value yet) and ONLY
+ * {@link #adapt(java.util.function.Function)} — which the compiler checks —
+ * can move {@code T}. That is why the constructors are not public: they would
+ * let a caller claim a {@code DefaultNioFlow<Integer, String>} for an empty
+ * flow, a type that lies about what {@code execute()} really returns. Build
+ * root flows through {@link #from(Class)}.
+ */
 public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoCloseable {
 
     private final NioEngine nioEngine;
     private final AtomicInteger anonymousLinks;
     private final List<Guard> guards;
+    // The Class token from from(): lets just() reject a value that is not an I
+    // at the entry point, instead of failing as a ClassCastException inside a
+    // worker. Frameworks that inject by generics (Spring resolves a
+    // NioFlow<?, ?> bean into ANY NioFlow<X, Y> field) can hand this flow the
+    // wrong input; this is where that shows up, loudly.
+    private final Class<I> inputType;
 
-    public DefaultNioFlow() {
-        this(new DefaultNioEngine());
-    }
-
-    public DefaultNioFlow(NioEngine nioEngine) {
-        this(nioEngine, new AtomicInteger(), List.of());
-    }
-
-    private DefaultNioFlow(NioEngine nioEngine, AtomicInteger anonymousLinks, List<Guard> guards) {
+    private DefaultNioFlow(Class<I> inputType, NioEngine nioEngine, AtomicInteger anonymousLinks,
+                           List<Guard> guards) {
+        this.inputType = inputType;
         this.nioEngine = nioEngine;
         this.anonymousLinks = anonymousLinks;
         this.guards = guards;
@@ -39,11 +52,14 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
      * pipeline starts with T = I; only adapt() changes T from there on.
      */
     public static <I> DefaultNioFlow<I, I> from(Class<I> type) {
-        return new DefaultNioFlow<>();
+        return from(type, new DefaultNioEngine());
     }
 
     public static <I> DefaultNioFlow<I, I> from(Class<I> type, NioEngine nioEngine) {
-        return new DefaultNioFlow<>(nioEngine);
+        if (type == null) {
+            throw new IllegalArgumentException("The input type is required: it anchors what just() accepts");
+        }
+        return new DefaultNioFlow<>(boxed(type), nioEngine, new AtomicInteger(), List.of());
     }
 
     /**
@@ -53,12 +69,50 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
      */
     @Override
     public NioFlow<I, T> just(I input) {
+        checkInput(input);
         return new ExecutionNioFlow<>(nioEngine, input);
+    }
+
+    /**
+     * Guards the entry point against an input that is not an I — which the
+     * compiler cannot catch when the flow arrives through an unchecked cast
+     * (a raw type, or a framework injecting by generics).
+     */
+    private void checkInput(Object input) {
+        if (input != null && !inputType.isInstance(input)) {
+            throw new IllegalArgumentException("This flow accepts " + inputType.getName()
+                    + " as input, but got " + input.getClass().getName()
+                    + ". A NioFlow<I, T> declares I = what just() takes and T = what execute() returns;"
+                    + " build it with DefaultNioFlow.from(" + input.getClass().getSimpleName() + ".class).");
+        }
+    }
+
+    /** int.class.isInstance(5) is false: validate against the wrapper. */
+    @SuppressWarnings("unchecked")
+    private static <I> Class<I> boxed(Class<I> type) {
+        if (!type.isPrimitive()) {
+            return type;
+        }
+        Class<?> wrapper = switch (type.getName()) {
+            case "boolean" -> Boolean.class;
+            case "byte" -> Byte.class;
+            case "char" -> Character.class;
+            case "short" -> Short.class;
+            case "int" -> Integer.class;
+            case "long" -> Long.class;
+            case "float" -> Float.class;
+            case "double" -> Double.class;
+            default -> Object.class;   // void.class
+        };
+        return (Class<I>) wrapper;
     }
 
     @Override
     public NioFlow<I, T> justAll(Iterable<I> inputs) {
-        inputs.forEach(nioEngine::inject);
+        inputs.forEach(input -> {
+            checkInput(input);
+            nioEngine.inject(input);
+        });
         return this;
     }
 
@@ -136,7 +190,7 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
 
     @Override
     AbstractNioFlow<I, T> withGuards(List<Guard> guards) {
-        return new DefaultNioFlow<>(nioEngine, anonymousLinks, guards);
+        return new DefaultNioFlow<>(inputType, nioEngine, anonymousLinks, guards);
     }
 
     @Override
