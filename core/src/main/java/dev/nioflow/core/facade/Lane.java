@@ -67,6 +67,11 @@ public interface Lane<T> {
 
     <R> Lane<R> use(Segment<T, R> segment);
 
+    /**
+     * Embeds and remembers the span as a named region; see NioFlow#use.
+     */
+    <R> Lane<R> use(String region, Segment<T, R> segment);
+
     Lane<T> filter(Predicate<T> predicate);
 
     /**

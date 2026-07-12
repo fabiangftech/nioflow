@@ -87,6 +87,12 @@ final class ExecutionNioFlow<I, T> extends AbstractNioFlow<I, T> {
         return this;
     }
 
+    @Override
+    public <R> NioFlow<I, R> use(String region, dev.nioflow.core.facade.Segment<T, R> segment) {
+        throw new UnsupportedOperationException(
+                "Regions belong to the shared definition, not to a just() execution");
+    }
+
     private CompletableFuture<Object> rawFuture() {
         List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
         CompletableFuture<Object> raw = state.nioEngine.call(state.seed, null, chain, state.key);

@@ -177,6 +177,21 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
+    public <R> NioFlow<I, R> use(String region, Segment<T, R> segment) {
+        // Same inline embedding, plus the appended span is remembered (by
+        // link identity) so spliceRegion can swap it atomically later.
+        List<Link> before = engine().chain();
+        segment.define(new DefaultLane<>(this));
+        List<Link> after = engine().chain();
+        if (after.size() == before.size()) {
+            throw new IllegalArgumentException("Region '" + region + "' is empty: the segment appended no links");
+        }
+        engine().rememberRegion(region, after.get(before.size()), after.get(after.size() - 1));
+        return (NioFlow<I, R>) this;
+    }
+
+    @Override
     public NioFlow<I, T> recover(Function<Throwable, T> function) {
         return recover(anonymousName("recovery"), function);
     }

@@ -149,6 +149,13 @@ class DefaultLane<T> implements Lane<T> {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
+    public <R> Lane<R> use(String region, Segment<T, R> segment) {
+        view.use(region, segment);
+        return (Lane<R>) this;
+    }
+
+    @Override
     public Lane<T> recover(Function<Throwable, T> function) {
         view.recover(function);
         return this;

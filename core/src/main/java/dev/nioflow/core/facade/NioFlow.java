@@ -115,6 +115,16 @@ public interface NioFlow<I, T> {
      */
     <R> NioFlow<I, R> use(Segment<T, R> segment);
 
+    /**
+     * Like use(segment), and additionally remembers the embedded span as a
+     * named REGION: engine.spliceRegion(name, links) — or the root flow's
+     * replaceRegion(name, segment) — swaps the whole span atomically at
+     * runtime (one chain swap, one validation, one recompile), and the
+     * region re-points to the new links so it stays swappable. Regions
+     * belong to the shared definition; a just() execution rejects this.
+     */
+    <R> NioFlow<I, R> use(String region, Segment<T, R> segment);
+
     NioFlow<I, T> filter(Predicate<T> predicate);
 
     /**

@@ -37,6 +37,22 @@ public interface NioEngine {
 
     void splice(String anchor, Splice position, List<Link> links);
 
+    /**
+     * Remembers the contiguous span [first, last] (by link identity) as a
+     * named region, so spliceRegion can swap the whole span atomically.
+     * Registered by use(name, segment) at build time.
+     */
+    void rememberRegion(String name, Link first, Link last);
+
+    /**
+     * Atomically replaces the whole remembered region — one chain swap, one
+     * validation (on sealed chains), one recompile — and re-points the
+     * region at the new links so it can be swapped again. An empty list
+     * removes the region and its registration. Fails if a boundary link was
+     * edited away by a single-link splice.
+     */
+    void spliceRegion(String region, List<Link> links);
+
     int nextDecision();
 
     void metrics(NioFlowMetrics metrics);

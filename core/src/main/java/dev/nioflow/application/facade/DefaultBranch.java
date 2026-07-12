@@ -161,6 +161,11 @@ final class DefaultBranch<I, T> implements Branch<I, T> {
     }
 
     @Override
+    public <R> NioFlow<I, R> use(String region, Segment<T, R> segment) {
+        return flow.use(region, segment);
+    }
+
+    @Override
     public NioFlow<I, T> recover(Function<Throwable, T> function) {
         return flow.recover(function);
     }

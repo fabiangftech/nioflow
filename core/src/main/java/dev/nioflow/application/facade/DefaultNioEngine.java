@@ -128,6 +128,14 @@ public class DefaultNioEngine implements NioEngine {
         private boolean active;
     }
 
+    // Named regions for atomic multi-link swaps: boundaries are remembered
+    // by LINK IDENTITY, not by index, so edits elsewhere in the chain never
+    // stale them. Guarded by the engine's synchronized edit methods.
+    private final Map<String, Region> regions = new HashMap<>();
+
+    private record Region(Link first, Link last) {
+    }
+
     public DefaultNioEngine() {
         this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, 0, OverflowPolicy.BLOCK);
     }
@@ -337,6 +345,56 @@ public class DefaultNioEngine implements NioEngine {
         chain = edited;
         // Runtime edits pay compilation once per edit, never per request.
         compiled = sealed ? CompiledChain.compile(edited) : null;
+    }
+
+    @Override
+    public synchronized void rememberRegion(String name, Link first, Link last) {
+        if (regions.containsKey(name)) {
+            throw new IllegalArgumentException("Region '" + name + "' is already registered");
+        }
+        regions.put(name, new Region(first, last));
+    }
+
+    @Override
+    public synchronized void spliceRegion(String region, List<Link> links) {
+        Region span = regions.get(region);
+        if (span == null) {
+            throw new IllegalArgumentException("No region named '" + region + "'");
+        }
+        List<Link> next = new ArrayList<>(chain);
+        int from = identityIndexOf(next, span.first());
+        int to = identityIndexOf(next, span.last());
+        if (from < 0 || to < 0 || to < from) {
+            throw new IllegalStateException("Region '" + region
+                    + "' boundaries are no longer in the chain (edited away by a single-link splice?)");
+        }
+        next.subList(from, to + 1).clear();
+        next.addAll(from, links);
+        List<Link> edited = List.copyOf(next);
+        if (sealed) {
+            List<String> problems = ChainValidator.validate(edited);
+            if (!problems.isEmpty()) {
+                throw new ChainValidationException(problems);
+            }
+        }
+        chain = edited;
+        compiled = sealed ? CompiledChain.compile(edited) : null;
+        // Re-point the region at its new span so it stays swappable; an
+        // empty replacement retires it.
+        if (links.isEmpty()) {
+            regions.remove(region);
+        } else {
+            regions.put(region, new Region(links.get(0), links.get(links.size() - 1)));
+        }
+    }
+
+    private static int identityIndexOf(List<Link> links, Link target) {
+        for (int i = 0; i < links.size(); i++) {
+            if (links.get(i) == target) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @Override

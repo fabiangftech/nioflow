@@ -3,10 +3,12 @@ package dev.nioflow.application.facade;
 import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -92,6 +94,20 @@ public class DefaultNioFlow<I, T> extends AbstractNioFlow<I, T> implements AutoC
     @Override
     public FlowResult<T> executeResult() {
         throw new IllegalStateException("This flow has no input; start an execution with just(input)");
+    }
+
+    /**
+     * Swaps the whole named region for a freshly-recorded segment,
+     * atomically. The segment records off-chain but draws decision ids and
+     * anonymous names from THIS flow, so guards and anchors never collide
+     * with the live chain. Top-level regions only: the recorded links carry
+     * no lane guards (swap a lane-scoped region through
+     * engine.spliceRegion with explicitly guarded links).
+     */
+    public <R> void replaceRegion(String region, Segment<T, R> segment) {
+        List<Link> recorded = new ArrayList<>();
+        segment.define(new DefaultLane<>(new RecordingNioFlow<>(nioEngine, recorded, anonymousLinks)));
+        nioEngine.spliceRegion(region, List.copyOf(recorded));
     }
 
     /**
