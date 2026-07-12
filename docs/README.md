@@ -1,5 +1,10 @@
 # What is nioflow
 
+[![Maven Central](https://img.shields.io/maven-central/v/dev.nioflow/nioflow-core?label=Maven%20Central&color=blue)](https://central.sonatype.com/artifact/dev.nioflow/nioflow-core)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Java](https://img.shields.io/badge/Java-21%2B-orange)](https://openjdk.org/)
+[![Website](https://img.shields.io/badge/web-nioflow.dev-1a7f5a)](https://nioflow.dev)
+
 **nioflow** is a Java library for building business pipelines as fluent, typed flows that run on an event-loop engine — and can be **edited while they run**.
 
 ```java
@@ -52,5 +57,27 @@ flowchart LR
 | Hot changes | `splice`, named regions, `replaceRegion` — atomic, validated |
 | Protection | native `RateLimit`, `Retry`, timeouts, `recover()`, circuit breaker via Resilience4j |
 | Visibility | `onComplete`/`onError` taps, metrics SPI, OpenTelemetry adapter |
+
+## Install
+
+Requires **Java 21+** (virtual threads and pattern matching over sealed types; developed and tested on JDK 25). No other runtime dependencies.
+
+**Gradle**
+
+```groovy
+dependencies {
+    implementation 'dev.nioflow:nioflow-core:1.0.0'
+}
+```
+
+**Maven**
+
+```xml
+<dependency>
+    <groupId>dev.nioflow</groupId>
+    <artifactId>nioflow-core</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
 
 Ready? Head to the [Quickstart](quickstart.md).
