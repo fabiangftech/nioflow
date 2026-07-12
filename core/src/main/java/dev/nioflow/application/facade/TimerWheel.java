@@ -21,6 +21,10 @@ import java.util.concurrent.locks.LockSupport;
  * each tick and fires the due ones — buckets are plain, unsynchronized.
  * Cancelled timeouts are dropped at transfer or when their bucket turns
  * up; until then they linger, bounded by their own deadline.
+ *
+ * The worker ticks until it is interrupted (stop()); the shared wheel is
+ * a daemon and simply lives as long as the JVM, but a wheel built for a
+ * test or a dedicated engine can be shut down without leaking its thread.
  */
 final class TimerWheel {
 
@@ -56,6 +60,7 @@ final class TimerWheel {
     private final long tickNanos;
     private final long startNanos;
     private final ConcurrentLinkedQueue<Timeout> staged = new ConcurrentLinkedQueue<>();
+    private final Thread worker;
 
     @SuppressWarnings("unchecked")
     TimerWheel(int bucketCount, long tickNanos) {
@@ -66,7 +71,7 @@ final class TimerWheel {
         this.mask = bucketCount - 1;
         this.tickNanos = tickNanos;
         this.startNanos = System.nanoTime();
-        Thread.ofPlatform().name("nio-flow-timer").daemon(true).start(this::run);
+        this.worker = Thread.ofPlatform().name("nio-flow-timer").daemon(true).start(this::run);
     }
 
     Timeout schedule(long delayNanos, Runnable action) {
@@ -75,13 +80,27 @@ final class TimerWheel {
         return timeout;
     }
 
+    /** Ends the ticking: pending timeouts are abandoned, never fired. */
+    void stop() {
+        worker.interrupt();
+    }
+
+    boolean ticking() {
+        return worker.isAlive();
+    }
+
     private void run() {
         long tick = 0;
-        while (true) {
+        while (!Thread.currentThread().isInterrupted()) {
             long targetNanos = startNanos + (tick + 1) * tickNanos;
             long sleep;
             while ((sleep = targetNanos - System.nanoTime()) > 0) {
+                // parkNanos returns on interrupt without clearing the flag:
+                // bail out instead of spinning until the tick is due.
                 LockSupport.parkNanos(sleep);
+                if (Thread.currentThread().isInterrupted()) {
+                    return;
+                }
             }
             tick++;
             transferStaged(tick);

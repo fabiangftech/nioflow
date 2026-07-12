@@ -89,4 +89,17 @@ class TimerWheelTest {
         assertTrue(fired.await(3, TimeUnit.SECONDS), "live timeouts missing: " + fired.getCount());
         assertFalse(cancelledFired.get(), "a cancelled timeout fired");
     }
+
+    @Test
+    void stopEndsTheTickingAndPendingTimeoutsNeverFire() throws Exception {
+        var wheel = new TimerWheel(8, 10_000_000L);
+        var fired = new AtomicBoolean();
+
+        wheel.schedule(50_000_000L, () -> fired.set(true));
+        wheel.stop();
+
+        Thread.sleep(250);
+        assertFalse(fired.get(), "the wheel kept ticking after stop()");
+        assertFalse(wheel.ticking(), "the timer thread outlived stop()");
+    }
 }
