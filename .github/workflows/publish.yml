@@ -49,9 +49,18 @@ jobs:
 
       - name: Publish
         working-directory: core
-        run: ./gradlew publishAndReleaseToMavenCentral -PreleaseVersion=${{ steps.resolve.outputs.version }} --no-configuration-cache
+        # The signing key travels base64-encoded: a single-line secret cannot be
+        # mangled by line wrapping or CRLF the way an armored block can.
+        run: |
+          KEY="$(printf '%s' "$GPG_SIGNING_KEY_BASE64" | base64 -d)"
+          case "$KEY" in
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----"*) ;;
+            *) echo "::error::GPG_SIGNING_KEY_BASE64 does not decode to an armored PGP PRIVATE key block. Re-export with: gpg --armor --export-secret-keys <KEYID> | base64" ; exit 1 ;;
+          esac
+          export ORG_GRADLE_PROJECT_signingInMemoryKey="$KEY"
+          ./gradlew publishAndReleaseToMavenCentral -PreleaseVersion=${{ steps.resolve.outputs.version }} --no-configuration-cache
         env:
+          GPG_SIGNING_KEY_BASE64: ${{ secrets.GPG_SIGNING_KEY_BASE64 }}
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_SIGNING_PASSWORD }}
