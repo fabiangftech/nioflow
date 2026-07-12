@@ -119,9 +119,9 @@
     }
     /* Install one-liner on the cover */
     section.cover pre {
-      display: inline-block;
+      display: inline-flex;
+      align-items: stretch;
       max-width: 100%;
-      overflow-x: auto;
       margin: 30px auto 6px;
       padding: 0;
       background: #F8FAFC;
@@ -131,12 +131,27 @@
     }
     section.cover pre > code {
       display: block;
-      padding: 14px 22px;
+      overflow-x: auto;
+      padding: 14px 20px;
       font-family: var(--mono);
       font-size: 13.5px;
       background: transparent;
       color: #1E293B;
     }
+    .cover-copy {
+      flex: none;
+      border: 0;
+      border-left: 1px solid var(--line);
+      border-radius: 0 12px 12px 0;
+      background: transparent;
+      padding: 0 16px;
+      font-family: var(--body);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--boss);
+      cursor: pointer;
+    }
+    .cover-copy:hover { background: var(--boss-soft); }
 
     /* Signature: the pipeline strip. Indigo pills = boss-side links
        (routing decisions); cyan pills = stages on virtual workers. A
@@ -220,23 +235,27 @@
       border-bottom: 1px solid var(--line);
       z-index: 40;
     }
-    nav.app-nav::before {
+    .nav-brand {
+      order: -1;
+      display: flex;
+      align-items: center;
+      margin-right: auto;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav-brand::before {
       content: '';
       width: 22px;
       height: 22px;
       margin-right: 10px;
       background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='16' r='6' fill='%234F46E5'/><circle cx='23' cy='16' r='6' fill='%230891B2'/></svg>") no-repeat center / contain;
     }
-    nav.app-nav::after {
-      content: 'nioflow';
-      order: -1;
-      margin-right: auto;
-      font-weight: 800;
-      font-size: 1.05rem;
-      letter-spacing: -0.03em;
-      color: var(--ink);
-    }
-    nav.app-nav::before { order: -2; }
+    .nav-brand span { color: var(--boss); }
+    .nav-brand:hover { opacity: .85; }
     nav.app-nav ul {
       display: flex;
       align-items: center;
@@ -263,9 +282,19 @@
       border-bottom: none;
     }
     @media (max-width: 640px) {
-      nav.app-nav { padding: 0 14px; overflow-x: auto; }
-      nav.app-nav::after { display: none; }
-      nav.app-nav li a { padding: 7px 9px; font-size: 13px; }
+      nav.app-nav { padding: 0 16px; }
+      /* Everything else lives in the sidebar and the cover buttons:
+         keep the bar to brand + GitHub. */
+      nav.app-nav li { display: none; }
+      nav.app-nav li:nth-child(4) { display: block; }
+      nav.app-nav li:nth-child(4) a {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 6px 15px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
     }
 
     /* Everything sits below the fixed bar */
@@ -452,10 +481,16 @@
 
     @media (max-width: 768px) {
       .markdown-section { padding: 24px 16px 56px; }
-      section.cover .cover-main { padding: 0 18px; }
-      section.cover pre > code { font-size: 12px; padding: 12px 14px; }
-      section.cover .cover-actions a { padding: 0.65em 1.2em; font-size: 0.9rem; }
       .markdown-section pre > code { font-size: 12.5px; }
+
+      section.cover .cover-main { padding: 0 22px; width: 100%; }
+      section.cover h1 { font-size: clamp(2.5rem, 13vw, 3.2rem); margin-bottom: 12px; }
+      section.cover blockquote p { font-size: 1.02rem; }
+      section.cover ul { font-size: .88rem; line-height: 1.75; padding: 0; }
+      section.cover pre { display: flex; width: 100%; margin-top: 24px; }
+      section.cover pre > code { flex: 1; font-size: 11.5px; padding: 13px 14px; }
+      section.cover .cover-actions { flex-direction: column; align-items: stretch; gap: 10px; margin-top: 22px; }
+      section.cover .cover-main > p.cover-actions a { display: block; text-align: center; padding: 0.8em 1em; }
     }
   </style>
 </head>
@@ -463,7 +498,7 @@
 <div id="app">Loading nio-flow docs…</div>
 <script>
   window.$docsify = {
-    name: 'nio<span class="flow-accent">flow</span>',
+    name: 'nioflow',
     coverpage: true,
     onlyCover: true,
     loadSidebar: true,
@@ -510,7 +545,56 @@
           if (nav && !nav.querySelector('ul')) {
             nav.innerHTML = NAV;
           }
+          if (nav && !nav.querySelector('.nav-brand')) {
+            var brand = document.createElement('a');
+            brand.className = 'nav-brand';
+            brand.href = '#/';
+            brand.innerHTML = 'nio<span>flow</span>';
+            brand.setAttribute('aria-label', 'nio-flow home');
+            nav.insertBefore(brand, nav.firstChild);
+          }
+          // The cover may render after this hook: try now and shortly after.
+          injectCoverCopy();
+          setTimeout(injectCoverCopy, 150);
+          setTimeout(injectCoverCopy, 600);
         });
+
+        // Direct copy on the cover's install one-liner.
+        function injectCoverCopy() {
+          var pre = document.querySelector('section.cover pre');
+          if (!pre || pre.querySelector('.cover-copy')) {
+            return;
+          }
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'cover-copy';
+          button.textContent = 'Copy';
+          button.setAttribute('aria-label', 'Copy the Gradle dependency');
+          button.addEventListener('click', function () {
+            var snippet = pre.querySelector('code').innerText.trim();
+            var confirm = function () {
+              button.textContent = 'Copied';
+              setTimeout(function () { button.textContent = 'Copy'; }, 1600);
+            };
+            var legacy = function () {
+              var scratch = document.createElement('textarea');
+              scratch.value = snippet;
+              scratch.style.position = 'fixed';
+              scratch.style.opacity = '0';
+              document.body.appendChild(scratch);
+              scratch.select();
+              document.execCommand('copy');
+              document.body.removeChild(scratch);
+              confirm();
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(snippet).then(confirm, legacy);
+            } else {
+              legacy();
+            }
+          });
+          pre.appendChild(button);
+        }
       }
     ]
   };
