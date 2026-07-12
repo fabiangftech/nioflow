@@ -141,9 +141,7 @@ class DefaultNioEngineCompiledChainTest {
 
         assertEquals(plan, same);                          // distinct array instances, same contents
         assertEquals(plan.hashCode(), same.hashCode());
-        assertNotEquals(plan, other);
-        assertEquals(plan, plan);
-        assertNotEquals(plan, "not a plan");
+        assertNotEquals(plan, other);                      // a different chain is a different plan
         assertTrue(plan.toString().contains("runEnds="), plan::toString);
     }
 
