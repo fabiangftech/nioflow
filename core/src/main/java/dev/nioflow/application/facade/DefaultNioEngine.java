@@ -890,29 +890,46 @@ public class DefaultNioEngine implements NioEngine {
 
         /**
          * Timeout + retry composition: the budget applies to EACH attempt (a
-         * hung attempt is cut by orTimeout, which an inline loop could not do),
+         * hung attempt is cut externally, which an inline loop could not do),
          * the backoff is scheduled without parking anyone, and once attempts
          * are exhausted the last failure flows to the recovery path.
+         *
+         * The budget is armed on the shared TimerWheel — O(1) schedule and
+         * cancel — instead of orTimeout's lock-guarded priority queue; the
+         * attempt future's internal CAS arbitrates the completion/timeout
+         * race exactly as before. Retry backoff keeps delayedExecutor: it
+         * only runs after a failure (cold) and a sub-tick backoff would
+         * degrade to wheel granularity.
          */
         private void attemptWithTimeout(Stage stage, int resume, Object value, int attempt) {
-            CompletableFuture.supplyAsync(() -> timedApply(stage, value), workersExecutorService)
-                    .orTimeout(stage.timeout().toMillis(), TimeUnit.MILLISECONDS)
-                    .whenCompleteAsync((nextValue, error) -> {
-                        if (error == null) {
-                            advance(resume, nextValue);
-                            return;
-                        }
-                        Retry retry = stage.retry();
-                        if (retry != null && attempt < retry.attempts()) {
-                            if (metrics != null) {
-                                metrics.stageRetried(stage.name());
-                            }
-                            CompletableFuture.delayedExecutor(retry.delayNanos(attempt), TimeUnit.NANOSECONDS, boss)
-                                    .execute(() -> attemptWithTimeout(stage, resume, value, attempt + 1));
-                        } else {
-                            recover(resume, unwrap(error));
-                        }
-                    }, boss);
+            CompletableFuture<Object> attemptResult = new CompletableFuture<>();
+            workersExecutorService.execute(() -> {
+                try {
+                    attemptResult.complete(timedApply(stage, value));
+                } catch (Throwable error) {
+                    attemptResult.completeExceptionally(error);
+                }
+            });
+            TimerWheel.Timeout budget = TimerWheel.shared().schedule(stage.timeout().toNanos(),
+                    () -> attemptResult.completeExceptionally(
+                            new TimeoutException("Stage '" + stage.name() + "' exceeded " + stage.timeout())));
+            attemptResult.whenCompleteAsync((nextValue, error) -> {
+                budget.cancel();
+                if (error == null) {
+                    advance(resume, nextValue);
+                    return;
+                }
+                Retry retry = stage.retry();
+                if (retry != null && attempt < retry.attempts()) {
+                    if (metrics != null) {
+                        metrics.stageRetried(stage.name());
+                    }
+                    CompletableFuture.delayedExecutor(retry.delayNanos(attempt), TimeUnit.NANOSECONDS, boss)
+                            .execute(() -> attemptWithTimeout(stage, resume, value, attempt + 1));
+                } else {
+                    recover(resume, unwrap(error));
+                }
+            }, boss);
         }
 
         /**

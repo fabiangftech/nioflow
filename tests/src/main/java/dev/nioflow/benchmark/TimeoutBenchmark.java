@@ -11,6 +11,7 @@ import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.Threads;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
@@ -61,6 +62,16 @@ public class TimeoutBenchmark {
 
     @Benchmark
     public Object timeoutArmed() {
+        return timeoutArmed.just(1).execute();
+    }
+
+    // La contención es donde el scheduling del timer importa: 8 threads
+    // armando y cancelando presupuestos golpean la estructura compartida
+    // del timer (heap con lock global en orTimeout; staging queue lock-free
+    // en la timer wheel).
+    @Benchmark
+    @Threads(8)
+    public Object timeoutArmedContended8() {
         return timeoutArmed.just(1).execute();
     }
 }
