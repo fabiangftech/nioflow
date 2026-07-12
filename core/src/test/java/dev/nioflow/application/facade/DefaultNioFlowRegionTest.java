@@ -121,4 +121,15 @@ class DefaultNioFlowRegionTest {
 
     // Registering a region from an execution no longer compiles: use(region,
     // segment) lives on NioFlow (the shared definition), not on NioStep.
+
+    @Test
+    void aRegionWhoseSegmentAppendsNothingIsRejected() {
+        DefaultNioFlow<String, String> flow = DefaultNioFlow.from(String.class);
+
+        IllegalArgumentException empty = assertThrows(IllegalArgumentException.class,
+                () -> flow.use("empty", lane -> lane));
+
+        assertTrue(empty.getMessage().contains("empty"), empty::getMessage);
+        flow.close();
+    }
 }

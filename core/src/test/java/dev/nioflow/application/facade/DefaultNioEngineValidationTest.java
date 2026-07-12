@@ -2,13 +2,19 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.model.Background;
+import dev.nioflow.core.model.Batch;
+import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Guard;
+import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Splice;
 import dev.nioflow.core.model.Stage;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -95,5 +101,33 @@ class DefaultNioEngineValidationTest extends EngineTestSupport {
         engine.seal(); // must not throw
 
         assertEquals(22, engine.call(11, new java.util.concurrent.ConcurrentHashMap<>()).join());
+    }
+
+    /**
+     * Anchor names are shared by every named link kind, and so is the duplicate
+     * check: two links with the same name make a splice ambiguous, whatever
+     * kinds they are.
+     */
+    @Test
+    void duplicateNamesAcrossDifferentLinkKindsFailSeal() {
+        engine.append(stage("shared", value -> value));
+        engine.append(new Recovery("shared", error -> null, List.of()));
+
+        ChainValidationException rejected = assertThrows(ChainValidationException.class, engine::seal);
+
+        assertTrue(rejected.getMessage().contains("shared"), rejected::getMessage);
+    }
+
+    /** FanOut and Batch can fail a value, so a recovery after them is alive; Background cannot. */
+    @Test
+    void aChainOfEveryLinkKindSealsClean() {
+        engine.append(new FanOut("fan", List.of(value -> value), parts -> parts.get(0), List.of()));
+        engine.append(new Batch("bulk", 1, Duration.ofMillis(50), values -> values, List.of()));
+        engine.append(new Background("effect", value -> {
+        }, List.of()));
+        engine.append(new Recovery("net", error -> -1, List.of()));
+
+        assertDoesNotThrow(engine::seal);
+        assertEquals(1, engine.call(1, null).join());
     }
 }

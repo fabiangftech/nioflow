@@ -140,4 +140,20 @@ class DefaultNioFlowCallbacksTest extends EngineTestSupport {
         assertInstanceOf(IllegalStateException.class, reported.get());
         assertEquals("bad handler", reported.get().getMessage());
     }
+
+    @Test
+    void multipleOnErrorCallbacksOnTheSameExecutionCompose() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("boom", value -> {
+            throw new IllegalStateException("boom");
+        });
+        List<String> seen = new CopyOnWriteArrayList<>();
+
+        assertThrows(CompletionException.class, () -> flow.just(1)
+                .onError(error -> seen.add("first:" + error.getMessage()))
+                .onError(error -> seen.add("second:" + error.getMessage()))
+                .execute());
+
+        assertEquals(List.of("first:boom", "second:boom"), seen);
+    }
 }
