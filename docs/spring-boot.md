@@ -9,14 +9,8 @@ nio-flow needs no starter: the flow is a singleton bean declared once, and every
 public class NioFlowConfig {
 
     @Bean(destroyMethod = "close")   // drains the engine on shutdown
-    public NioFlow<OrderRequest, Order> orderFlow(ValidationService validation,
-                                                  PricingService pricing,
-                                                  AuditService audit) {
-        return DefaultNioFlow.from(OrderRequest.class)
-                .filter(validation::isValid)
-                .adapt(pricing::price)                 // OrderRequest -> Order
-                .handle("tax", pricing::withTax)
-                .background("audit", audit::record);
+    public NioFlow<OrderRequest, Order> orderFlow() {
+        return DefaultNioFlow.from(OrderRequest.class);
     }
 }
 ```
@@ -30,17 +24,17 @@ One bean serves every business case: a service opens an execution with `just()` 
 ```java
 @Service
 public class OrderService {
-
+    
+    ...
     private final NioFlow<OrderRequest, Order> orderFlow;
-    private final ShippingService shipping;
-
-    public OrderService(NioFlow<OrderRequest, Order> orderFlow, ShippingService shipping) {
-        this.orderFlow = orderFlow;
-        this.shipping = shipping;
-    }
-
+    ...
+    
     public CompletableFuture<Order> place(OrderRequest request) {
         return orderFlow.just(request)
+                .filter(validation::isValid)
+                .adapt(pricing::price)                 // OrderRequest -> Order
+                .handle("tax", pricing::withTax)
+                .background("audit", audit::record)
                 .match()
                 .is(Order::isPriority, lane -> lane
                         .handle("expedite", shipping::expedite)
