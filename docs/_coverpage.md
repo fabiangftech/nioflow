@@ -1,4 +1,4 @@
-# nio<span class="flow-accent">—</span>flow
+# nio<span class="flow-accent">flow</span>
 
 > Typed pipelines on an event loop, for Java business logic that changes at runtime.
 

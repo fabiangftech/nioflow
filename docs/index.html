@@ -51,12 +51,19 @@
     section.cover h1 {
       font-family: var(--display);
       font-weight: 800;
-      font-size: clamp(2.5rem, 6.5vw, 3.9rem);
-      letter-spacing: -0.045em;
+      font-size: clamp(3rem, 11vw, 4.8rem);
+      letter-spacing: -0.05em;
+      line-height: 1.05;
       color: var(--ink);
-      margin: 0 0 4px;
+      margin: 0 0 10px;
     }
-    section.cover h1 .flow-accent { color: var(--boss); }
+    section.cover h1 .flow-accent {
+      background: linear-gradient(92deg, var(--boss) 15%, var(--worker) 90%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: var(--boss); /* fallback */
+    }
     section.cover h1 a:hover { text-decoration: none; }
     section.cover blockquote {
       border: 0;
@@ -113,6 +120,8 @@
     /* Install one-liner on the cover */
     section.cover pre {
       display: inline-block;
+      max-width: 100%;
+      overflow-x: auto;
       margin: 30px auto 6px;
       padding: 0;
       background: #F8FAFC;
@@ -219,7 +228,7 @@
       background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='16' r='6' fill='%234F46E5'/><circle cx='23' cy='16' r='6' fill='%230891B2'/></svg>") no-repeat center / contain;
     }
     nav.app-nav::after {
-      content: 'nio—flow';
+      content: 'nioflow';
       order: -1;
       margin-right: auto;
       font-weight: 800;
@@ -231,11 +240,13 @@
     nav.app-nav ul {
       display: flex;
       align-items: center;
+      flex-wrap: nowrap;
       gap: 4px;
       margin: 0;
       padding: 0;
     }
-    nav.app-nav li { display: block; margin: 0; padding: 0; }
+    nav.app-nav li { display: block; flex: none; margin: 0; padding: 0; }
+    nav.app-nav li a { white-space: nowrap; }
     nav.app-nav li a {
       display: block;
       padding: 7px 13px;
@@ -380,10 +391,14 @@
     .markdown-section blockquote p { color: #3730A3; font-size: .95em; }
 
     .markdown-section table {
-      display: table;
-      width: 100%;
+      display: block;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
       border-collapse: collapse;
       font-size: .9em;
+    }
+    @media (min-width: 769px) {
+      .markdown-section table { display: table; width: 100%; }
     }
     .markdown-section table th {
       font-family: var(--display);
@@ -398,6 +413,7 @@
     .markdown-section table tr:nth-child(2n) { background: #FAFBFD; }
 
     .markdown-section .mermaid {
+      overflow-x: auto;
       background: #FAFBFD;
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -435,9 +451,11 @@
     :focus-visible { outline: 2px solid var(--boss); outline-offset: 2px; }
 
     @media (max-width: 768px) {
-      .markdown-section { padding: 28px 18px 60px; }
-      .pipeline { font-size: .68rem; }
-      .pipeline .link { width: 14px; }
+      .markdown-section { padding: 24px 16px 56px; }
+      section.cover .cover-main { padding: 0 18px; }
+      section.cover pre > code { font-size: 12px; padding: 12px 14px; }
+      section.cover .cover-actions a { padding: 0.65em 1.2em; font-size: 0.9rem; }
+      .markdown-section pre > code { font-size: 12.5px; }
     }
   </style>
 </head>
@@ -445,7 +463,7 @@
 <div id="app">Loading nio-flow docs…</div>
 <script>
   window.$docsify = {
-    name: 'nio<span class="flow-accent">—</span>flow',
+    name: 'nio<span class="flow-accent">flow</span>',
     coverpage: true,
     onlyCover: true,
     loadSidebar: true,
