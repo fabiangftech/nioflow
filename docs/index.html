@@ -2,21 +2,425 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Document</title>
-  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
-  <meta name="description" content="Description">
+  <title>nio-flow — typed pipelines on an event loop</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"/>
+  <meta name="description" content="nio-flow: a fluent, typed pipeline API over an event-loop engine for Java. Business logic that changes at runtime.">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='16' r='6' fill='%234F46E5'/><circle cx='23' cy='16' r='6' fill='%230891B2'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <style>
+    :root {
+      --ink: #0F172A;
+      --ink-soft: #475569;
+      --paper: #FFFFFF;
+      --mist: #F1F5F9;
+      --line: #E2E8F0;
+      --boss: #4F46E5;      /* orchestration: indigo  */
+      --boss-soft: #EEF2FF;
+      --worker: #0891B2;    /* execution: cyan        */
+      --worker-soft: #E0F7FA;
+      --display: 'Space Grotesk', sans-serif;
+      --body: 'Inter', -apple-system, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+
+      /* docsify theme hooks */
+      --theme-color: #4F46E5;
+    }
+
+    body {
+      font-family: var(--body);
+      color: var(--ink);
+      background: var(--paper);
+      font-size: 15.5px;
+      line-height: 1.7;
+    }
+
+    /* ============ Cover ============ */
+    section.cover {
+      background: var(--paper) !important;
+      color: var(--ink);
+    }
+    section.cover .cover-main {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    section.cover h1 {
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: clamp(2.6rem, 7vw, 4.2rem);
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      margin: 0 0 4px;
+    }
+    section.cover h1 .flow-accent { color: var(--boss); }
+    section.cover h1 a:hover { text-decoration: none; }
+    section.cover blockquote {
+      border: 0;
+      margin: 0 0 8px;
+    }
+    section.cover blockquote p {
+      font-size: clamp(1.05rem, 2.4vw, 1.3rem);
+      color: var(--ink-soft);
+      font-weight: 400;
+      line-height: 1.55;
+      margin: 0;
+    }
+    section.cover ul {
+      max-width: none;
+      color: var(--ink-soft);
+    }
+    section.cover .cover-main > p:last-child a {
+      border-radius: 10px;
+      font-family: var(--display);
+      font-weight: 600;
+      font-size: 0.95rem;
+      letter-spacing: 0;
+      padding: 0.7em 1.6em;
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    section.cover .cover-main > p:last-child a:first-child {
+      background: var(--boss);
+      border-color: var(--boss);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(79, 70, 229, .25);
+    }
+    section.cover .cover-main > p:last-child a:not(:first-child) {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      color: var(--ink);
+    }
+    section.cover .cover-main > p:last-child a:hover {
+      transform: translateY(-2px);
+      opacity: 1;
+    }
+    section.cover .mask { display: none; }
+
+    /* Signature: the pipeline strip. Indigo pills = boss-side links
+       (routing decisions); cyan pills = stages on virtual workers. A
+       value pulses through the chain. */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0;
+      row-gap: 10px;
+      margin: 34px 0 38px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+    .pipeline .stage {
+      position: relative;
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: 1.5px solid var(--line);
+      background: var(--mist);
+      color: var(--ink-soft);
+      white-space: nowrap;
+    }
+    .pipeline .stage.worker {
+      border-color: rgba(8, 145, 178, .45);
+      background: var(--worker-soft);
+      color: #0E7490;
+    }
+    .pipeline .stage.boss {
+      border-color: rgba(79, 70, 229, .45);
+      background: var(--boss-soft);
+      color: var(--boss);
+    }
+    .pipeline .link {
+      width: 26px;
+      height: 1.5px;
+      background: var(--line);
+      position: relative;
+      flex: none;
+    }
+    .pipeline .link::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 7px;
+      height: 7px;
+      margin-top: -3.5px;
+      border-radius: 50%;
+      background: var(--boss);
+      opacity: 0;
+      animation: travel 5.6s linear infinite;
+      animation-delay: var(--d, 0s);
+    }
+    @keyframes travel {
+      0%   { opacity: 0; transform: translateX(0); }
+      3%   { opacity: 1; }
+      12%  { opacity: 1; transform: translateX(19px); }
+      15%  { opacity: 0; transform: translateX(19px); }
+      100% { opacity: 0; transform: translateX(19px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .pipeline .link::after { animation: none; opacity: 0; }
+    }
+
+    /* ============ Sidebar ============ */
+    .sidebar {
+      background: var(--mist);
+      border-right: 1px solid var(--line);
+      padding: 28px 0 40px;
+    }
+    .sidebar > h1 {
+      font-family: var(--display);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 auto .5rem;
+    }
+    .sidebar > h1 a { color: var(--ink); font-size: 1.35rem; }
+    .sidebar > h1 a .flow-accent { color: var(--boss); }
+    .sidebar ul li a {
+      color: var(--ink-soft);
+      font-size: 14px;
+      font-weight: 450;
+    }
+    .sidebar ul li a:hover { color: var(--ink); text-decoration: none; }
+    .sidebar ul li.active > a {
+      color: var(--boss);
+      border-right: 2px solid var(--boss);
+      font-weight: 600;
+    }
+    .sidebar ul li ul { padding-left: 12px; }
+    /* Section headers in the sidebar (bold list items without links) */
+    .sidebar ul li strong {
+      display: block;
+      font-family: var(--display);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      color: #94A3B8;
+      margin: 22px 0 4px;
+    }
+    .sidebar-toggle {
+      background: rgba(255, 255, 255, .92);
+      border-radius: 0 12px 0 0;
+      border-top: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+    }
+    .sidebar-toggle span { background-color: var(--boss); }
+
+    /* ============ Content ============ */
+    .markdown-section {
+      max-width: 760px;
+      padding: 40px 28px 80px;
+    }
+    .markdown-section h1, .markdown-section h2, .markdown-section h3 {
+      font-family: var(--display);
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+    .markdown-section h1 { font-size: 2.1rem; font-weight: 700; }
+    .markdown-section h2 {
+      font-size: 1.45rem;
+      font-weight: 600;
+      margin-top: 2.6em;
+      padding-top: 1.2em;
+      border-top: 1px solid var(--line);
+    }
+    .markdown-section h3 { font-size: 1.12rem; font-weight: 600; margin-top: 2em; }
+    .markdown-section p, .markdown-section li { color: #334155; }
+    .markdown-section strong { color: var(--ink); }
+    .markdown-section a {
+      color: var(--boss);
+      font-weight: 500;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(79, 70, 229, .3);
+    }
+    .markdown-section a:hover { border-bottom-color: var(--boss); text-decoration: none; }
+    /* Heading anchors are links too: keep them looking like headings. */
+    .markdown-section h1 a, .markdown-section h2 a, .markdown-section h3 a,
+    .markdown-section h4 a, .markdown-section h5 a {
+      color: inherit;
+      border-bottom: none;
+    }
+
+    .markdown-section code {
+      font-family: var(--mono);
+      font-size: .82em;
+      background: var(--boss-soft);
+      color: #4338CA;
+      border-radius: 5px;
+      padding: 2.5px 6px;
+    }
+    .markdown-section pre {
+      background: #F8FAFC;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0;
+    }
+    .markdown-section pre > code {
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.65;
+      background: transparent;
+      color: #1E293B;
+      padding: 1.1em 1.3em;
+    }
+    /* Prism (light) */
+    .token.keyword { color: #7C3AED; }
+    .token.string { color: #0E7490; }
+    .token.function { color: #4338CA; }
+    .token.class-name { color: #0F172A; font-weight: 600; }
+    .token.comment { color: #94A3B8; font-style: italic; }
+    .token.number { color: #B45309; }
+    .token.annotation, .token.punctuation { color: #64748B; }
+    .token.operator { color: #475569; background: transparent; }
+
+    .markdown-section blockquote {
+      border-left: 3px solid var(--boss);
+      background: var(--boss-soft);
+      border-radius: 0 10px 10px 0;
+      padding: 2px 20px;
+      color: var(--ink-soft);
+      margin: 1.6em 0;
+    }
+    .markdown-section blockquote p { color: #3730A3; font-size: .95em; }
+
+    .markdown-section table {
+      display: table;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .9em;
+    }
+    .markdown-section table th {
+      font-family: var(--display);
+      font-size: .78rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--ink-soft);
+      background: var(--mist);
+      border: 1px solid var(--line);
+    }
+    .markdown-section table td { border: 1px solid var(--line); }
+    .markdown-section table tr:nth-child(2n) { background: #FAFBFD; }
+
+    .markdown-section .mermaid {
+      background: #FAFBFD;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px 10px;
+      margin: 1.6em 0;
+      text-align: center;
+    }
+    .markdown-section .mermaid svg { max-width: 100%; }
+
+    /* copy-code button */
+    .docsify-copy-code-button {
+      background: var(--boss) !important;
+      font-family: var(--body) !important;
+      font-size: .7em !important;
+      border-radius: 0 10px 0 10px !important;
+    }
+
+    /* search */
+    .search { border-bottom: 1px solid var(--line); margin-bottom: 6px; padding: 0 18px 14px; }
+    .search input {
+      background: var(--paper);
+      border: 1px solid var(--line) !important;
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-family: var(--body);
+      font-size: 13px;
+    }
+    .search input:focus { border-color: var(--boss) !important; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+    .search .matching-post { border-bottom: 1px solid var(--line); }
+    .search h2 { font-size: 14px; color: var(--boss); }
+
+    /* github corner */
+    .github-corner svg { fill: var(--boss); }
+
+    :focus-visible { outline: 2px solid var(--boss); outline-offset: 2px; }
+
+    @media (max-width: 768px) {
+      .markdown-section { padding: 28px 18px 60px; }
+      .pipeline { font-size: .68rem; }
+      .pipeline .link { width: 14px; }
+    }
+  </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app">Loading nio-flow docs…</div>
 <script>
   window.$docsify = {
-    name: 'NioFlow',
-    repo: ''
-  }
+    name: 'nio<span class="flow-accent">—</span>flow',
+    repo: 'https://github.com/fabiangftech/nioflow',
+    coverpage: true,
+    onlyCover: false,
+    loadSidebar: true,
+    subMaxLevel: 2,
+    auto2top: true,
+    search: {
+      placeholder: 'Search the docs…',
+      noData: 'No results. Try another term.',
+      depth: 3
+    },
+    copyCode: { buttonText: 'Copy', successText: 'Copied' },
+    markdown: {
+      renderer: {
+        code: function (code, lang) {
+          if (lang === 'mermaid') {
+            return '<div class="mermaid">' + code + '</div>';
+          }
+          return this.origin.code.apply(this, arguments);
+        }
+      }
+    },
+    plugins: [
+      function (hook) {
+        hook.doneEach(function () {
+          if (window.mermaid) {
+            window.mermaid.run({ querySelector: '.mermaid' });
+          }
+        });
+      }
+    ]
+  };
 </script>
-<!-- Docsify v4 -->
+<script src="//cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    fontFamily: 'Inter, sans-serif',
+    themeVariables: {
+      primaryColor: '#EEF2FF',
+      primaryBorderColor: '#4F46E5',
+      primaryTextColor: '#0F172A',
+      secondaryColor: '#E0F7FA',
+      secondaryBorderColor: '#0891B2',
+      tertiaryColor: '#F1F5F9',
+      tertiaryBorderColor: '#E2E8F0',
+      lineColor: '#94A3B8',
+      textColor: '#334155',
+      fontSize: '13px',
+      edgeLabelBackground: '#FFFFFF',
+      actorBkg: '#EEF2FF',
+      actorBorder: '#4F46E5',
+      actorTextColor: '#0F172A',
+      signalColor: '#475569',
+      signalTextColor: '#475569',
+      labelBoxBkgColor: '#F1F5F9',
+      noteBkgColor: '#E0F7FA',
+      noteBorderColor: '#0891B2',
+      noteTextColor: '#0F172A'
+    }
+  });
+</script>
 <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+<script src="//cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+<script src="//cdn.jsdelivr.net/npm/docsify-copy-code@2"></script>
+<script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-java.min.js"></script>
+<script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-groovy.min.js"></script>
+<script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-markup.min.js"></script>
 </body>
 </html>
