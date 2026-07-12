@@ -73,7 +73,10 @@
       max-width: none;
       color: var(--ink-soft);
     }
-    section.cover .cover-main > p:last-child a {
+    /* High specificity on purpose: vue.css styles cover buttons through
+       `.cover-main > p:last-child a` and `a:last-child` — beat both. */
+    section.cover .cover-main > p.cover-actions a,
+    section.cover .cover-main > p.cover-actions a:last-child {
       border-radius: 10px;
       font-family: var(--display);
       font-weight: 600;
@@ -81,23 +84,50 @@
       letter-spacing: 0;
       padding: 0.7em 1.6em;
       transition: transform .15s ease, box-shadow .15s ease;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      color: var(--ink);
     }
-    section.cover .cover-main > p:last-child a:first-child {
+    section.cover .cover-main > p.cover-actions a:first-child {
       background: var(--boss);
       border-color: var(--boss);
       color: #fff;
       box-shadow: 0 8px 24px rgba(79, 70, 229, .25);
     }
-    section.cover .cover-main > p:last-child a:not(:first-child) {
-      background: var(--paper);
-      border: 1px solid var(--line);
-      color: var(--ink);
-    }
-    section.cover .cover-main > p:last-child a:hover {
+    section.cover .cover-main > p.cover-actions a:hover {
       transform: translateY(-2px);
       opacity: 1;
     }
     section.cover .mask { display: none; }
+    section.cover .cover-actions {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 26px;
+    }
+    section.cover .cover-actions a {
+      display: inline-block;
+      text-decoration: none;
+    }
+    /* Install one-liner on the cover */
+    section.cover pre {
+      display: inline-block;
+      margin: 30px auto 6px;
+      padding: 0;
+      background: #F8FAFC;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      text-align: left;
+    }
+    section.cover pre > code {
+      display: block;
+      padding: 14px 22px;
+      font-family: var(--mono);
+      font-size: 13.5px;
+      background: transparent;
+      color: #1E293B;
+    }
 
     /* Signature: the pipeline strip. Indigo pills = boss-side links
        (routing decisions); cyan pills = stages on virtual workers. A

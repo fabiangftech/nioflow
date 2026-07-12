@@ -1,139 +1,63 @@
 # Spring Boot
 
-nio-flow needs no starter: a flow is a singleton bean, and executions are per-request. This page mirrors the [example app](https://github.com/fabiangftech/nioflow/tree/main/examples/springboot-with-nioflow) in the repository.
+nio-flow needs no starter: the flow is a singleton bean declared once, and every request runs an isolated execution over it.
 
-## The flow bean
-
-Declare the shared definition once. The bean's generic type documents input and output; `destroyMethod = "close"` drains the engine on shutdown:
+## The base bean
 
 ```java
 @Configuration
-public class OrderFlowConfig {
+public class NioFlowConfig {
 
-    @Bean
-    public NioEngine orderEngine() {
-        return new DefaultNioEngine();
-    }
-
-    @Bean(destroyMethod = "close")
-    public NioFlow<OrderRequest, OrderReceipt> orderFlow(NioEngine orderEngine,
-                                                         PricingService pricing,
-                                                         InventoryService inventory,
-                                                         RiskService risk,
-                                                         AuditService audit) {
-        return DefaultNioFlow.from(OrderRequest.class, orderEngine)
-                .filter(OrderRequest::isValid)
-                .adapt(pricing::price)
-                .handle("reserve", inventory::reserve,
-                        Duration.ofSeconds(2), Retry.of(3, Duration.ofMillis(100)))
-                .use("fraud-gate", fraudGate(risk))          // named region: swappable live
+    @Bean(destroyMethod = "close")   // drains the engine on shutdown
+    public NioFlow<OrderRequest, Order> orderFlow(ValidationService validation,
+                                                  PricingService pricing,
+                                                  AuditService audit) {
+        return DefaultNioFlow.from(OrderRequest.class)
+                .filter(validation::isValid)
+                .adapt(pricing::price)                 // OrderRequest -> Order
                 .handle("tax", pricing::withTax)
-                .background("audit", audit::record)
-                .adapt(OrderReceipt::from);
-    }
-
-    private static Segment<Order, Order> fraudGate(RiskService risk) {
-        return lane -> lane
-                .handle("risk-score", risk::score)
-                .when(order -> order.riskScore() > 80)
-                .then(l -> l.handle("hold", risk::hold))
-                .otherwise(l -> l.handle("clear", risk::clear));
+                .background("audit", audit::record);
     }
 }
 ```
 
-Exposing the engine as its own bean gives admin components a handle for [runtime edits](runtime-editing.md).
+The bean's generic type documents the contract: it accepts `OrderRequest` and leaves the value as `Order`. That final type is what per-request steps see next.
 
-## Controllers
+## Lanes in a service
 
-One bean, unlimited concurrent requests — each `just()` is an isolated execution:
+One bean serves every business case: a service opens an execution with `just()` and routes it through its own lanes. These per-request forks never touch the shared definition — any number of them run concurrently:
 
 ```java
-@RestController
-public class OrderController {
+@Service
+public class OrderService {
 
-    private final NioFlow<OrderRequest, OrderReceipt> orderFlow;
+    private final NioFlow<OrderRequest, Order> orderFlow;
+    private final ShippingService shipping;
 
-    OrderController(NioFlow<OrderRequest, OrderReceipt> orderFlow) {
+    public OrderService(NioFlow<OrderRequest, Order> orderFlow, ShippingService shipping) {
         this.orderFlow = orderFlow;
+        this.shipping = shipping;
     }
 
-    @PostMapping("/orders")
-    public CompletableFuture<OrderReceipt> create(@RequestBody OrderRequest request) {
-        // Returning the future keeps the servlet thread free: non-blocking endpoint.
-        return orderFlow.just(request).executeAsync();
-    }
-
-    @PostMapping("/accounts/{id}/movements")
-    public CompletableFuture<OrderReceipt> move(@PathVariable String id,
-                                                @RequestBody OrderRequest request) {
-        // Same-account movements apply in arrival order.
-        return orderFlow.just(request).key(id).executeAsync();
-    }
-}
-```
-
-## An admin endpoint for live edits
-
-The operational superpower: change the running pipeline from an endpoint (secure it accordingly):
-
-```java
-@RestController
-@RequestMapping("/admin/flow")
-public class FlowAdminController {
-
-    private final NioEngine orderEngine;
-    private final DefaultNioFlow<OrderRequest, OrderReceipt> orderFlow;
-
-    @PostMapping("/tax-rate")
-    public String retax(@RequestParam double rate) {
-        orderEngine.splice("tax", Splice.REPLACE, List.of(new Stage("tax",
-                value -> ((Order) value).withTax(rate), false, null, null, List.of())));
-        return "tax stage replaced: rate=" + rate;
-    }
-
-    @PostMapping("/fraud-gate/strict")
-    public String tightenFraudGate() {
-        orderFlow.replaceRegion("fraud-gate", lane -> lane
-                .handle("risk-score", risk::score)
-                .filter(order -> order.riskScore() < 50));   // whole region, one atomic swap
-        return "fraud gate tightened";
-    }
-
-    @GetMapping("/chain")
-    public List<String> chain() {
-        return orderEngine.chain().stream()
-                .map(link -> switch (link) {
-                    case Stage s -> "stage:" + s.name();
-                    case Batch b -> "batch:" + b.name();
-                    case Background b -> "background:" + b.name();
-                    case Recovery r -> "recovery:" + r.name();
-                    case FanOut f -> "fanout:" + f.name();
-                    case Decision d -> "decision:" + d.id();
-                    case Filter f -> "filter";
-                })
-                .toList();
+    public CompletableFuture<Order> place(OrderRequest request) {
+        return orderFlow.just(request)
+                .match()
+                .is(Order::isPriority, lane -> lane
+                        .handle("expedite", shipping::expedite)
+                        .background("notify-vip", shipping::notifyVip))
+                .is(Order::isBulk, lane -> lane
+                        .handle("split-shipments", shipping::split))
+                .otherwise(lane -> lane
+                        .handle("standard", shipping::standard))
+                .executeAsync();     // return it from a controller: non-blocking endpoint
     }
 }
 ```
 
-In-flight requests are never affected by an edit — they finish on the chain snapshot they started with.
+`match()` is first-match-wins: a priority order never evaluates the bulk case. The lanes operate on `Order` — the type where the shared chain left the value — and the shared steps (validation, pricing, tax, audit) always run first.
 
-## Hardening for production
+That is the whole integration. From here:
 
-Optional, but recommended once the definition stabilizes: call `orderEngine.seal()` at the end of the config method. Sealing freezes appends, **validates every subsequent splice or region swap** (a broken edit is rejected and the running chain stays intact), and compiles a dispatch plan. Runtime editing keeps working — that is the point.
-
-## Observability
-
-Install the metrics SPI, or the OpenTelemetry adapter if `opentelemetry-api` is on your classpath:
-
-```java
-@Bean
-public NioEngine orderEngine(Meter meter) {
-    NioEngine engine = new DefaultNioEngine();
-    engine.metrics(new OpenTelemetryMetrics(meter));
-    return engine;
-}
-```
-
-You get execution latency (completed/failed/filtered), per-stage latency, retries, recoveries, drops and queue depth. [Observability →](observability.md)
+- [Runtime editing](runtime-editing.md) — splice stages and swap regions of the bean's chain while it serves traffic
+- [Resilience](resilience.md) — timeouts, retries, rate limits and recovery on any stage
+- [Observability](observability.md) — metrics SPI and the OpenTelemetry adapter

@@ -7,7 +7,7 @@ flowchart LR
     RL[RateLimit<br/>gates admission] --> TO[Timeout<br/>per attempt] --> RT[Retry<br/>over attempts] --> RC["recover()"<br/>final net]
 ```
 
-All of it is native — zero dependencies. Circuit breaker and bulkhead stay external, through the optional [Resilience4j adapter](#resilience4j-circuit-breaker-and-bulkhead).
+All of it is native — zero dependencies. Circuit breaker and bulkhead stay external, through the optional Resilience4j adapter described at the end of this page.
 
 ## Rate limiting
 

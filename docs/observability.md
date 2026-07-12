@@ -2,7 +2,7 @@
 
 ## Flow-level taps
 
-The lightest tool — see [Pipeline API](pipeline-api.md#observing-outcomes--oncomplete--onerror):
+The lightest tool — see [Pipeline API](pipeline-api.md):
 
 ```java
 flow.onComplete(receipt -> metrics.increment("orders.completed"))
