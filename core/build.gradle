@@ -1,6 +1,7 @@
 plugins {
     id 'java'
     id 'com.vanniktech.maven.publish' version '0.37.0'
+    id "org.sonarqube" version "7.3.1.8318"
 }
 
 group = 'dev.nioflow'
@@ -31,6 +32,13 @@ test {
 tasks.withType(Javadoc).configureEach {
     options.addStringOption('Xdoclint:none', '-quiet')
     options.addStringOption('encoding', 'UTF-8')
+}
+
+sonar {
+    properties {
+        property "sonar.projectKey", "fabiangftech_nioflow"
+        property "sonar.organization", "guaman"
+    }
 }
 
 mavenPublishing {
