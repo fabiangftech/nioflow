@@ -152,6 +152,9 @@
       cursor: pointer;
     }
     .cover-copy:hover { background: var(--boss-soft); }
+    /* The cover has its own Copy button: suppress the plugin's floating one. */
+    section.cover .docsify-copy-code-button,
+    section.cover .docsify-copy-code-button span { display: none !important; }
 
     /* Signature: the pipeline strip. Indigo pills = boss-side links
        (routing decisions); cyan pills = stages on virtual workers. A
@@ -235,11 +238,11 @@
       border-bottom: 1px solid var(--line);
       z-index: 40;
     }
-    .nav-brand {
+    nav.app-nav a.nav-brand {
       order: -1;
       display: flex;
       align-items: center;
-      margin-right: 26px;
+      margin: 0 auto 0 0;
       font-weight: 800;
       font-size: 1.05rem;
       letter-spacing: -0.03em;
@@ -247,17 +250,16 @@
       text-decoration: none;
       white-space: nowrap;
     }
-    .nav-brand::before {
+    nav.app-nav a.nav-brand::before {
       content: '';
       width: 22px;
       height: 22px;
       margin-right: auto;
       background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='9' cy='16' r='6' fill='%234F46E5'/><circle cx='23' cy='16' r='6' fill='%230891B2'/></svg>") no-repeat center / contain;
     }
-    .nav-brand span { color: var(--boss); }
-    .nav-brand:hover { opacity: .85; }
+    nav.app-nav a.nav-brand span { color: var(--boss); }
+    nav.app-nav a.nav-brand:hover { opacity: .85; }
     nav.app-nav ul {
-      flex: 1;
       display: flex;
       align-items: center;
       flex-wrap: nowrap;
@@ -265,16 +267,17 @@
       margin: 0;
       padding: 0;
     }
-    /* GitHub icon rides the right edge */
-    nav.app-nav li:last-child { margin-left: auto; }
-    nav.app-nav a.nav-github {
+    /* Icon links (Maven Central, GitHub) close the bar */
+    nav.app-nav a.nav-icon {
       display: flex;
       align-items: center;
       padding: 8px;
       border-radius: 999px;
       color: var(--ink-soft);
     }
-    nav.app-nav a.nav-github:hover { color: var(--ink); background: var(--mist); }
+    nav.app-nav a.nav-icon:hover { color: var(--ink); background: var(--mist); }
+    /* Small breath between text links and the icon pair */
+    nav.app-nav li:nth-last-child(2) { margin-left: 10px; }
     nav.app-nav li { display: block; flex: none; margin: 0; padding: 0; }
     nav.app-nav li a { white-space: nowrap; }
     nav.app-nav li a {
@@ -297,7 +300,8 @@
       /* Everything else lives in the sidebar and the cover buttons:
          keep the bar to brand + the GitHub icon. */
       nav.app-nav li { display: none; }
-      nav.app-nav li:last-child { display: block; }
+      nav.app-nav li:nth-last-child(-n+2) { display: block; }
+      nav.app-nav li:nth-last-child(2) { margin-left: 0; }
     }
 
     /* Everything sits below the fixed bar */
@@ -540,15 +544,22 @@
             + '<li><a href="#/overview" title="Overview">Overview</a></li>'
             + '<li><a href="#/quickstart" title="Quickstart">Quickstart</a></li>'
             + '<li><a href="#/api-reference" title="API reference">API reference</a></li>'
-            + '<li><a href="https://central.sonatype.com/artifact/dev.nioflow/nioflow-core" title="Maven Central">Maven Central</a></li>'
-            + '<li><a class="nav-github" href="https://github.com/fabiangftech/nioflow" title="GitHub" aria-label="GitHub repository"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg></a></li>'
+            + '<li><a class="nav-icon nav-maven" href="https://central.sonatype.com/artifact/dev.nioflow/nioflow-core" title="Maven Central" aria-label="Maven Central"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12.876.64a1.75 1.75 0 0 0-1.75 0l-8.5 4.9a1.75 1.75 0 0 0-.876 1.515v9.89c0 .625.334 1.203.876 1.516l8.5 4.9c.541.313 1.208.313 1.75 0l8.5-4.9c.542-.313.876-.89.876-1.516v-9.89a1.75 1.75 0 0 0-.876-1.516ZM11.875 1.94a.25.25 0 0 1 .25 0l7.625 4.398-7.75 4.47-7.75-4.47Zm-8.625 5.696 7.75 4.47v8.897l-7.5-4.324a.25.25 0 0 1-.125-.216Zm9.25 13.367v-8.896l7.75-4.471v8.75a.25.25 0 0 1-.125.217Z"/></svg></a></li>'
+            + '<li><a class="nav-icon nav-github" href="https://github.com/fabiangftech/nioflow" title="GitHub" aria-label="GitHub repository"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg></a></li>'
             + '</ul>';
-        hook.doneEach(function () {
+        // Docsify re-renders the navbar on every route change — sometimes
+        // AFTER this hook runs, which wiped the brand and let the links
+        // slide left. Watch the bar and restore both pieces whenever they
+        // go missing, so the layout never shifts between pages.
+        function keepNavbar() {
           var nav = document.querySelector('nav.app-nav');
-          if (nav && !nav.querySelector('ul')) {
+          if (!nav) {
+            return;
+          }
+          if (!nav.querySelector('ul')) {
             nav.innerHTML = NAV;
           }
-          if (nav && !nav.querySelector('.nav-brand')) {
+          if (!nav.querySelector('.nav-brand')) {
             var brand = document.createElement('a');
             brand.className = 'nav-brand';
             brand.href = '#/';
@@ -556,6 +567,17 @@
             brand.setAttribute('aria-label', 'nio-flow home');
             nav.insertBefore(brand, nav.firstChild);
           }
+        }
+
+        hook.mounted(function () {
+          var nav = document.querySelector('nav.app-nav');
+          if (nav) {
+            new MutationObserver(keepNavbar).observe(nav, { childList: true });
+          }
+        });
+
+        hook.doneEach(function () {
+          keepNavbar();
           // The cover may render after this hook: try now and shortly after.
           injectCoverCopy();
           setTimeout(injectCoverCopy, 150);
