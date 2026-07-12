@@ -4,6 +4,19 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](https://openjdk.org/)
 [![Website](https://img.shields.io/badge/web-nioflow.dev-1a7f5a)](https://nioflow.dev)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=bugs)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=coverage)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Duplicated Lines (%)](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=duplicated_lines_density)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=sqale_index)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
 
 **nioflow** is a Java library for building business pipelines as fluent, typed flows that run on an event-loop engine — and can be **edited while they run**.
 
