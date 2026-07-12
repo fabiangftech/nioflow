@@ -47,45 +47,10 @@ final class ChainValidator {
             Link link = links.get(i);
             String label = describe(link, i);
 
-            List<Guard> guards = link.guards();
-            if (guards != null) {
-                Map<Integer, Boolean> expectations = new HashMap<>();
-                for (Guard guard : guards) {
-                    if (!declaredDecisions.contains(guard.decision())) {
-                        problems.add(label + " is guarded by decision " + guard.decision()
-                                + " which is not declared upstream (the link can never run)");
-                    }
-                    Boolean previous = expectations.put(guard.decision(), guard.expected());
-                    if (previous != null && previous != guard.expected()) {
-                        problems.add(label + " has contradictory guards on decision " + guard.decision()
-                                + " (the link can never run)");
-                    }
-                }
-            }
-
-            String anchor = anchorName(link);
-            if (anchor != null) {
-                Integer firstIndex = anchorNames.putIfAbsent(anchor, i);
-                if (firstIndex != null) {
-                    problems.add(label + " duplicates the anchor name '" + anchor
-                            + "' already used at index " + firstIndex + " (splice would be ambiguous)");
-                }
-            }
-
-            if (link instanceof Recovery && !fallibleUpstream) {
-                problems.add(label + " has nothing fallible upstream to recover from");
-            }
-
-            if (link instanceof Stage stage && stage.sync()) {
-                if (stage.timeout() != null) {
-                    problems.add(label + " is sync (boss-inlined) but declares a timeout"
-                            + " (an inlined call cannot be cut; drop the timeout or the sync marker)");
-                }
-                if (stage.retry() != null) {
-                    problems.add(label + " is sync (boss-inlined) but declares a retry policy"
-                            + " (backoff would park the boss; drop the retry or the sync marker)");
-                }
-            }
+            checkGuards(link, label, declaredDecisions, problems);
+            checkAnchor(link, label, i, anchorNames, problems);
+            checkRecovery(link, label, fallibleUpstream, problems);
+            checkSyncStage(link, label, problems);
 
             if (link instanceof Decision decision) {
                 declaredDecisions.add(decision.id());
@@ -93,6 +58,58 @@ final class ChainValidator {
             fallibleUpstream = fallibleUpstream || isFallible(link);
         }
         return problems;
+    }
+
+    private static void checkGuards(Link link, String label, Set<Integer> declaredDecisions, List<String> problems) {
+        List<Guard> guards = link.guards();
+        if (guards == null) {
+            return;
+        }
+        Map<Integer, Boolean> expectations = new HashMap<>();
+        for (Guard guard : guards) {
+            if (!declaredDecisions.contains(guard.decision())) {
+                problems.add(label + " is guarded by decision " + guard.decision()
+                        + " which is not declared upstream (the link can never run)");
+            }
+            Boolean previous = expectations.put(guard.decision(), guard.expected());
+            if (previous != null && previous != guard.expected()) {
+                problems.add(label + " has contradictory guards on decision " + guard.decision()
+                        + " (the link can never run)");
+            }
+        }
+    }
+
+    private static void checkAnchor(Link link, String label, int index,
+                                    Map<String, Integer> anchorNames, List<String> problems) {
+        String anchor = anchorName(link);
+        if (anchor == null) {
+            return;
+        }
+        Integer firstIndex = anchorNames.putIfAbsent(anchor, index);
+        if (firstIndex != null) {
+            problems.add(label + " duplicates the anchor name '" + anchor
+                    + "' already used at index " + firstIndex + " (splice would be ambiguous)");
+        }
+    }
+
+    private static void checkRecovery(Link link, String label, boolean fallibleUpstream, List<String> problems) {
+        if (link instanceof Recovery && !fallibleUpstream) {
+            problems.add(label + " has nothing fallible upstream to recover from");
+        }
+    }
+
+    private static void checkSyncStage(Link link, String label, List<String> problems) {
+        if (!(link instanceof Stage stage) || !stage.sync()) {
+            return;
+        }
+        if (stage.timeout() != null) {
+            problems.add(label + " is sync (boss-inlined) but declares a timeout"
+                    + " (an inlined call cannot be cut; drop the timeout or the sync marker)");
+        }
+        if (stage.retry() != null) {
+            problems.add(label + " is sync (boss-inlined) but declares a retry policy"
+                    + " (backoff would park the boss; drop the retry or the sync marker)");
+        }
     }
 
     private static boolean isFallible(Link link) {
