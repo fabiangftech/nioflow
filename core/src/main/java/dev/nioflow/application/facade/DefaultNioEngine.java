@@ -6,6 +6,7 @@ import dev.nioflow.core.facade.Context.Key;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.Background;
+import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -38,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -110,6 +113,9 @@ public class DefaultNioEngine implements NioEngine {
     private final List<Consumer<Throwable>> errorHandlers = new CopyOnWriteArrayList<>();
     private final List<Consumer<Object>> completeHandlers = new CopyOnWriteArrayList<>();
     private final BlockingQueue<CompletableFuture<Object>> inFlight = new LinkedBlockingQueue<>();
+    // One in-flight group per Batch link instance (identity equality by
+    // design): executions from ANY boss park here until size or window.
+    private final ConcurrentHashMap<Batch, BatchGroup> batchGroups = new ConcurrentHashMap<>();
 
     public DefaultNioEngine() {
         this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, 0, OverflowPolicy.BLOCK);
@@ -449,6 +455,7 @@ public class DefaultNioEngine implements NioEngine {
                 case Background background -> background.name();
                 case Recovery recovery -> recovery.name();
                 case FanOut fanOut -> fanOut.name();
+                case Batch batch -> batch.name();
                 default -> null;
             };
             if (anchor.equals(name)) {
@@ -544,6 +551,106 @@ public class DefaultNioEngine implements NioEngine {
                 }
             }
             return true;
+        }
+    }
+
+    /**
+     * In-flight state of one Batch link. The batch point is where otherwise
+     * share-nothing executions meet, so a brief lock is the price of
+     * coalescing — the documented exception to the no-locks rule; it only
+     * guards list adds and the swap, never user code. The bulk function runs
+     * on a worker (the flush may be triggered by the timer wheel thread,
+     * which must never run user code) and each parked execution resumes on
+     * its own boss through its continuation.
+     */
+    private final class BatchGroup {
+
+        private final Batch batch;
+        private List<Object> values = new ArrayList<>();
+        private List<BiConsumer<Object, Throwable>> continuations = new ArrayList<>();
+        private TimerWheel.Timeout windowTimer;
+        // Bumped on every flush: a window firing for an already size-flushed
+        // (or previous) batch sees a stale generation and does nothing.
+        private long generation;
+
+        private BatchGroup(Batch batch) {
+            this.batch = batch;
+        }
+
+        void add(Object value, BiConsumer<Object, Throwable> continuation) {
+            List<Object> flushValues = null;
+            List<BiConsumer<Object, Throwable>> flushContinuations = null;
+            synchronized (this) {
+                values.add(value);
+                continuations.add(continuation);
+                if (values.size() == 1) {
+                    long expected = generation;
+                    windowTimer = TimerWheel.shared().schedule(batch.window().toNanos(),
+                            () -> flushWindow(expected));
+                }
+                if (values.size() >= batch.size()) {
+                    flushValues = values;
+                    flushContinuations = continuations;
+                    reset();
+                }
+            }
+            if (flushValues != null) {
+                dispatchBulk(flushValues, flushContinuations);
+            }
+        }
+
+        private void flushWindow(long expectedGeneration) {
+            List<Object> flushValues;
+            List<BiConsumer<Object, Throwable>> flushContinuations;
+            synchronized (this) {
+                if (generation != expectedGeneration) {
+                    return; // a size flush already took this batch
+                }
+                flushValues = values;
+                flushContinuations = continuations;
+                reset();
+            }
+            dispatchBulk(flushValues, flushContinuations);
+        }
+
+        // Always called under the group lock.
+        private void reset() {
+            values = new ArrayList<>();
+            continuations = new ArrayList<>();
+            generation++;
+            if (windowTimer != null) {
+                windowTimer.cancel();
+                windowTimer = null;
+            }
+        }
+
+        private void dispatchBulk(List<Object> batchValues, List<BiConsumer<Object, Throwable>> batchContinuations) {
+            try {
+                workersExecutorService.execute(() -> runBulk(batchValues, batchContinuations));
+            } catch (RejectedExecutionException rejected) {
+                // Workers gone mid-shutdown: every parked execution must
+                // still end (exceptionally), never hang.
+                batchContinuations.forEach(continuation -> continuation.accept(null, rejected));
+            }
+        }
+
+        private void runBulk(List<Object> batchValues, List<BiConsumer<Object, Throwable>> batchContinuations) {
+            List<Object> results;
+            try {
+                results = batch.bulk().apply(batchValues);
+                if (results == null || results.size() != batchValues.size()) {
+                    throw new IllegalStateException("Batch '" + batch.name() + "' bulk returned "
+                            + (results == null ? "null" : results.size() + " results")
+                            + " for " + batchValues.size() + " values");
+                }
+            } catch (Throwable error) {
+                Throwable failure = unwrap(error);
+                batchContinuations.forEach(continuation -> continuation.accept(null, failure));
+                return;
+            }
+            for (int i = 0; i < batchContinuations.size(); i++) {
+                batchContinuations.get(i).accept(results.get(i), null);
+            }
         }
     }
 
@@ -700,6 +807,13 @@ public class DefaultNioEngine implements NioEngine {
                                 dispatchFanOut(fanOut, index + 1, current);
                                 return; // the join resumes on the boss when all branches finish
                             }
+                            case Batch batch -> {
+                                // Parks this execution in the link's shared group; the
+                                // flush (size or window) resumes it on ITS boss with
+                                // its own element of the bulk result.
+                                joinBatch(batch, index + 1, current);
+                                return;
+                            }
                             case Recovery ignored -> {
                                 // Only applies on the error path (see recover)
                             }
@@ -851,6 +965,20 @@ public class DefaultNioEngine implements NioEngine {
                 }
             }
             return current;
+        }
+
+        // Hands this execution to the batch group and stops advancing; the
+        // group's flush calls the continuation, which hops back to THIS
+        // execution's boss to resume (or recover) — affinity preserved.
+        private void joinBatch(Batch batch, int resume, Object value) {
+            batchGroups.computeIfAbsent(batch, BatchGroup::new)
+                    .add(value, (element, error) -> resumeOnBoss(() -> {
+                        if (error != null) {
+                            recover(resume, error);
+                        } else {
+                            advance(resume, element);
+                        }
+                    }));
         }
 
         /**

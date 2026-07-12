@@ -129,6 +129,20 @@ class DefaultLane<T> implements Lane<T> {
 
     @Override
     @SuppressWarnings("unchecked")
+    public <R> Lane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
+        view.batch(size, window, bulk);
+        return (Lane<R>) this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R> Lane<R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk) {
+        view.batch(name, size, window, bulk);
+        return (Lane<R>) this;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
     public <R> Lane<R> use(Segment<T, R> segment) {
         segment.define(new DefaultLane<>(view));
         return (Lane<R>) this;

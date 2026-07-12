@@ -7,6 +7,7 @@ import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Background;
+import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
@@ -151,6 +152,19 @@ abstract class AbstractNioFlow<I, T> implements NioFlow<I, T> {
                 (Function<List<Object>, Object>) (Function<?, ?>) join,
                 guards()));
         return (NioFlow<I, C>) this;
+    }
+
+    @Override
+    public <R> NioFlow<I, R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
+        return batch(anonymousName("batch"), size, window, bulk);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R> NioFlow<I, R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk) {
+        appendLink(new Batch(name, size, window,
+                (Function<List<Object>, List<Object>>) (Function<?, ?>) bulk, guards()));
+        return (NioFlow<I, R>) this;
     }
 
     @Override

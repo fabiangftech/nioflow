@@ -94,6 +94,21 @@ public interface NioFlow<I, T> {
     <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
     /**
+     * Coalescing point for bulk work: executions reaching this link park
+     * until `size` of them accumulated or `window` elapsed since the first,
+     * then ONE bulk call receives all their values and must return one
+     * result per value, positionally. Each execution continues its own
+     * chain with its own element and each caller's future completes with
+     * its individual result — the batch is invisible to callers. A bulk
+     * failure (or a result of the wrong size) fails every batched
+     * execution, recoverable downstream per execution. Belongs on the
+     * shared definition: only executions of the same flow pool together.
+     */
+    <R> NioFlow<I, R> batch(int size, Duration window, Function<List<T>, List<R>> bulk);
+
+    <R> NioFlow<I, R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk);
+
+    /**
      * Embeds a reusable segment inline: its links join this chain as if they
      * had been declared here, and the pipeline continues at the segment's
      * output type.

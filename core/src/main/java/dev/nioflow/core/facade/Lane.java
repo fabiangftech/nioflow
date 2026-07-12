@@ -57,6 +57,14 @@ public interface Lane<T> {
 
     <R, C> Lane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
+    /**
+     * Coalescing point; see NioFlow#batch. Lane-scoped: only values routed
+     * through this branch pool together.
+     */
+    <R> Lane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk);
+
+    <R> Lane<R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk);
+
     <R> Lane<R> use(Segment<T, R> segment);
 
     Lane<T> filter(Predicate<T> predicate);

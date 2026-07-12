@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.model.Background;
+import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
@@ -99,6 +100,7 @@ final class ChainValidator {
         return switch (link) {
             case Stage ignored -> true;
             case FanOut ignored -> true;
+            case Batch ignored -> true; // the bulk call can fail every batched value
             case Decision ignored -> true; // predicates can throw
             case Filter ignored -> true;
             case Background ignored -> false;
@@ -112,6 +114,7 @@ final class ChainValidator {
             case Background background -> background.name();
             case Recovery recovery -> recovery.name();
             case FanOut fanOut -> fanOut.name();
+            case Batch batch -> batch.name();
             default -> null;
         };
     }

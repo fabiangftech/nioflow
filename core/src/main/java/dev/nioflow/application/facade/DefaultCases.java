@@ -155,6 +155,16 @@ final class DefaultCases<I, T> implements Cases<I, T> {
     }
 
     @Override
+    public <R> NioFlow<I, R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
+        return flow.batch(size, window, bulk);
+    }
+
+    @Override
+    public <R> NioFlow<I, R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk) {
+        return flow.batch(name, size, window, bulk);
+    }
+
+    @Override
     public <R> NioFlow<I, R> use(Segment<T, R> segment) {
         return flow.use(segment);
     }
