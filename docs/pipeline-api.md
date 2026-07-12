@@ -52,13 +52,19 @@ Keys are name-based, so a map handed to `engine.call(input, map)` interoperates 
 
 ## Re-typing — `adapt`
 
-The **only** step that changes the pipeline's value type:
+The step that moves the pipeline from one type to the next. It lives on the **per-request** builder (the shared definition is type-preserving, which is what lets `just()` start at the input type):
 
 ```java
-NioFlow<OrderRequest, Receipt> flow = DefaultNioFlow.from(OrderRequest.class)
-        .adapt(pricing::price)      // OrderRequest -> Order
-        .adapt(Receipt::from);      // Order -> Receipt
+NioFlow<OrderRequest, Receipt> flow = DefaultNioFlow.from(OrderRequest.class);
+
+Receipt receipt = flow.just(request)     // OrderRequest
+        .adapt(pricing::price)           // -> Order
+        .handle("tax", pricing::withTax) // still an Order
+        .adapt(Receipt::from)            // -> Receipt
+        .execute();                      // Receipt
 ```
+
+`fanOut`, `batch` and `use(segment)` re-type the value too. Everything else preserves it.
 
 ## Cutting the flow — `filter`
 

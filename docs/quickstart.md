@@ -33,19 +33,22 @@ A flow is declared once — usually at startup — and executed many times, once
 import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.facade.NioFlow;
 
+// Declared once: takes a String, answers an Integer.
 NioFlow<String, Integer> flow = DefaultNioFlow.from(String.class)
         .handle("trim", String::trim)          // named stages are editable later
-        .filter(s -> !s.isEmpty())             // cut the flow: execute() returns null
-        .adapt(String::length);                // re-types the pipeline: String -> Integer
+        .filter(s -> !s.isEmpty());            // cut the flow: execute() returns null
 
-Integer length = flow.just("  hello  ").execute();   // 5
+// Per request: the pipeline starts at the INPUT type.
+Integer length = flow.just("  hello  ")        // String
+        .adapt(String::length)                 // -> Integer
+        .execute();                            // 5
 ```
 
 Three things just happened:
 
-1. `from(String.class)` anchored the **input type** `I = String`. From here, `adapt` is the only step that changes the value's type `T`.
-2. Each builder call appended a **link** to the engine's chain. The chain stays open: you can keep appending, or edit it live — see [Runtime editing](runtime-editing.md).
-3. `just(input)` opened an isolated, per-request **execution** over a snapshot of the chain, and `execute()` ran it.
+1. `from(String.class)` anchored the **input type** `I = String`, and the `Integer` in the flow's type is the **output** its pipelines must reach.
+2. The shared definition (`handle`, `filter`) is **type-preserving**: it takes a String and leaves a String. That is what lets `just()` hand you a builder that starts at the input type — `adapt` is the step that re-types the value, and the compiler follows it from there.
+3. `just(input)` opened an isolated, per-request **execution** over a snapshot of the chain, and `execute()` ran it. Drop the `adapt` and this does not compile: `execute()` would give you a String, not the Integer the method wants.
 
 ## Blocking, async, or explicit
 

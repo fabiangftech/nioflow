@@ -14,7 +14,7 @@ final class DefaultLaneBranch<T> extends DefaultLane<T> implements LaneBranch<T>
 
     private final int decision;
 
-    DefaultLaneBranch(AbstractNioFlow<?, T> view, int decision) {
+    DefaultLaneBranch(AbstractChain<T> view, int decision) {
         super(view);
         this.decision = decision;
     }
@@ -22,7 +22,7 @@ final class DefaultLaneBranch<T> extends DefaultLane<T> implements LaneBranch<T>
     @Override
     public Lane<T> otherwise(UnaryOperator<Lane<T>> lane) {
         lane.apply(new DefaultLane<>(view.withGuards(
-                AbstractNioFlow.withGuard(view.guards(), new Guard(decision, false)))));
+                AbstractChain.withGuard(view.guards(), new Guard(decision, false)))));
         return new DefaultLane<>(view);
     }
 }

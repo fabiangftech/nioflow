@@ -9,10 +9,10 @@ import java.util.function.UnaryOperator;
 
 final class DefaultLaneCondition<T> implements LaneCondition<T> {
 
-    private final AbstractNioFlow<?, T> view;
+    private final AbstractChain<T> view;
     private final int decision;
 
-    DefaultLaneCondition(AbstractNioFlow<?, T> view, int decision) {
+    DefaultLaneCondition(AbstractChain<T> view, int decision) {
         this.view = view;
         this.decision = decision;
     }
@@ -20,7 +20,7 @@ final class DefaultLaneCondition<T> implements LaneCondition<T> {
     @Override
     public LaneBranch<T> then(UnaryOperator<Lane<T>> lane) {
         lane.apply(new DefaultLane<>(view.withGuards(
-                AbstractNioFlow.withGuard(view.guards(), new Guard(decision, true)))));
+                AbstractChain.withGuard(view.guards(), new Guard(decision, true)))));
         return new DefaultLaneBranch<>(view, decision);
     }
 }

@@ -42,6 +42,12 @@ public class SampleController {
         return this.sampleService.report(value);
     }
 
+    /** 3b. The contract: Integer in, String out — the pipeline has to get there. */
+    @GetMapping("/credit/{cents}")
+    public String credit(@PathVariable int cents) {
+        return this.sampleService.credit(cents);
+    }
+
     /** 3b. Different input and output types: cents in, formatted invoice out. */
     @GetMapping("/invoice/{cents}")
     public String invoice(@PathVariable int cents) {

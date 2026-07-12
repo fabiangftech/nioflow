@@ -19,17 +19,17 @@ final class DefaultLaneCases<T> extends DefaultLane<T> implements LaneCases<T> {
 
     private final List<Guard> priorCasesFalse = new ArrayList<>();
 
-    DefaultLaneCases(AbstractNioFlow<?, T> view) {
+    DefaultLaneCases(AbstractChain<T> view) {
         super(view);
     }
 
     @Override
     public LaneCases<T> is(Predicate<T> predicate, UnaryOperator<Lane<T>> lane) {
-        AbstractNioFlow<?, T> evaluation = view.withGuards(
-                AbstractNioFlow.withGuards(view.guards(), priorCasesFalse));
+        AbstractChain<T> evaluation = view.withGuards(
+                AbstractChain.withGuards(view.guards(), priorCasesFalse));
         int decision = evaluation.appendDecision(predicate);
         lane.apply(new DefaultLane<>(evaluation.withGuards(
-                AbstractNioFlow.withGuard(evaluation.guards(), new Guard(decision, true)))));
+                AbstractChain.withGuard(evaluation.guards(), new Guard(decision, true)))));
         priorCasesFalse.add(new Guard(decision, false));
         return this;
     }
@@ -37,7 +37,7 @@ final class DefaultLaneCases<T> extends DefaultLane<T> implements LaneCases<T> {
     @Override
     public Lane<T> otherwise(UnaryOperator<Lane<T>> lane) {
         lane.apply(new DefaultLane<>(view.withGuards(
-                AbstractNioFlow.withGuards(view.guards(), priorCasesFalse))));
+                AbstractChain.withGuards(view.guards(), priorCasesFalse))));
         return new DefaultLane<>(view);
     }
 }

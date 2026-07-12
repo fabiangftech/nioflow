@@ -1,23 +1,12 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.Cases;
-import dev.nioflow.core.facade.Context;
-import dev.nioflow.core.facade.FlowResult;
-import dev.nioflow.core.facade.Condition;
 import dev.nioflow.core.facade.Lane;
 import dev.nioflow.core.facade.NioFlow;
-import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Guard;
-import dev.nioflow.core.model.RateLimit;
-import dev.nioflow.core.model.Retry;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.time.Duration;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.BiFunction;
-import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
@@ -27,190 +16,35 @@ import java.util.function.UnaryOperator;
  * additionally requires its own decision true, and otherwise() requires all
  * false. Chaining after (with or without otherwise) returns to the main line.
  */
-final class DefaultCases<I, T> implements Cases<I, T> {
+final class DefaultCases<I, O> extends NioFlowDelegate<I, O> implements Cases<I, O> {
 
-    private final AbstractNioFlow<I, T> flow;
+    private final DefaultNioFlow<I, O> flow;
     private final List<Guard> priorCasesFalse = new ArrayList<>();
 
-    DefaultCases(AbstractNioFlow<I, T> flow) {
+    DefaultCases(DefaultNioFlow<I, O> flow) {
         this.flow = flow;
     }
 
     @Override
-    public Cases<I, T> is(Predicate<T> predicate, UnaryOperator<Lane<T>> lane) {
-        AbstractNioFlow<I, T> evaluation = flow.withGuards(
-                AbstractNioFlow.withGuards(flow.guards(), priorCasesFalse));
+    DefaultNioFlow<I, O> flow() {
+        return flow;
+    }
+
+    @Override
+    public Cases<I, O> is(Predicate<I> predicate, UnaryOperator<Lane<I>> lane) {
+        AbstractChain<I> evaluation = flow.withGuards(
+                AbstractChain.withGuards(flow.guards(), priorCasesFalse));
         int decision = evaluation.appendDecision(predicate);
         lane.apply(new DefaultLane<>(evaluation.withGuards(
-                AbstractNioFlow.withGuard(evaluation.guards(), new Guard(decision, true)))));
+                AbstractChain.withGuard(evaluation.guards(), new Guard(decision, true)))));
         priorCasesFalse.add(new Guard(decision, false));
         return this;
     }
 
     @Override
-    public NioFlow<I, T> otherwise(UnaryOperator<Lane<T>> lane) {
+    public NioFlow<I, O> otherwise(UnaryOperator<Lane<I>> lane) {
         lane.apply(new DefaultLane<>(flow.withGuards(
-                AbstractNioFlow.withGuards(flow.guards(), priorCasesFalse))));
+                AbstractChain.withGuards(flow.guards(), priorCasesFalse))));
         return flow;
-    }
-
-    @Override
-    public NioFlow<I, T> just(I input) {
-        return flow.just(input);
-    }
-
-    @Override
-    public NioFlow<I, T> justAll(Iterable<I> inputs) {
-        return flow.justAll(inputs);
-    }
-
-    @Override
-    public NioFlow<I, T> handle(Function<T, T> function) {
-        return flow.handle(function);
-    }
-
-    @Override
-    public NioFlow<I, T> handle(String name, Function<T, T> function) {
-        return flow.handle(name, function);
-    }
-
-    @Override
-    public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout) {
-        return flow.handle(name, function, timeout);
-    }
-
-    @Override
-    public NioFlow<I, T> handle(String name, Function<T, T> function, Retry retry) {
-        return flow.handle(name, function, retry);
-    }
-
-    @Override
-    public NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
-        return flow.handle(name, function, timeout, retry);
-    }
-
-    @Override
-    public NioFlow<I, T> handle(String name, Function<T, T> function, RateLimit rateLimit) {
-        return flow.handle(name, function, rateLimit);
-    }
-
-    @Override
-    public NioFlow<I, T> handleContextual(BiFunction<T, Context, T> function) {
-        return flow.handleContextual(function);
-    }
-
-    @Override
-    public NioFlow<I, T> handleContextual(String name, BiFunction<T, Context, T> function) {
-        return flow.handleContextual(name, function);
-    }
-
-    @Override
-    public NioFlow<I, T> onComplete(Consumer<T> callback) {
-        return flow.onComplete(callback);
-    }
-
-    @Override
-    public NioFlow<I, T> onError(Consumer<Throwable> callback) {
-        return flow.onError(callback);
-    }
-
-    @Override
-    public NioFlow<I, T> handleSync(Function<T, T> function) {
-        return flow.handleSync(function);
-    }
-
-    @Override
-    public NioFlow<I, T> handleSync(String name, Function<T, T> function) {
-        return flow.handleSync(name, function);
-    }
-
-    @Override
-    public NioFlow<I, T> background(Consumer<T> effect) {
-        return flow.background(effect);
-    }
-
-    @Override
-    public NioFlow<I, T> background(String name, Consumer<T> effect) {
-        return flow.background(name, effect);
-    }
-
-    @Override
-    public <R> NioFlow<I, R> adapt(Function<T, R> function) {
-        return flow.adapt(function);
-    }
-
-    @Override
-    public <R, C> NioFlow<I, C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join) {
-        return flow.fanOut(branches, join);
-    }
-
-    @Override
-    public <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join) {
-        return flow.fanOut(name, branches, join);
-    }
-
-    @Override
-    public NioFlow<I, T> filter(Predicate<T> predicate) {
-        return flow.filter(predicate);
-    }
-
-    @Override
-    public <R> NioFlow<I, R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
-        return flow.batch(size, window, bulk);
-    }
-
-    @Override
-    public <R> NioFlow<I, R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk) {
-        return flow.batch(name, size, window, bulk);
-    }
-
-    @Override
-    public <R> NioFlow<I, R> use(Segment<T, R> segment) {
-        return flow.use(segment);
-    }
-
-    @Override
-    public <R> NioFlow<I, R> use(String region, Segment<T, R> segment) {
-        return flow.use(region, segment);
-    }
-
-    @Override
-    public NioFlow<I, T> recover(Function<Throwable, T> function) {
-        return flow.recover(function);
-    }
-
-    @Override
-    public NioFlow<I, T> recover(String name, Function<Throwable, T> function) {
-        return flow.recover(name, function);
-    }
-
-    @Override
-    public NioFlow<I, T> key(Object key) {
-        return flow.key(key);
-    }
-
-    @Override
-    public Condition<I, T> when(Predicate<T> predicate) {
-        return flow.when(predicate);
-    }
-
-    @Override
-    public Cases<I, T> match() {
-        return flow.match();
-    }
-
-    @Override
-    public T execute() {
-        return flow.execute();
-    }
-
-    @Override
-    public CompletableFuture<T> executeAsync() {
-        return flow.executeAsync();
-    }
-
-    @Override
-    public FlowResult<T> executeResult() {
-        return flow.executeResult();
     }
 }

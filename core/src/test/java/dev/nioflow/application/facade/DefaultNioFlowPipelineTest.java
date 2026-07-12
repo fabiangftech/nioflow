@@ -9,7 +9,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultNioFlowPipelineTest {
@@ -48,12 +47,15 @@ class DefaultNioFlowPipelineTest {
     }
 
     @Test
-    void sharedAdaptTypesTheStepsAfterJust() {
-        NioFlow<String, Integer> flow = DefaultNioFlow.from(String.class)
-                .handle(String::trim)
-                .adapt(String::length);
+    void justStartsAtTheInputTypeEvenWithASharedChain() {
+        // The shared definition is type-preserving (String in, String out), so
+        // the per-request pipeline starts at the INPUT type: the first step
+        // chained after just() receives exactly what just() was handed.
+        NioFlow<String, Integer> flow = DefaultNioFlow.<String, Integer>from(String.class)
+                .handle("trim", String::trim);
 
         Integer result = flow.just("  hola  ")
+                .adapt(String::length)              // String here, Integer from now on
                 .handle(value -> value * 2)
                 .execute();
 
@@ -74,10 +76,7 @@ class DefaultNioFlowPipelineTest {
         assertEquals("mundo", sharedOnly);
     }
 
-    @Test
-    void executeWithoutJustIsRejected() {
-        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
-
-        assertThrows(IllegalStateException.class, flow::execute);
-    }
+    // Executing without just() used to throw at runtime; the split between
+    // NioFlow (the definition) and NioStep (the per-request pipeline) makes it
+    // a compile error, so there is nothing left to assert here.
 }

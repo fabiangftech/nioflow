@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.NioStep;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -56,7 +57,7 @@ class DefaultNioFlowCallbacksTest extends EngineTestSupport {
         });
         var observed = new AtomicReference<Throwable>();
 
-        NioFlow<Integer, Integer> execution = flow.just(1).onError(observed::set);
+        NioStep<Integer, Integer> execution = flow.just(1).onError(observed::set);
         assertThrows(CompletionException.class, execution::execute);
 
         assertInstanceOf(IllegalStateException.class, observed.get());

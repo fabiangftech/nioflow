@@ -150,9 +150,6 @@ class DefaultNioFlowKeyedTest extends EngineTestSupport {
         assertEquals(0, engine.activeKeyLanes(), "drained lanes must be removed — no key leak");
     }
 
-    @Test
-    void keyOnTheSharedDefinitionIsRejected() {
-        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
-        assertThrows(IllegalStateException.class, () -> flow.key("nope"));
-    }
+    // key() only exists on NioStep (an execution), so calling it on the shared
+    // definition no longer compiles — it used to throw at runtime.
 }

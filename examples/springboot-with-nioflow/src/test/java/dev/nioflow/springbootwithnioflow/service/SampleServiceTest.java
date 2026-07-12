@@ -58,6 +58,13 @@ class SampleServiceTest {
     }
 
     @Test
+    void thePipelineStartsAtTheInputTypeAndAdaptTakesItToTheOutput() {
+        // NioFlow<Integer, String>: just() hands the cents to "charge" as an
+        // Integer, and the adapt is what produces the String this returns.
+        assertEquals("EUR 500", sampleService.credit(250));
+    }
+
+    @Test
     void aFlowCanTakeOneTypeInAndGiveAnotherOut() {
         // The bean is a NioFlow<Integer, String>: the shared chain applies VAT
         // (1_000 -> 1_210 cents) and formats it; the service continues from String.

@@ -16,154 +16,148 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * Lane implementation: wraps a guarded view of the flow and exposes only
+ * Lane implementation: wraps a guarded view of the chain and exposes only
  * step-building operations. Every link declared here inherits the lane's
- * guards; nested when/match compose guards automatically.
+ * guards; nested when/match compose guards automatically. Lanes work the same
+ * on the shared definition and inside a per-request pipeline — both are just
+ * chains over the value's current type.
  */
 class DefaultLane<T> implements Lane<T> {
 
-    final AbstractNioFlow<?, T> view;
+    final AbstractChain<T> view;
 
-    DefaultLane(AbstractNioFlow<?, T> view) {
+    DefaultLane(AbstractChain<T> view) {
         this.view = view;
     }
 
     @Override
     public Lane<T> handle(Function<T, T> function) {
-        view.handle(function);
-        return this;
+        return handle(view.anonymousName("stage"), function);
     }
 
     @Override
     public Lane<T> handle(String name, Function<T, T> function) {
-        view.handle(name, function);
+        view.stage(name, function);
         return this;
     }
 
     @Override
     public Lane<T> handle(String name, Function<T, T> function, Duration timeout) {
-        view.handle(name, function, timeout);
+        view.stage(name, function, timeout);
         return this;
     }
 
     @Override
     public Lane<T> handle(String name, Function<T, T> function, Retry retry) {
-        view.handle(name, function, retry);
+        view.stage(name, function, retry);
         return this;
     }
 
     @Override
     public Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
-        view.handle(name, function, timeout, retry);
+        view.stage(name, function, timeout, retry);
         return this;
     }
 
     @Override
     public Lane<T> handle(String name, Function<T, T> function, RateLimit rateLimit) {
-        view.handle(name, function, rateLimit);
+        view.rateLimitedStage(name, function, rateLimit);
         return this;
     }
 
     @Override
     public Lane<T> handleContextual(BiFunction<T, Context, T> function) {
-        view.handleContextual(function);
-        return this;
+        return handleContextual(view.anonymousName("stage"), function);
     }
 
     @Override
     public Lane<T> handleContextual(String name, BiFunction<T, Context, T> function) {
-        view.handleContextual(name, function);
+        view.contextualStage(name, function);
         return this;
     }
 
     @Override
     public Lane<T> handleSync(Function<T, T> function) {
-        view.handleSync(function);
-        return this;
+        return handleSync(view.anonymousName("sync"), function);
     }
 
     @Override
     public Lane<T> handleSync(String name, Function<T, T> function) {
-        view.handleSync(name, function);
+        view.syncStage(name, function);
         return this;
     }
 
     @Override
     public Lane<T> background(Consumer<T> effect) {
-        view.background(effect);
-        return this;
+        return background(view.anonymousName("background"), effect);
     }
 
     @Override
     public Lane<T> background(String name, Consumer<T> effect) {
-        view.background(name, effect);
+        view.backgroundEffect(name, effect);
         return this;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <R> Lane<R> adapt(Function<T, R> function) {
-        view.adapt(function);
-        return (Lane<R>) this;
+        view.adaptValue(function);
+        return retyped();
     }
 
     @Override
     public Lane<T> filter(Predicate<T> predicate) {
-        view.filter(predicate);
+        view.filterValues(predicate);
         return this;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <R, C> Lane<C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join) {
-        view.fanOut(branches, join);
-        return (Lane<C>) this;
+        return fanOut(view.anonymousName("fanout"), branches, join);
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <R, C> Lane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join) {
-        view.fanOut(name, branches, join);
-        return (Lane<C>) this;
+        view.fanOutBranches(name, branches, join);
+        return retyped();
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <R> Lane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
-        view.batch(size, window, bulk);
-        return (Lane<R>) this;
+        return batch(view.anonymousName("batch"), size, window, bulk);
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <R> Lane<R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk) {
-        view.batch(name, size, window, bulk);
-        return (Lane<R>) this;
+        view.batchValues(name, size, window, bulk);
+        return retyped();
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <R> Lane<R> use(Segment<T, R> segment) {
-        segment.define(new DefaultLane<>(view));
-        return (Lane<R>) this;
+        view.embed(segment);
+        return retyped();
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public <R> Lane<R> use(String region, Segment<T, R> segment) {
-        view.use(region, segment);
+        view.embed(region, segment);
+        return retyped();
+    }
+
+    // The chain keeps moving Objects: only the static type changes.
+    @SuppressWarnings("unchecked")
+    private <R> Lane<R> retyped() {
         return (Lane<R>) this;
     }
 
     @Override
     public Lane<T> recover(Function<Throwable, T> function) {
-        view.recover(function);
-        return this;
+        return recover(view.anonymousName("recovery"), function);
     }
 
     @Override
     public Lane<T> recover(String name, Function<Throwable, T> function) {
-        view.recover(name, function);
+        view.recovery(name, function);
         return this;
     }
 

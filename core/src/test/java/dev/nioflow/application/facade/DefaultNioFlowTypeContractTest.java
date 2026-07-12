@@ -30,10 +30,17 @@ class DefaultNioFlowTypeContractTest {
 
     @Test
     void adaptIsWhatMovesTheOutputType() {
-        NioFlow<Integer, String> flow = DefaultNioFlow.from(Integer.class)
-                .adapt(value -> "n=" + value);      // Integer -> String, checked by the compiler
+        // The flow promises Integer in, String out. The per-request pipeline is
+        // what keeps that promise, and the compiler checks every step of it:
+        // drop the adapt and this method no longer returns a String.
+        NioFlow<Integer, String> flow = DefaultNioFlow.from(Integer.class);
 
-        assertEquals("n=7", flow.just(7).execute());
+        String result = flow.just(7)
+                .handle("double", value -> value * 2)   // still an Integer here
+                .adapt(value -> "n=" + value)           // Integer -> String
+                .execute();
+
+        assertEquals("n=14", result);
     }
 
     @Test

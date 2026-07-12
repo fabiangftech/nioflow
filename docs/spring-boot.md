@@ -8,6 +8,12 @@ nio-flow needs no starter: the flow is a singleton bean declared once, and every
 @Configuration
 public class NioFlowConfig {
 
+    /**
+     * The bean states its contract: it takes an OrderRequest and answers an
+     * Order. The shared definition is type-preserving — it is what every
+     * request runs first — and the per-request pipeline is where the value
+     * changes shape.
+     */
     @Bean(destroyMethod = "close")   // drains the engine on shutdown
     public NioFlow<OrderRequest, Order> orderFlow() {
         return DefaultNioFlow.from(OrderRequest.class);
@@ -15,7 +21,7 @@ public class NioFlowConfig {
 }
 ```
 
-The bean's generic type documents the contract: it accepts `OrderRequest` and leaves the value as `Order`. That final type is what per-request steps see next.
+The generics are the contract: `just()` accepts an `OrderRequest`, and the pipeline you write for each request has to reach an `Order`. The per-request builder **starts at the input type** — so your first step receives the `OrderRequest` — and `adapt` is what re-types it. Forget the `adapt` and the code does not compile.
 
 ## Lanes in a service
 
@@ -48,7 +54,7 @@ public class OrderService {
 }
 ```
 
-`match()` is first-match-wins: a priority order never evaluates the bulk case. The lanes operate on `Order` — the type where the shared chain left the value — and the shared steps (validation, pricing, tax, audit) always run first.
+`match()` is first-match-wins: a priority order never evaluates the bulk case. Note how the pipeline starts at the `OrderRequest` and the `adapt` is what turns it into the `Order` the lanes work with — and the `Order` the bean promised to return.
 
 That is the whole integration. From here:
 

@@ -4,21 +4,27 @@ import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.FlowResult.Completed;
 import dev.nioflow.core.facade.FlowResult.Filtered;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.NioStep;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultNioFlowResultTest {
 
-    /** Filter cuts negatives; zero maps to a GENUINE null value. */
+    /** The shared definition cuts negatives — type-preserving, as it must be. */
     private static NioFlow<Integer, String> ambiguousFlow() {
-        return DefaultNioFlow.<Integer>from(Integer.class)
-                .filter(value -> value >= 0)
+        NioFlow<Integer, String> flow = DefaultNioFlow.from(Integer.class);
+        flow.filter(value -> value >= 0);
+        return flow;
+    }
+
+    /** The per-request pipeline re-types it: zero maps to a GENUINE null value. */
+    private static NioStep<String, String> ambiguous(NioFlow<Integer, String> flow, int input) {
+        return flow.just(input)
                 .adapt(value -> value == 0 ? null : "value:" + value);
     }
 
@@ -27,12 +33,12 @@ class DefaultNioFlowResultTest {
         NioFlow<Integer, String> flow = ambiguousFlow();
 
         // execute() cannot tell these two apart:
-        assertNull(flow.just(-5).execute()); // filtered
-        assertNull(flow.just(0).execute());  // genuinely null
+        assertNull(ambiguous(flow, -5).execute()); // filtered
+        assertNull(ambiguous(flow, 0).execute());  // genuinely null
 
         // executeResult() can:
-        assertInstanceOf(Filtered.class, flow.just(-5).executeResult());
-        FlowResult<String> genuineNull = flow.just(0).executeResult();
+        assertInstanceOf(Filtered.class, ambiguous(flow, -5).executeResult());
+        FlowResult<String> genuineNull = ambiguous(flow, 0).executeResult();
         assertInstanceOf(Completed.class, genuineNull);
         assertNull(((Completed<String>) genuineNull).value());
     }
@@ -41,8 +47,8 @@ class DefaultNioFlowResultTest {
     void completedCarriesTheValueAndHelpersWork() {
         NioFlow<Integer, String> flow = ambiguousFlow();
 
-        FlowResult<String> completed = flow.just(7).executeResult();
-        FlowResult<String> filtered = flow.just(-1).executeResult();
+        FlowResult<String> completed = ambiguous(flow, 7).executeResult();
+        FlowResult<String> filtered = ambiguous(flow, -1).executeResult();
 
         assertEquals("value:7", switch (completed) {
             case Completed<String>(String value) -> value;
@@ -58,15 +64,11 @@ class DefaultNioFlowResultTest {
     void executeAndExecuteAsyncStillMapFilteredToNull() {
         NioFlow<Integer, String> flow = ambiguousFlow();
 
-        assertNull(flow.just(-5).execute());
-        assertNull(flow.just(-5).executeAsync().join());
-        assertEquals("value:3", flow.just(3).executeAsync().join());
+        assertNull(ambiguous(flow, -5).execute());
+        assertNull(ambiguous(flow, -5).executeAsync().join());
+        assertEquals("value:3", ambiguous(flow, 3).executeAsync().join());
     }
 
-    @Test
-    void executeResultWithoutJustIsRejected() {
-        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
-
-        assertThrows(IllegalStateException.class, flow::executeResult);
-    }
+    // executeResult() without just() used to throw at runtime; it now lives only
+    // on NioStep, so calling it on the shared definition is a compile error.
 }

@@ -41,6 +41,13 @@ class SampleControllerTest {
     }
 
     @Test
+    void creditTakesCentsAndAnswersAString() throws Exception {
+        mockMvc.perform(get("/credit/250"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("EUR 500"));
+    }
+
+    @Test
     void reportRetypesAndNormalizes() throws Exception {
         mockMvc.perform(get("/report/21"))
                 .andExpect(status().isOk())

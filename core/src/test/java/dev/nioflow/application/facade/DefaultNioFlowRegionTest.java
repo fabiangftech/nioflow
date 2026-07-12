@@ -119,10 +119,6 @@ class DefaultNioFlowRegionTest {
         assertThrows(IllegalArgumentException.class, () -> engine.spliceRegion("pricing", List.of()));
     }
 
-    @Test
-    void regionsOnExecutionsAreRejected() {
-        buildFlow();
-        assertThrows(UnsupportedOperationException.class,
-                () -> flow.just(1).use("late-region", lane -> lane.handle(value -> value)));
-    }
+    // Registering a region from an execution no longer compiles: use(region,
+    // segment) lives on NioFlow (the shared definition), not on NioStep.
 }

@@ -53,9 +53,9 @@ public class SampleService {
     /** One downstream dependency, one bucket: 5 calls per second, shared by every stage that uses it. */
     private static final RateLimit PROVIDER_LIMIT = RateLimit.of(5, Duration.ofMillis(200));
 
-    // One shared definition per contract (see NioFlowConfig): each declares what
-    // just() takes and what execute() gives back. A flow with no shared steps
-    // starts at T = I — adapt() is what moves the output type, per request.
+    // One shared definition per contract (see NioFlowConfig): I is what just()
+    // takes, O is what the pipeline must return. The per-request pipeline starts
+    // at I, and adapt is what moves the value towards O.
     private final NioFlow<String, String> greetingFlow;
     private final NioFlow<String, String> textFlow;
     private final NioFlow<String, String> gatewayFlow;
@@ -64,9 +64,10 @@ public class SampleService {
     private final NioFlow<Integer, Integer> numberFlow;
     private final NioFlow<Integer, Integer> orderedFlow;
     private final NioFlow<Integer, Integer> reportFlow;
-    // Input and output of different types: the SHARED chain adapts Integer -> String,
-    // so just() takes cents and everything chained after it starts from String.
+    // Input and output of different types: just() takes cents, and the pipeline
+    // adapts them into the String the contract promises.
     private final NioFlow<Integer, String> invoiceFlow;
+    private final NioFlow<Integer, String> creditFlow;
 
     // Observability for the tests and the demo endpoints.
     private final AtomicInteger bulkCalls = new AtomicInteger();
@@ -84,6 +85,19 @@ public class SampleService {
             log.info("one bulk call for {} values", values.size());
             return values.stream().map(String::toUpperCase).toList();
         });
+    }
+
+    /**
+     * The contract in one line: the flow takes an Integer and answers a String.
+     * just() starts the pipeline at the INPUT type, so "charge" receives the
+     * cents; adapt is what turns them into the String the method promises —
+     * leave it out and this does not compile.
+     */
+    public String credit(int cents) {
+        return creditFlow.just(cents)
+                .handle("charge", item -> item * 2)      // still cents here
+                .adapt(item -> "EUR " + item)            // Integer -> String
+                .execute();                              // String
     }
 
     /** 1. handle transforms the value; background runs after it, and nobody waits for it. */
@@ -128,14 +142,16 @@ public class SampleService {
 
     /**
      * 3b. A flow whose input and output are different types. The bean is a
-     * NioFlow&lt;Integer, String&gt;: just() takes cents, the shared chain applies VAT
-     * and formats them, and everything chained here continues from String — the
-     * generics say exactly what goes in and what comes out.
+     * NioFlow&lt;Integer, String&gt;: just() takes cents and the pipeline must reach a
+     * String — the generics say exactly what goes in and what comes out, and the
+     * compiler checks every step of the way there.
      */
     public String invoice(int cents) {
-        return invoiceFlow.just(cents)                 // Integer in
-                .handle("stamp", amount -> amount + " (VAT included)")   // already a String here
-                .execute();                            // String out
+        return invoiceFlow.just(cents)                              // Integer in
+                .handle("apply-vat", amount -> amount * 121 / 100)  // still cents
+                .adapt(amount -> "EUR " + (amount / 100) + "." + String.format("%02d", amount % 100))
+                .handle("stamp", amount -> amount + " (VAT included)")   // a String from here on
+                .execute();                                         // String out
     }
 
     /** 4. match is first-match-wins: a small order never evaluates the "bulk" case. */

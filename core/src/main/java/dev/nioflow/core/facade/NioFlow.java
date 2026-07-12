@@ -5,190 +5,162 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
- * End-to-end typed pipeline: I is the input type (what just accepts), T is
- * the value's type at the current point of the chain. adapt() is the only
- * step that changes T; everything else preserves it. Lifecycle (close) is
- * NOT part of this contract: it belongs to the root implementation that owns
- * the engine, never to branches or executions.
+ * The shared definition — the thing you declare once and execute per request.
+ *
+ * <p>The two type parameters are a promise: <b>{@code I} is what goes in
+ * ({@link #just(Object)} accepts it) and {@code O} is what comes out</b> of the
+ * pipeline you build for each request. So a
+ * {@code NioFlow<Integer, String>} takes an Integer and answers a String:
+ *
+ * <pre>
+ * NioFlow&lt;Integer, String&gt; credits = DefaultNioFlow.from(Integer.class);
+ *
+ * String credit(int cents) {
+ *     return credits.just(cents)               // the pipeline starts at the INPUT type
+ *             .handle("charge", item -&gt; item)  // item is an Integer here
+ *             .adapt(item -&gt; "EUR " + item)    // adapt is what re-types it
+ *             .execute();                      // returns String
+ * }
+ * </pre>
+ *
+ * <p>Because the value that reaches your first per-request step is the one the
+ * shared chain left behind, <b>the shared definition is type-preserving</b>:
+ * everything you declare here takes an {@code I} and leaves an {@code I}. That
+ * is why there is no {@code adapt} on this interface — re-typing belongs to
+ * {@link NioStep}, the per-request builder that {@code just()} hands you, where
+ * the compiler tracks the value's type step by step.
+ *
+ * <p>{@code O} states the contract of the pipelines you write; the compiler
+ * holds you to it through the return type of your own method (forget the
+ * {@code adapt} above and {@code credit()} will not compile). Lifecycle
+ * ({@code close}) is not part of this contract: it belongs to the root
+ * implementation that owns the engine.
  */
-public interface NioFlow<I, T> {
+public interface NioFlow<I, O> {
 
-    NioFlow<I, T> just(I input);
+    /**
+     * Opens an isolated execution over a snapshot of the shared chain, and
+     * hands back a builder that starts at the INPUT type. Any number of
+     * concurrent requests can do this on the same flow: they share nothing.
+     */
+    NioStep<I, O> just(I input);
 
-    NioFlow<I, T> justAll(Iterable<I> inputs);
+    /** Fire-and-forget through the shared chain; collect with engine.await(). */
+    NioFlow<I, O> justAll(Iterable<I> inputs);
 
-    NioFlow<I, T> handle(Function<T, T> function);
+    NioFlow<I, O> handle(Function<I, I> function);
 
-    NioFlow<I, T> handle(String name, Function<T, T> function);
+    NioFlow<I, O> handle(String name, Function<I, I> function);
 
     /**
      * Stage with a time budget: if the function does not finish within the
      * timeout, the value fails with a TimeoutException — catchable downstream
      * by recover(), like any other stage failure.
      */
-    NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout);
+    NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout);
 
     /**
      * Stage with a retry policy: failed attempts back off on the worker and,
      * once exhausted, the last failure flows to the recovery path. Composes
-     * in layers: timeout per attempt → retry over attempts → recover() as the
-     * final net.
+     * in layers: rate limit → timeout per attempt → retry over attempts →
+     * recover() as the final net.
      */
-    NioFlow<I, T> handle(String name, Function<T, T> function, Retry retry);
+    NioFlow<I, O> handle(String name, Function<I, I> function, Retry retry);
 
-    NioFlow<I, T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
+    NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout, Retry retry);
 
     /**
-     * Rate-limited stage: acquires a token from the bucket before each
-     * application, parking the (virtual) worker until one is due — the boss
-     * never waits, fusion is preserved, and the wait shows up in the stage's
-     * latency metric. Pass the SAME RateLimit instance to several stages to
-     * protect one downstream dependency behind all of them.
+     * Rate-limited stage: acquires a token before each application, parking
+     * the (virtual) worker until one is due — the boss never waits. Pass the
+     * SAME RateLimit instance to several stages to protect one downstream.
      */
-    NioFlow<I, T> handle(String name, Function<T, T> function, RateLimit rateLimit);
+    NioFlow<I, O> handle(String name, Function<I, I> function, RateLimit rateLimit);
 
     /**
      * Context-aware stage: besides the value it receives the typed
-     * per-execution Context (Context.Key accessors) — scratch state shared
-     * by this execution's stages without threading it through the value
-     * type. Plain stages never pay for the context; the backing map is
+     * per-execution Context. Plain stages never pay for it; the backing map is
      * created on the first put.
      */
-    NioFlow<I, T> handleContextual(BiFunction<T, Context, T> function);
+    NioFlow<I, O> handleContextual(BiFunction<I, Context, I> function);
 
-    NioFlow<I, T> handleContextual(String name, BiFunction<T, Context, T> function);
-
-    /**
-     * Opt-in for pure-CPU, sub-microsecond functions: runs inline on the
-     * boss thread, skipping both thread hops (boss→worker→boss). Same
-     * contract as when()/match() predicates — cheap and never blocking; a
-     * throw fails the value through the recovery path, never the engine.
-     * Deliberately has no timeout/retry variants: nothing can cut a
-     * boss-inlined call, and retry backoff would park the boss.
-     */
-    NioFlow<I, T> handleSync(Function<T, T> function);
-
-    NioFlow<I, T> handleSync(String name, Function<T, T> function);
-
-    NioFlow<I, T> background(Consumer<T> effect);
-
-    NioFlow<I, T> background(String name, Consumer<T> effect);
-
-    <R> NioFlow<I, R> adapt(Function<T, R> function);
+    NioFlow<I, O> handleContextual(String name, BiFunction<I, Context, I> function);
 
     /**
-     * Parallel split-join: every branch receives the current value and runs
-     * concurrently on the workers; join combines the branch results (in
-     * declaration order) into the value that continues down the chain. Any
-     * branch failure fails the fan-out — recoverable downstream.
+     * Opt-in for pure-CPU, sub-microsecond functions: runs inline on the event
+     * loop, skipping both thread hops. Same contract as when()/match()
+     * predicates — cheap and never blocking.
      */
-    <R, C> NioFlow<I, C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join);
+    NioFlow<I, O> handleSync(Function<I, I> function);
 
-    <R, C> NioFlow<I, C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
+    NioFlow<I, O> handleSync(String name, Function<I, I> function);
+
+    NioFlow<I, O> background(Consumer<I> effect);
+
+    NioFlow<I, O> background(String name, Consumer<I> effect);
+
+    NioFlow<I, O> filter(Predicate<I> predicate);
 
     /**
-     * Coalescing point for bulk work: executions reaching this link park
-     * until `size` of them accumulated or `window` elapsed since the first,
-     * then ONE bulk call receives all their values and must return one
-     * result per value, positionally. Each execution continues its own
-     * chain with its own element and each caller's future completes with
-     * its individual result — the batch is invisible to callers. A bulk
-     * failure (or a result of the wrong size) fails every batched
-     * execution, recoverable downstream per execution. Belongs on the
-     * shared definition: only executions of the same flow pool together.
+     * Parallel split-join. The branches may compute anything, but the join
+     * gives the value back as an {@code I}: the shared chain preserves the
+     * type. (Need the fan-out to re-type? Do it per request — see
+     * {@link NioStep#fanOut}.)
      */
-    <R> NioFlow<I, R> batch(int size, Duration window, Function<List<T>, List<R>> bulk);
+    <R> NioFlow<I, O> fanOut(List<Function<I, R>> branches, Function<List<R>, I> join);
 
-    <R> NioFlow<I, R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk);
+    <R> NioFlow<I, O> fanOut(String name, List<Function<I, R>> branches, Function<List<R>, I> join);
 
     /**
-     * Embeds a reusable segment inline: its links join this chain as if they
-     * had been declared here, and the pipeline continues at the segment's
-     * output type.
+     * Coalescing point for bulk work: executions park here until `size` of them
+     * accumulated or `window` elapsed, then ONE bulk call receives all their
+     * values and must return one result per value, positionally. Each caller
+     * still gets its own result — the batch is invisible to them. Belongs on
+     * the shared definition: only executions of the same flow pool together.
      */
-    <R> NioFlow<I, R> use(Segment<T, R> segment);
+    NioFlow<I, O> batch(int size, Duration window, Function<List<I>, List<I>> bulk);
+
+    NioFlow<I, O> batch(String name, int size, Duration window, Function<List<I>, List<I>> bulk);
+
+    /** Embeds a reusable segment inline, with the shared chain's type. */
+    NioFlow<I, O> use(Segment<I, I> segment);
 
     /**
-     * Like use(segment), and additionally remembers the embedded span as a
-     * named REGION: engine.spliceRegion(name, links) — or the root flow's
-     * replaceRegion(name, segment) — swaps the whole span atomically at
-     * runtime (one chain swap, one validation, one recompile), and the
-     * region re-points to the new links so it stays swappable. Regions
-     * belong to the shared definition; a just() execution rejects this.
+     * Embeds and remembers the span as a named REGION, so spliceRegion (or
+     * DefaultNioFlow.replaceRegion) can swap the whole thing atomically at
+     * runtime.
      */
-    <R> NioFlow<I, R> use(String region, Segment<T, R> segment);
-
-    NioFlow<I, T> filter(Predicate<T> predicate);
+    NioFlow<I, O> use(String region, Segment<I, I> segment);
 
     /**
      * Positional error handling: catches failures (exceptions and stage
      * timeouts) from links declared upstream of it, and the flow continues
-     * after it with the recovered value. Failures downstream are not caught.
+     * after it with the recovered value.
      */
-    NioFlow<I, T> recover(Function<Throwable, T> function);
+    NioFlow<I, O> recover(Function<Throwable, I> function);
 
-    NioFlow<I, T> recover(String name, Function<Throwable, T> function);
+    NioFlow<I, O> recover(String name, Function<Throwable, I> function);
 
     /**
-     * Observes successful outcomes: the callback receives the flow's terminal
-     * value (null for a filtered cut, like execute()). On the shared
-     * definition it fires for EVERY execution of the flow — inject/justAll
-     * included; on a just() execution it is scoped to that execution only.
-     * Declare it after the last re-typing step (adapt), since it observes the
-     * terminal value. Callbacks run on engine threads: keep them fast and
-     * never throw (a throwing complete callback is reported to onError).
+     * Observes successful outcomes of EVERY execution of this flow — the
+     * terminal value, which the pipelines you write are meant to leave at
+     * {@code O}. Callbacks run on engine threads: keep them fast and never
+     * throw (a throwing complete callback is reported to onError).
      */
-    NioFlow<I, T> onComplete(Consumer<T> callback);
+    NioFlow<I, O> onComplete(Consumer<O> callback);
 
     /**
-     * Observes failures: the callback receives the unwrapped terminal error
-     * of an execution no recover() caught. On the shared definition it is the
-     * engine's error tap — it also sees non-execution errors (rejected or
-     * dropped values, failing background effects); on a just() execution it
-     * is scoped to that execution only.
+     * The engine's error tap: terminal failures no recover() caught, plus
+     * rejected or dropped values and failing background effects.
      */
-    NioFlow<I, T> onError(Consumer<Throwable> callback);
+    NioFlow<I, O> onError(Consumer<Throwable> callback);
 
-    /**
-     * Orders this execution by business key, Kafka-partition style:
-     * executions sharing a (non-null) key run strictly one at a time in
-     * submission order, pinned to the same boss; distinct keys keep full
-     * parallelism. Only meaningful on a just() execution — the shared
-     * definition has no execution to key. A slow execution delays the
-     * NEXT ones of its own key only (head-of-line by design; a stage
-     * timeout bounds it).
-     */
-    NioFlow<I, T> key(Object key);
+    Condition<I, O> when(Predicate<I> predicate);
 
-    Condition<I, T> when(Predicate<T> predicate);
-
-    Cases<I, T> match();
-
-    /**
-     * Runs the execution and blocks the caller until the result is ready.
-     * Equivalent to executeAsync().join().
-     */
-    T execute();
-
-    /**
-     * Runs the execution and returns immediately with the promise of the
-     * result — the caller's thread never blocks. Returning this future from
-     * a Spring controller yields a non-blocking endpoint. It completes
-     * exceptionally with the terminal failure when no recover() caught it.
-     */
-    CompletableFuture<T> executeAsync();
-
-    /**
-     * Like execute(), but the outcome distinguishes a deliberate Filter cut
-     * (Filtered) from a completed value (Completed) — including a genuinely
-     * null one, which execute() cannot tell apart from a cut.
-     */
-    FlowResult<T> executeResult();
+    Cases<I, O> match();
 }

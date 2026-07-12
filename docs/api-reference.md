@@ -6,12 +6,19 @@ Compact reference for the public surface. Types live in `dev.nioflow.core.facade
 
 | Method | Returns | Notes |
 |---|---|---|
-| `DefaultNioFlow.from(Class<I>)` | `DefaultNioFlow<I, I>` | Own engine on the shared JVM pools |
-| `DefaultNioFlow.from(Class<I>, NioEngine)` | `DefaultNioFlow<I, I>` | Bring your own engine |
-| `flow.just(input)` | `NioFlow<I, T>` | Opens an isolated per-request execution |
+| `DefaultNioFlow.from(Class<I>)` | `DefaultNioFlow<I, O>` | Own engine on the shared JVM pools; the Class token lets `just()` reject a wrong input |
+| `DefaultNioFlow.from(Class<I>, NioEngine)` | `DefaultNioFlow<I, O>` | Bring your own engine |
+| `DefaultNioFlow.create()` | `DefaultNioFlow<I, O>` | No Class token — for generic beans (`NioFlow<?, ?>`); no input check |
+| `flow.just(input)` | `NioStep<I, O>` | Opens an isolated per-request pipeline, **starting at the input type** |
 | `flow.justAll(iterable)` | — | Fire-and-forget through the shared chain; collect with `engine.await()` |
 
-## `NioFlow<I, T>` — building
+## The two types
+
+`NioFlow<I, O>` is the **shared definition** (the bean): `I` goes in, `O` comes out. Its steps are type-preserving — that is what lets `just()` hand you a builder that starts at `I`.
+
+`NioStep<T, O>` is the **per-request pipeline** that `just()` returns: `T` is the value's type right here. `adapt`, `fanOut`, `batch` and `use` move `T`; the terminals return `T`, so the compiler tells you when a pipeline has not reached the `O` your method promised.
+
+## `NioFlow<I, O>` — the shared definition (type-preserving over `I`)
 
 | Method | Effect |
 |---|---|
@@ -22,25 +29,28 @@ Compact reference for the public surface. Types live in `dev.nioflow.core.facade
 | `handle(name, fn, RateLimit)` | Token-bucket gated stage |
 | `handleSync(fn)` / `handleSync(name, fn)` | Boss-inlined stage — pure CPU, sub-µs, never blocking |
 | `handleContextual((v, ctx) -> …)` | Stage with the typed per-execution `Context` |
-| `adapt(fn)` | Re-types the pipeline: the only `T`-changing step |
 | `filter(predicate)` | Deliberate cut; `execute()` maps it to `null` |
 | `background(name, effect)` | Fire-and-forget side effect |
 | `fanOut(name, branches, join)` | Parallel split-join, declaration-order combine |
 | `batch(name, size, window, bulk)` | Cross-execution coalescing; positional bulk mapping |
-| `use(segment)` / `use(name, segment)` | Embed a `Segment`; naming it creates a swappable region |
+| `use(segment)` / `use(name, segment)` | Embed a `Segment<I, I>`; naming it creates a swappable region |
 | `recover(fn)` / `recover(name, fn)` | Positional error handler |
 | `when(pred).then(lane).otherwise(lane)` | Boolean fork |
 | `match().is(pred, lane)….otherwise(lane)` | First-match-wins cases |
 | `onComplete(cb)` / `onError(cb)` | Outcome taps — engine-wide on the definition, scoped on an execution |
-| `key(k)` | Per-key FIFO ordering (executions only) |
 
-## `NioFlow<I, T>` — executing
+## `NioStep<T, O>` — the per-request pipeline
 
-| Method | Returns | Semantics |
-|---|---|---|
-| `execute()` | `T` | Blocks; `null` on a filter cut |
-| `executeAsync()` | `CompletableFuture<T>` | Non-blocking; fails exceptionally when unrecovered |
-| `executeResult()` | `FlowResult<T>` | `Completed(value)` vs `Filtered` — pattern-matchable |
+Everything above (over `T` instead of `I`), plus the steps that re-type the value and the terminals:
+
+| Method | Effect |
+|---|---|
+| `adapt(fn)` | Re-types the value — the step the compiler follows |
+| `fanOut(...)` / `batch(...)` / `use(segment)` | Also re-type (to `C` / `R` / `R`) |
+| `key(k)` | Per-key FIFO ordering |
+| `execute()` | Blocks; returns the value's **current** type; `null` on a filter cut |
+| `executeAsync()` | `CompletableFuture<T>` — non-blocking; fails exceptionally when unrecovered |
+| `executeResult()` | `FlowResult<T>` — `Completed(value)` vs `Filtered`, pattern-matchable |
 
 `Lane<T>` (inside fork branches and segments) exposes the same building methods, minus `just`/`execute`/lifecycle.
 

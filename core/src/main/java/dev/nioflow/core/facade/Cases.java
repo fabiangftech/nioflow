@@ -3,9 +3,10 @@ package dev.nioflow.core.facade;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
-public interface Cases<I, T> extends NioFlow<I, T> {
+/** match() on the shared definition: first-match-wins, lanes type-preserving over I. */
+public interface Cases<I, O> extends NioFlow<I, O> {
 
-    Cases<I, T> is(Predicate<T> predicate, UnaryOperator<Lane<T>> lane);
+    Cases<I, O> is(Predicate<I> predicate, UnaryOperator<Lane<I>> lane);
 
-    NioFlow<I, T> otherwise(UnaryOperator<Lane<T>> lane);
+    NioFlow<I, O> otherwise(UnaryOperator<Lane<I>> lane);
 }

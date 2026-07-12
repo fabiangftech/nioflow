@@ -67,10 +67,7 @@ class DefaultNioFlowAsyncTest {
         }
     }
 
-    @Test
-    void executeAsyncWithoutJustIsRejected() {
-        NioFlow<String, String> flow = DefaultNioFlow.from(String.class);
-
-        assertThrows(IllegalStateException.class, flow::executeAsync);
-    }
+    // executeAsync() without just() used to throw at runtime; with NioFlow (the
+    // definition) and NioStep (the per-request pipeline) split apart, it is a
+    // compile error.
 }
