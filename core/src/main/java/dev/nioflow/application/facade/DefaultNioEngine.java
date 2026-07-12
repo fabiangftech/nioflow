@@ -111,14 +111,22 @@ public class DefaultNioEngine implements NioEngine {
     private final AtomicInteger activeExecutions = new AtomicInteger();
     private final Object drainLock = new Object();
 
-    // Immutable list swapped atomically: in-flight calls keep their snapshot even
-    // while the chain is being edited at runtime.
-    private volatile List<Link> chain = List.of();
+    /**
+     * The chain and the plan compiled for it are ONE value, swapped atomically:
+     * reading them separately could pair a chain with the plan of another
+     * version. Immutable, so an in-flight call keeps its snapshot while the
+     * chain is being edited at runtime.
+     *
+     * <p>plan == null means "interpret": append() invalidates it, seal() and
+     * splice() recompile. Executions match the plan by chain identity, so local
+     * per-request chains simply fall back to interpreting.
+     */
+    private record ChainVersion(List<Link> links, CompiledChain plan) {
+    }
+
+    private final AtomicReference<ChainVersion> version =
+            new AtomicReference<>(new ChainVersion(List.of(), null));
     private volatile boolean sealed;
-    // Execution plan compiled at seal() for the current chain version (null =
-    // interpreted). splice() recompiles; append() invalidates. Executions match
-    // it by chain identity, so local per-request chains simply fall back.
-    private volatile CompiledChain compiled;
     private final AtomicInteger decisionIds = new AtomicInteger();
     private final List<Consumer<Throwable>> errorHandlers = new CopyOnWriteArrayList<>();
     private final List<Consumer<Object>> completeHandlers = new CopyOnWriteArrayList<>();
@@ -251,7 +259,7 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public CompletableFuture<Object> call(Object input, Map<String, Object> context) {
-        return call(input, context, chain);
+        return call(input, context, version.get().links());
     }
 
     @Override
@@ -268,11 +276,10 @@ public class DefaultNioEngine implements NioEngine {
             return CompletableFuture.failedFuture(rejection);
         }
         // The plan only applies to the exact chain version it was built for;
-        // execution-local chains (identity mismatch) fall back to interpreting.
-        CompiledChain plan = this.compiled;
-        if (plan != null && plan.links() != chain) {
-            plan = null;
-        }
+        // execution-local chains, and a chain snapshot taken before an edit
+        // that has since landed (identity mismatch), fall back to interpreting.
+        ChainVersion current = version.get();
+        CompiledChain plan = current.links() == chain ? current.plan() : null;
         // The raw result future goes straight to the caller: bookkeeping
         // (drain slot, metrics, handlers) runs inside Execution BEFORE the
         // future completes, so no dependent whenComplete future is allocated.
@@ -294,7 +301,7 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public List<Link> chain() {
-        return chain;
+        return version.get().links();
     }
 
     @Override
@@ -302,22 +309,23 @@ public class DefaultNioEngine implements NioEngine {
         if (sealed) {
             throw new IllegalStateException("Chain is sealed; call release() before appending");
         }
-        List<Link> next = new ArrayList<>(chain);
+        List<Link> next = new ArrayList<>(chain());
         next.add(link);
-        chain = List.copyOf(next);
-        compiled = null;
+        // Appending invalidates the plan: the next call interprets until seal().
+        version.set(new ChainVersion(List.copyOf(next), null));
     }
 
     @Override
     public synchronized void seal() {
         // Fail fast at seal time: a broken definition stops the deploy instead
         // of producing runtime surprises.
-        List<String> problems = ChainValidator.validate(chain);
+        List<Link> links = chain();
+        List<String> problems = ChainValidator.validate(links);
         if (!problems.isEmpty()) {
             throw new ChainValidationException(problems);
         }
         sealed = true;
-        compiled = CompiledChain.compile(chain);
+        version.set(new ChainVersion(links, CompiledChain.compile(links)));
     }
 
     @Override
@@ -329,7 +337,7 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public synchronized void splice(String anchor, Splice position, List<Link> links) {
-        List<Link> next = new ArrayList<>(chain);
+        List<Link> next = new ArrayList<>(chain());
         int index = anchorIndex(next, anchor);
         if (index < 0) {
             throw new IllegalArgumentException("No link named '" + anchor + "' in chain");
@@ -351,9 +359,8 @@ public class DefaultNioEngine implements NioEngine {
                 throw new ChainValidationException(problems);
             }
         }
-        chain = edited;
         // Runtime edits pay compilation once per edit, never per request.
-        compiled = sealed ? CompiledChain.compile(edited) : null;
+        publish(edited);
     }
 
     @Override
@@ -370,7 +377,7 @@ public class DefaultNioEngine implements NioEngine {
         if (span == null) {
             throw new IllegalArgumentException("No region named '" + region + "'");
         }
-        List<Link> next = new ArrayList<>(chain);
+        List<Link> next = new ArrayList<>(chain());
         int from = identityIndexOf(next, span.first());
         int to = identityIndexOf(next, span.last());
         if (from < 0 || to < 0 || to < from) {
@@ -386,8 +393,7 @@ public class DefaultNioEngine implements NioEngine {
                 throw new ChainValidationException(problems);
             }
         }
-        chain = edited;
-        compiled = sealed ? CompiledChain.compile(edited) : null;
+        publish(edited);
         // Re-point the region at its new span so it stays swappable; an
         // empty replacement retires it.
         if (links.isEmpty()) {
@@ -395,6 +401,16 @@ public class DefaultNioEngine implements NioEngine {
         } else {
             regions.put(region, new Region(links.get(0), links.get(links.size() - 1)));
         }
+    }
+
+    /**
+     * Publishes an edited chain together with the plan that belongs to it — one
+     * write, so no call can ever see the new chain paired with the old plan. A
+     * sealed chain keeps a plan (recompiled here, once per edit); an unsealed
+     * one is interpreted.
+     */
+    private void publish(List<Link> edited) {
+        version.set(new ChainVersion(edited, sealed ? CompiledChain.compile(edited) : null));
     }
 
     private static int identityIndexOf(List<Link> links, Link target) {

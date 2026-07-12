@@ -186,4 +186,50 @@ class DefaultNioEngineMetricsTest {
 
         engine.shutdown(Duration.ofMillis(200));
     }
+
+    /**
+     * The metrics SPI is installed through a thread-safe reference and read
+     * once per execution: a recorder installed from another thread is picked up
+     * by the executions that start afterwards, and it is never half-visible.
+     */
+    @Test
+    void aRecorderInstalledFromAnotherThreadIsSeenByLaterExecutions() throws Exception {
+        DefaultNioEngine engine = new DefaultNioEngine();
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("double", value -> value * 2);
+
+        assertEquals(2, flow.just(1).execute());   // no metrics installed yet: zero instrumentation
+
+        RecordingMetrics metrics = new RecordingMetrics();
+        Thread installer = new Thread(() -> engine.metrics(metrics));
+        installer.start();
+        installer.join();
+
+        assertEquals(4, flow.just(2).execute());
+
+        assertEquals(1, metrics.completed.get());              // only the execution after the install
+        assertEquals(List.of("double"), metrics.stages);
+        assertTrue(metrics.lastExecutionNanos.get() > 0);
+
+        engine.shutdown(Duration.ofMillis(200));
+    }
+
+    /** Installing null puts the engine back to zero instrumentation. */
+    @Test
+    void installingNullMetricsDisablesInstrumentation() {
+        DefaultNioEngine engine = new DefaultNioEngine();
+        RecordingMetrics metrics = new RecordingMetrics();
+        engine.metrics(metrics);
+
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("double", value -> value * 2);
+        assertEquals(2, flow.just(1).execute());
+        assertEquals(1, metrics.completed.get());
+
+        engine.metrics(null);
+        assertEquals(4, flow.just(2).execute());
+
+        assertEquals(1, metrics.completed.get());   // the second execution reported nothing
+        engine.shutdown(Duration.ofMillis(200));
+    }
 }
