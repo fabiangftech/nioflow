@@ -1,6 +1,6 @@
-# What is nio-flow
+# What is nioflow
 
-**nio-flow** is a Java library for building business pipelines as fluent, typed flows that run on an event-loop engine — and can be **edited while they run**.
+**nioflow** is a Java library for building business pipelines as fluent, typed flows that run on an event-loop engine — and can be **edited while they run**.
 
 ```java
 // The shared definition: what every request goes through first.
@@ -29,7 +29,7 @@ Every step is a **link** in an immutable chain. A pool of **boss threads** orche
 
 ## Where it fits
 
-nio-flow sits between "a chain of service calls in a `@Service` method" and a full workflow engine. Reach for it when your logic has **shape** — branches, fan-outs, fallbacks, bulk steps — and that shape needs to **change without a redeploy**: pricing rules swapped by ops, a fraud gate tightened during an incident, a provider replaced behind a named stage.
+nioflow sits between "a chain of service calls in a `@Service` method" and a full workflow engine. Reach for it when your logic has **shape** — branches, fan-outs, fallbacks, bulk steps — and that shape needs to **change without a redeploy**: pricing rules swapped by ops, a fraud gate tightened during an incident, a provider replaced behind a named stage.
 
 ```mermaid
 flowchart LR
@@ -44,7 +44,7 @@ flowchart LR
 
 ## At a glance
 
-| You need | nio-flow gives you |
+| You need | nioflow gives you |
 |---|---|
 | Branching logic | `when()` / first-match-wins `match()` with nested forks |
 | Bulk downstream calls | `batch(size, window, bulk)` — callers still get individual results |

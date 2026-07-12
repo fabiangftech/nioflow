@@ -1,6 +1,6 @@
 # Spring Boot
 
-nio-flow needs no starter: a flow is a bean, and every request runs an isolated execution over it.
+nioflow needs no starter: a flow is a bean, and every request runs an isolated execution over it.
 
 ## The base bean
 

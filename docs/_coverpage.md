@@ -9,4 +9,4 @@
 implementation 'dev.nioflow:nioflow-core:1.0.0'
 ```
 
-<p class="cover-actions"><a href="#/quickstart">Quickstart</a> <a href="#/overview">What is nio-flow</a> <a href="https://central.sonatype.com/artifact/dev.nioflow/nioflow-core" target="_blank" rel="noopener">Maven Central</a></p>
+<p class="cover-actions"><a href="#/quickstart">Quickstart</a> <a href="#/overview">What is nioflow</a> <a href="https://central.sonatype.com/artifact/dev.nioflow/nioflow-core" target="_blank" rel="noopener">Maven Central</a></p>

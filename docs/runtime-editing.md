@@ -1,6 +1,6 @@
 # Runtime editing
 
-This is the feature nio-flow is built around: **the chain is data, and you can edit it while traffic flows through it.**
+This is the feature nioflow is built around: **the chain is data, and you can edit it while traffic flows through it.**
 
 The chain is an immutable list swapped atomically. Every execution snapshots it at submission, so an edit **never** affects in-flight requests — the next request sees the new chain. No locks, no draining, no redeploy.
 
@@ -78,7 +78,7 @@ flow.replaceRegion("pricing", lane -> lane
 
 Region boundaries are tracked by **link identity**, not index, so edits elsewhere in the chain never break them. After a swap the region points at its new links — it stays swappable forever. An empty replacement retires the region.
 
-> Replacement segments may contain forks: nio-flow records them off-chain while drawing routing ids from the live engine, so guards never collide with the running chain.
+> Replacement segments may contain forks: nioflow records them off-chain while drawing routing ids from the live engine, so guards never collide with the running chain.
 
 ## Guardrails for live edits
 

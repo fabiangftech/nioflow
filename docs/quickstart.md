@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- **Java 21+** (nio-flow uses virtual threads and pattern matching over sealed types; developed and tested on JDK 25)
+- **Java 21+** (nioflow uses virtual threads and pattern matching over sealed types; developed and tested on JDK 25)
 - No other runtime dependencies
 
 ## Install

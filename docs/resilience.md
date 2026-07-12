@@ -1,6 +1,6 @@
 # Resilience
 
-nio-flow composes protection in **layers**, from admission to last resort:
+nioflow composes protection in **layers**, from admission to last resort:
 
 ```mermaid
 flowchart LR
