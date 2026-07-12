@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Stage;
@@ -65,5 +66,61 @@ class DefaultNioEngineRecoveryTest extends EngineTestSupport {
 
         assertThrows(CompletionException.class, result::join);
         assertInstanceOf(IllegalStateException.class, seen.get());
+    }
+
+    /**
+     * Recoveries are positional INSIDE a fused run too: when the first one
+     * throws while handling the failure, the scan continues forward through
+     * the run and the next recovery picks the new failure up.
+     */
+    @Test
+    void aFusedRecoveryThatThrowsHandsTheFailureToTheNextOne() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("boom", value -> {
+                    throw new IllegalStateException("boom");
+                })
+                .recover("broken", error -> {
+                    throw new IllegalArgumentException("the recovery is broken too");
+                })
+                .recover("net", error -> error instanceof IllegalArgumentException ? -1 : -2)
+                .handle("tail", value -> value * 10);
+
+        assertEquals(-10, flow.just(1).execute());
+    }
+
+    /**
+     * With no recovery left in the run, the failure escapes it and the boss
+     * keeps scanning the rest of the chain — the segment already searched is
+     * not searched twice, but nothing downstream is skipped either.
+     */
+    @Test
+    void aFailureEscapesTheFusedRunAndFindsARecoveryDownstream() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("boom", value -> {
+                    throw new IllegalStateException("boom");
+                })
+                .recover("broken", error -> {
+                    throw new IllegalArgumentException("the recovery is broken too");
+                })
+                .handle("timed", value -> value, Duration.ofSeconds(2))   // breaks the fusion run
+                .recover("net", error -> -1);
+
+        assertEquals(-1, flow.just(1).execute());
+    }
+
+    /** Same positional scan on the dispatched (non-fused) recovery path. */
+    @Test
+    void aDispatchedRecoveryThatThrowsHandsTheFailureToTheNextOne() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("boom", value -> {
+                    throw new IllegalStateException("boom");
+                }, Duration.ofSeconds(2))                                  // timeout stage: dispatched alone
+                .recover("broken", error -> {
+                    throw new IllegalArgumentException("the recovery is broken too");
+                })
+                .handle("timed", value -> value, Duration.ofSeconds(2))    // keeps the recoveries unfused
+                .recover("net", error -> -1);
+
+        assertEquals(-1, flow.just(1).execute());
     }
 }

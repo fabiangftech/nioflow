@@ -3,6 +3,7 @@ package dev.nioflow.application.facade;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.OverflowPolicy;
+import dev.nioflow.core.model.Retry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -28,6 +29,7 @@ class DefaultNioEngineMetricsTest {
         final AtomicLong lastExecutionNanos = new AtomicLong();
         final List<String> stages = new CopyOnWriteArrayList<>();
         final List<String> recoveries = new CopyOnWriteArrayList<>();
+        final List<String> retries = new CopyOnWriteArrayList<>();
         final List<Integer> queueDepths = new CopyOnWriteArrayList<>();
 
         @Override
@@ -54,6 +56,11 @@ class DefaultNioEngineMetricsTest {
         @Override
         public void recoveryApplied(String recovery) {
             recoveries.add(recovery);
+        }
+
+        @Override
+        public void stageRetried(String stage) {
+            retries.add(stage);
         }
 
         @Override
@@ -144,5 +151,39 @@ class DefaultNioEngineMetricsTest {
         assertEquals(1, engine.await());
         assertEquals(List.of(1, 0), recorder.queueDepths); // pushed on inject and on await
         engine.shutdown(Duration.ofMillis(100));
+    }
+
+    /**
+     * The timeout+retry path is a different dispatch (per-attempt budget on the
+     * TimerWheel) than the inline retry loop: it must report the same metrics.
+     */
+    @Test
+    void retriesAndRecoveriesAreReportedOnTheTimeoutPathToo() {
+        DefaultNioEngine engine = new DefaultNioEngine();
+        RecordingMetrics metrics = new RecordingMetrics();
+        engine.metrics(metrics);
+        AtomicInteger attempts = new AtomicInteger();
+
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("flaky", value -> {
+                    if (attempts.incrementAndGet() < 3) {
+                        throw new IllegalStateException("not yet");
+                    }
+                    return value * 2;
+                }, Duration.ofSeconds(2), Retry.of(3, Duration.ofMillis(1)))
+                .handle("timed", value -> value, Duration.ofSeconds(2))   // keeps the recovery unfused
+                .recover("net", error -> -1);
+
+        assertEquals(10, flow.just(5).execute());
+        assertEquals(3, attempts.get());
+        assertEquals(2, metrics.retries.size());              // two failures, two retries
+        assertEquals(List.of("flaky", "flaky"), metrics.retries);
+
+        // Now exhaust the attempts: the failure reaches the dispatched recovery.
+        attempts.set(-10);
+        assertEquals(-1, flow.just(5).execute());
+        assertEquals(List.of("net"), metrics.recoveries);
+
+        engine.shutdown(Duration.ofMillis(200));
     }
 }

@@ -12,7 +12,6 @@
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
 [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
-[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
 [![Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=sqale_index)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)
 [![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=fabiangftech_nioflow&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=fabiangftech_nioflow)

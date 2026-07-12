@@ -135,4 +135,27 @@ class DefaultNioFlowContextTest extends EngineTestSupport {
         engine.seal();
         assertEquals(12, flow.just(5).execute());
     }
+
+    @Test
+    void getOrDefaultReturnsTheStoredValueWhenThereIsOne() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handleContextual("seed", (value, ctx) -> {
+                    ctx.put(HITS, 7);
+                    return value;
+                })
+                .handleContextual("read", (value, ctx) -> value + ctx.getOrDefault(HITS, 100));
+
+        assertEquals(8, flow.just(1).execute());
+    }
+
+    /**
+     * A contextual stage is a BiFunction the engine unwraps at its single apply
+     * point; applying it as a plain Function means someone bypassed the engine.
+     */
+    @Test
+    void aContextualFunctionCannotBeAppliedWithoutTheEngine() {
+        ContextualFunction contextual = new ContextualFunction((value, ctx) -> value);
+
+        assertThrows(IllegalStateException.class, () -> contextual.apply(1));
+    }
 }

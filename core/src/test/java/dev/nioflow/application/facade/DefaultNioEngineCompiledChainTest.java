@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.Splice;
 import org.junit.jupiter.api.Test;
 
@@ -9,7 +10,9 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The compiled plan is an optimization, never a semantic: every scenario here
@@ -119,6 +122,29 @@ class DefaultNioEngineCompiledChainTest {
         engine.seal(); // recompiled
         assertEquals(18, flow.just(5).execute());
         shutdown(engine);
+    }
+
+    /**
+     * The plan is compared by identity on the hot path, but it is a record:
+     * its value semantics must look at what the arrays CONTAIN, not at which
+     * array object they happen to be.
+     */
+    @Test
+    void thePlanIsAValueOverItsArrayContents() {
+        List<Link> links = List.of(EngineTestSupport.stage("a", value -> value),
+                EngineTestSupport.stage("b", value -> value));
+
+        DefaultNioEngine.CompiledChain plan = DefaultNioEngine.CompiledChain.compile(links);
+        DefaultNioEngine.CompiledChain same = DefaultNioEngine.CompiledChain.compile(links);
+        DefaultNioEngine.CompiledChain other = DefaultNioEngine.CompiledChain.compile(
+                List.of(EngineTestSupport.stage("a", value -> value)));
+
+        assertEquals(plan, same);                          // distinct array instances, same contents
+        assertEquals(plan.hashCode(), same.hashCode());
+        assertNotEquals(plan, other);
+        assertEquals(plan, plan);
+        assertNotEquals(plan, "not a plan");
+        assertTrue(plan.toString().contains("runEnds="), plan::toString);
     }
 
     private static void shutdown(DefaultNioEngine... engines) {

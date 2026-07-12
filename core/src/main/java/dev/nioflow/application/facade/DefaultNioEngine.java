@@ -588,7 +588,7 @@ public class DefaultNioEngine implements NioEngine {
      * records the chain's highest Decision id so executions size their
      * decision bitset without rescanning.
      */
-    private record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, int maxDecisionId) {
+    record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, int maxDecisionId) {
 
         static CompiledChain compile(List<Link> links) {
             int size = links.size();
