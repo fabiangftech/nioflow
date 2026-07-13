@@ -6,7 +6,7 @@
 - Edit live chains with `splice` and named regions — in-flight requests never notice
 
 ```groovy
-implementation 'dev.nioflow:nioflow-core:1.1.0'
+implementation 'dev.nioflow:nioflow-core:1.2.0'
 ```
 
 <p class="cover-actions"><a href="#/quickstart">Quickstart</a> <a href="#/overview">What is nioflow</a> <a href="https://central.sonatype.com/artifact/dev.nioflow/nioflow-core" target="_blank" rel="noopener">Maven Central</a></p>
