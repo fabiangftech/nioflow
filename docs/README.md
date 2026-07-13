@@ -27,7 +27,7 @@ Requires **Java 21+** (virtual threads and pattern matching over sealed types; d
 
 ```groovy
 dependencies {
-    implementation 'dev.nioflow:nioflow-core:1.0.0'
+    implementation 'dev.nioflow:nioflow-core:1.1.0'
 }
 ```
 
@@ -37,7 +37,7 @@ dependencies {
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-core</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
