@@ -269,7 +269,7 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
 
     @Override
     AbstractChain<T> withGuards(List<Guard> guards) {
-        return new ExecutionNioFlow<T, O>(state, guards);
+        return new ExecutionNioFlow<>(state, guards);
     }
 
     @Override

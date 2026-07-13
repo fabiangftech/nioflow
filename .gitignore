@@ -4,3 +4,4 @@ build
 dist
 *.iml
 node_modules
+tools

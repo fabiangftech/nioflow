@@ -24,6 +24,6 @@ public sealed interface FlowResult<T> permits FlowResult.Completed, FlowResult.F
     }
 
     default T orElse(T fallback) {
-        return this instanceof Completed<T> completed ? completed.value() : fallback;
+        return this instanceof Completed<T>(T value) ? value : fallback;
     }
 }

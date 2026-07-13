@@ -2,7 +2,6 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.Context;
-import dev.nioflow.core.facade.Context.Key;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.Background;
@@ -206,7 +205,7 @@ public class DefaultNioEngine implements NioEngine {
 
     @Override
     public void inject(Object input, Map<String, Object> context) {
-        NioFlowMetrics metrics = this.metrics.get();
+        NioFlowMetrics sink = metrics.get();
         if (closed) {
             notifyError(new RejectedExecutionException("Engine is shut down; value rejected"));
             return;
@@ -215,15 +214,15 @@ public class DefaultNioEngine implements NioEngine {
             // DROP: the value never runs; observable through the error handlers.
             RejectedExecutionException rejection = new RejectedExecutionException(
                     "In-flight capacity " + inFlightCapacity + " reached; value dropped");
-            if (metrics != null) {
-                metrics.valueDropped();
+            if (sink != null) {
+                sink.valueDropped();
             }
             notifyError(rejection);
             return;
         }
         inFlight.add(call(input, context));
-        if (metrics != null) {
-            metrics.queueDepth(inFlight.size());
+        if (sink != null) {
+            sink.queueDepth(inFlight.size());
         }
     }
 
@@ -442,9 +441,9 @@ public class DefaultNioEngine implements NioEngine {
         try {
             CompletableFuture<Object> pending = inFlight.take();
             releasePermit();
-            NioFlowMetrics metrics = this.metrics.get();
-            if (metrics != null) {
-                metrics.queueDepth(inFlight.size());
+            NioFlowMetrics sink = metrics.get();
+            if (sink != null) {
+                sink.queueDepth(inFlight.size());
             }
             Object value = pending.join();
             return value == FILTERED ? null : value;
@@ -637,11 +636,11 @@ public class DefaultNioEngine implements NioEngine {
         @Override
         public boolean equals(Object other) {
             return this == other
-                    || other instanceof CompiledChain that
-                    && maxDecisionId == that.maxDecisionId
-                    && links.equals(that.links)
-                    && Arrays.deepEquals(runs, that.runs)
-                    && Arrays.equals(runEnds, that.runEnds);
+                    || other instanceof CompiledChain(var otherLinks, var otherRuns, var otherRunEnds, var otherMaxId)
+                    && maxDecisionId == otherMaxId
+                    && links.equals(otherLinks)
+                    && Arrays.deepEquals(runs, otherRuns)
+                    && Arrays.equals(runEnds, otherRunEnds);
         }
 
         @Override
@@ -1310,8 +1309,8 @@ public class DefaultNioEngine implements NioEngine {
         // allocated per contextual application instead of adding a field
         // that every context-free execution would pay for.
         private Object invoke(Stage stage, Object value) {
-            return stage.function() instanceof ContextualFunction contextual
-                    ? contextual.body().apply(value, new ExecutionContext())
+            return stage.function() instanceof ContextualFunction(var body)
+                    ? body.apply(value, new ExecutionContext())
                     : stage.function().apply(value);
         }
 

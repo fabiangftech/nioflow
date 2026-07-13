@@ -260,7 +260,7 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
      */
     public void replaceRegion(String region, Segment<I, I> segment) {
         List<Link> recorded = new ArrayList<>();
-        segment.define(new DefaultLane<>(new RecordingChain<I>(nioEngine, recorded, anonymousLinks)));
+        segment.define(new DefaultLane<>(new RecordingChain<>(nioEngine, recorded, anonymousLinks)));
         nioEngine.spliceRegion(region, List.copyOf(recorded));
     }
 
@@ -327,7 +327,7 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
 
     @Override
     AbstractChain<I> withGuards(List<Guard> guards) {
-        return new DefaultNioFlow<I, O>(inputType, nioEngine, anonymousLinks, guards);
+        return new DefaultNioFlow<>(inputType, nioEngine, anonymousLinks, guards);
     }
 
     @Override
