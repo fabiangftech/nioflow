@@ -19,28 +19,6 @@
 
 **nioflow** is a Java library for building business pipelines as fluent, typed flows that run on an event-loop engine — and can be **edited while they run**.
 
-## Install
-
-Requires **Java 21+** (virtual threads and pattern matching over sealed types; developed and tested on JDK 25). No other runtime dependencies.
-
-**Gradle**
-
-```groovy
-dependencies {
-    implementation 'dev.nioflow:nioflow-core:1.1.0'
-}
-```
-
-**Maven**
-
-```xml
-<dependency>
-    <groupId>dev.nioflow</groupId>
-    <artifactId>nioflow-core</artifactId>
-    <version>1.1.0</version>
-</dependency>
-```
-
 ```java
 // The shared definition: what every request goes through first.
 NioFlow<OrderRequest, Receipt> orders = DefaultNioFlow.from(OrderRequest.class)
