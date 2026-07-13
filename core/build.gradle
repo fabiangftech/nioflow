@@ -50,6 +50,10 @@ sonar {
         property "sonar.organization", "guaman"
         property "sonar.coverage.jacoco.xmlReportPaths",
                 layout.buildDirectory.file("reports/jacoco/test/jacocoTestReport.xml").get().asFile.path
+        // Test code is out of scope for the analysis: only the library is rated.
+        // Coverage is unaffected — JaCoCo measures main classes, and the tests
+        // still run to produce the XML above.
+        property "sonar.tests", []
     }
 }
 
