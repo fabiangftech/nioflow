@@ -22,6 +22,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Chain-building core, shared by the three typed facades: the shared
@@ -48,23 +49,23 @@ abstract class AbstractChain<X> {
 
     abstract String anonymousName(String prefix);
 
-    void stage(String name, Function<X, X> function) {
+    void stage(String name, UnaryOperator<X> function) {
         appendLink(new Stage(name, asObjectFunction(function), false, null, null, guards()));
     }
 
-    void stage(String name, Function<X, X> function, Duration timeout) {
+    void stage(String name, UnaryOperator<X> function, Duration timeout) {
         appendLink(new Stage(name, asObjectFunction(function), false, timeout, null, guards()));
     }
 
-    void stage(String name, Function<X, X> function, Retry retry) {
+    void stage(String name, UnaryOperator<X> function, Retry retry) {
         appendLink(new Stage(name, asObjectFunction(function), false, null, retry, guards()));
     }
 
-    void stage(String name, Function<X, X> function, Duration timeout, Retry retry) {
+    void stage(String name, UnaryOperator<X> function, Duration timeout, Retry retry) {
         appendLink(new Stage(name, asObjectFunction(function), false, timeout, retry, guards()));
     }
 
-    void rateLimitedStage(String name, Function<X, X> function, RateLimit rateLimit) {
+    void rateLimitedStage(String name, UnaryOperator<X> function, RateLimit rateLimit) {
         Function<Object, Object> body = asObjectFunction(function);
         // The acquire runs where the stage runs — a virtual worker — so the
         // wait parks cheaply, never blocks the boss, and fuses like any
@@ -75,7 +76,7 @@ abstract class AbstractChain<X> {
         }, false, null, null, guards()));
     }
 
-    void syncStage(String name, Function<X, X> function) {
+    void syncStage(String name, UnaryOperator<X> function) {
         appendLink(new Stage(name, asObjectFunction(function), true, null, null, guards()));
     }
 

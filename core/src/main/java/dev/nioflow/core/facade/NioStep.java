@@ -10,6 +10,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * The per-request builder that {@link NioFlow#just(Object)} hands you.
@@ -37,27 +38,27 @@ import java.util.function.Predicate;
  */
 public interface NioStep<T, O> {
 
-    NioStep<T, O> handle(Function<T, T> function);
+    NioStep<T, O> handle(UnaryOperator<T> function);
 
-    NioStep<T, O> handle(String name, Function<T, T> function);
+    NioStep<T, O> handle(String name, UnaryOperator<T> function);
 
     /**
      * Stage with a time budget: if the function does not finish within the
      * timeout, the value fails with a TimeoutException — catchable downstream
      * by recover(), like any other stage failure.
      */
-    NioStep<T, O> handle(String name, Function<T, T> function, Duration timeout);
+    NioStep<T, O> handle(String name, UnaryOperator<T> function, Duration timeout);
 
     /**
      * Stage with a retry policy: failed attempts back off on the worker and,
      * once exhausted, the last failure flows to the recovery path.
      */
-    NioStep<T, O> handle(String name, Function<T, T> function, Retry retry);
+    NioStep<T, O> handle(String name, UnaryOperator<T> function, Retry retry);
 
-    NioStep<T, O> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
+    NioStep<T, O> handle(String name, UnaryOperator<T> function, Duration timeout, Retry retry);
 
     /** Rate-limited stage; see NioFlow#handle(String, Function, RateLimit). */
-    NioStep<T, O> handle(String name, Function<T, T> function, RateLimit rateLimit);
+    NioStep<T, O> handle(String name, UnaryOperator<T> function, RateLimit rateLimit);
 
     /** Context-aware stage: the value plus the typed per-execution Context. */
     NioStep<T, O> handleContextual(BiFunction<T, Context, T> function);
@@ -65,9 +66,9 @@ public interface NioStep<T, O> {
     NioStep<T, O> handleContextual(String name, BiFunction<T, Context, T> function);
 
     /** Boss-inlined stage for pure-CPU, sub-microsecond functions. */
-    NioStep<T, O> handleSync(Function<T, T> function);
+    NioStep<T, O> handleSync(UnaryOperator<T> function);
 
-    NioStep<T, O> handleSync(String name, Function<T, T> function);
+    NioStep<T, O> handleSync(String name, UnaryOperator<T> function);
 
     NioStep<T, O> background(Consumer<T> effect);
 

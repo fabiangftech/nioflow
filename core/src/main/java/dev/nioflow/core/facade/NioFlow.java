@@ -9,6 +9,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * The shared definition — the thing you declare once and execute per request.
@@ -54,16 +55,16 @@ public interface NioFlow<I, O> {
     /** Fire-and-forget through the shared chain; collect with engine.await(). */
     NioFlow<I, O> justAll(Iterable<I> inputs);
 
-    NioFlow<I, O> handle(Function<I, I> function);
+    NioFlow<I, O> handle(UnaryOperator<I> function);
 
-    NioFlow<I, O> handle(String name, Function<I, I> function);
+    NioFlow<I, O> handle(String name, UnaryOperator<I> function);
 
     /**
      * Stage with a time budget: if the function does not finish within the
      * timeout, the value fails with a TimeoutException — catchable downstream
      * by recover(), like any other stage failure.
      */
-    NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout);
+    NioFlow<I, O> handle(String name, UnaryOperator<I> function, Duration timeout);
 
     /**
      * Stage with a retry policy: failed attempts back off on the worker and,
@@ -71,16 +72,16 @@ public interface NioFlow<I, O> {
      * in layers: rate limit → timeout per attempt → retry over attempts →
      * recover() as the final net.
      */
-    NioFlow<I, O> handle(String name, Function<I, I> function, Retry retry);
+    NioFlow<I, O> handle(String name, UnaryOperator<I> function, Retry retry);
 
-    NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout, Retry retry);
+    NioFlow<I, O> handle(String name, UnaryOperator<I> function, Duration timeout, Retry retry);
 
     /**
      * Rate-limited stage: acquires a token before each application, parking
      * the (virtual) worker until one is due — the boss never waits. Pass the
      * SAME RateLimit instance to several stages to protect one downstream.
      */
-    NioFlow<I, O> handle(String name, Function<I, I> function, RateLimit rateLimit);
+    NioFlow<I, O> handle(String name, UnaryOperator<I> function, RateLimit rateLimit);
 
     /**
      * Context-aware stage: besides the value it receives the typed
@@ -96,9 +97,9 @@ public interface NioFlow<I, O> {
      * loop, skipping both thread hops. Same contract as when()/match()
      * predicates — cheap and never blocking.
      */
-    NioFlow<I, O> handleSync(Function<I, I> function);
+    NioFlow<I, O> handleSync(UnaryOperator<I> function);
 
-    NioFlow<I, O> handleSync(String name, Function<I, I> function);
+    NioFlow<I, O> handleSync(String name, UnaryOperator<I> function);
 
     NioFlow<I, O> background(Consumer<I> effect);
 
@@ -123,9 +124,9 @@ public interface NioFlow<I, O> {
      * still gets its own result — the batch is invisible to them. Belongs on
      * the shared definition: only executions of the same flow pool together.
      */
-    NioFlow<I, O> batch(int size, Duration window, Function<List<I>, List<I>> bulk);
+    NioFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk);
 
-    NioFlow<I, O> batch(String name, int size, Duration window, Function<List<I>, List<I>> bulk);
+    NioFlow<I, O> batch(String name, int size, Duration window, UnaryOperator<List<I>> bulk);
 
     /** Embeds a reusable segment inline, with the shared chain's type. */
     NioFlow<I, O> use(Segment<I, I> segment);

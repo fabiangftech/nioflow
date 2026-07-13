@@ -48,7 +48,7 @@ public class RetryBenchmark {
         NioEngine engine = new DefaultNioEngine();
         NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
         flow.handle("head", value -> value + 1);
-        java.util.function.Function<Integer, Integer> work = flaky
+        java.util.function.UnaryOperator<Integer> work = flaky
                 ? value -> {
                     // Odd call: first attempt fails; even call: the retry succeeds.
                     if (flakyCalls.incrementAndGet() % 2 == 1) {

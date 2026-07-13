@@ -16,6 +16,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Same idea as NioFlowDelegate, for the per-request side: chaining after a
@@ -26,32 +27,32 @@ abstract class NioStepDelegate<T, O> implements NioStep<T, O> {
     abstract ExecutionNioFlow<T, O> step();
 
     @Override
-    public NioStep<T, O> handle(Function<T, T> function) {
+    public NioStep<T, O> handle(UnaryOperator<T> function) {
         return step().handle(function);
     }
 
     @Override
-    public NioStep<T, O> handle(String name, Function<T, T> function) {
+    public NioStep<T, O> handle(String name, UnaryOperator<T> function) {
         return step().handle(name, function);
     }
 
     @Override
-    public NioStep<T, O> handle(String name, Function<T, T> function, Duration timeout) {
+    public NioStep<T, O> handle(String name, UnaryOperator<T> function, Duration timeout) {
         return step().handle(name, function, timeout);
     }
 
     @Override
-    public NioStep<T, O> handle(String name, Function<T, T> function, Retry retry) {
+    public NioStep<T, O> handle(String name, UnaryOperator<T> function, Retry retry) {
         return step().handle(name, function, retry);
     }
 
     @Override
-    public NioStep<T, O> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
+    public NioStep<T, O> handle(String name, UnaryOperator<T> function, Duration timeout, Retry retry) {
         return step().handle(name, function, timeout, retry);
     }
 
     @Override
-    public NioStep<T, O> handle(String name, Function<T, T> function, RateLimit rateLimit) {
+    public NioStep<T, O> handle(String name, UnaryOperator<T> function, RateLimit rateLimit) {
         return step().handle(name, function, rateLimit);
     }
 
@@ -66,12 +67,12 @@ abstract class NioStepDelegate<T, O> implements NioStep<T, O> {
     }
 
     @Override
-    public NioStep<T, O> handleSync(Function<T, T> function) {
+    public NioStep<T, O> handleSync(UnaryOperator<T> function) {
         return step().handleSync(function);
     }
 
     @Override
-    public NioStep<T, O> handleSync(String name, Function<T, T> function) {
+    public NioStep<T, O> handleSync(String name, UnaryOperator<T> function) {
         return step().handleSync(name, function);
     }
 

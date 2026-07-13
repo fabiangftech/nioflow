@@ -9,6 +9,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Restricted builder handed to fork lanes (when/match): only step-declaring
@@ -17,20 +18,20 @@ import java.util.function.Predicate;
  */
 public interface Lane<T> {
 
-    Lane<T> handle(Function<T, T> function);
+    Lane<T> handle(UnaryOperator<T> function);
 
-    Lane<T> handle(String name, Function<T, T> function);
+    Lane<T> handle(String name, UnaryOperator<T> function);
 
-    Lane<T> handle(String name, Function<T, T> function, Duration timeout);
+    Lane<T> handle(String name, UnaryOperator<T> function, Duration timeout);
 
-    Lane<T> handle(String name, Function<T, T> function, Retry retry);
+    Lane<T> handle(String name, UnaryOperator<T> function, Retry retry);
 
-    Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry);
+    Lane<T> handle(String name, UnaryOperator<T> function, Duration timeout, Retry retry);
 
     /**
      * Rate-limited stage; see NioFlow#handle(String, Function, RateLimit).
      */
-    Lane<T> handle(String name, Function<T, T> function, RateLimit rateLimit);
+    Lane<T> handle(String name, UnaryOperator<T> function, RateLimit rateLimit);
 
     /**
      * Context-aware stage; see NioFlow#handleContextual for the contract.
@@ -43,9 +44,9 @@ public interface Lane<T> {
      * Boss-inlined stage for pure-CPU, sub-microsecond functions; see
      * NioFlow#handleSync for the contract.
      */
-    Lane<T> handleSync(Function<T, T> function);
+    Lane<T> handleSync(UnaryOperator<T> function);
 
-    Lane<T> handleSync(String name, Function<T, T> function);
+    Lane<T> handleSync(String name, UnaryOperator<T> function);
 
     Lane<T> background(Consumer<T> effect);
 

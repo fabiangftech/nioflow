@@ -20,6 +20,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Root flow: the shared definition that owns the engine.
@@ -110,36 +111,36 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     }
 
     @Override
-    public NioFlow<I, O> handle(Function<I, I> function) {
+    public NioFlow<I, O> handle(UnaryOperator<I> function) {
         return handle(anonymousName("stage"), function);
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function) {
         stage(name, function);
         return this;
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, Duration timeout) {
         stage(name, function, timeout);
         return this;
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, Retry retry) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, Retry retry) {
         stage(name, function, retry);
         return this;
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout, Retry retry) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, Duration timeout, Retry retry) {
         stage(name, function, timeout, retry);
         return this;
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, RateLimit rateLimit) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, RateLimit rateLimit) {
         rateLimitedStage(name, function, rateLimit);
         return this;
     }
@@ -156,12 +157,12 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     }
 
     @Override
-    public NioFlow<I, O> handleSync(Function<I, I> function) {
+    public NioFlow<I, O> handleSync(UnaryOperator<I> function) {
         return handleSync(anonymousName("sync"), function);
     }
 
     @Override
-    public NioFlow<I, O> handleSync(String name, Function<I, I> function) {
+    public NioFlow<I, O> handleSync(String name, UnaryOperator<I> function) {
         syncStage(name, function);
         return this;
     }
@@ -195,12 +196,12 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     }
 
     @Override
-    public NioFlow<I, O> batch(int size, Duration window, Function<List<I>, List<I>> bulk) {
+    public NioFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return batch(anonymousName("batch"), size, window, bulk);
     }
 
     @Override
-    public NioFlow<I, O> batch(String name, int size, Duration window, Function<List<I>, List<I>> bulk) {
+    public NioFlow<I, O> batch(String name, int size, Duration window, UnaryOperator<List<I>> bulk) {
         batchValues(name, size, window, bulk);
         return this;
     }

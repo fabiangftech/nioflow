@@ -14,6 +14,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Lane implementation: wraps a guarded view of the chain and exposes only
@@ -31,36 +32,36 @@ class DefaultLane<T> implements Lane<T> {
     }
 
     @Override
-    public Lane<T> handle(Function<T, T> function) {
+    public Lane<T> handle(UnaryOperator<T> function) {
         return handle(view.anonymousName("stage"), function);
     }
 
     @Override
-    public Lane<T> handle(String name, Function<T, T> function) {
+    public Lane<T> handle(String name, UnaryOperator<T> function) {
         view.stage(name, function);
         return this;
     }
 
     @Override
-    public Lane<T> handle(String name, Function<T, T> function, Duration timeout) {
+    public Lane<T> handle(String name, UnaryOperator<T> function, Duration timeout) {
         view.stage(name, function, timeout);
         return this;
     }
 
     @Override
-    public Lane<T> handle(String name, Function<T, T> function, Retry retry) {
+    public Lane<T> handle(String name, UnaryOperator<T> function, Retry retry) {
         view.stage(name, function, retry);
         return this;
     }
 
     @Override
-    public Lane<T> handle(String name, Function<T, T> function, Duration timeout, Retry retry) {
+    public Lane<T> handle(String name, UnaryOperator<T> function, Duration timeout, Retry retry) {
         view.stage(name, function, timeout, retry);
         return this;
     }
 
     @Override
-    public Lane<T> handle(String name, Function<T, T> function, RateLimit rateLimit) {
+    public Lane<T> handle(String name, UnaryOperator<T> function, RateLimit rateLimit) {
         view.rateLimitedStage(name, function, rateLimit);
         return this;
     }
@@ -77,12 +78,12 @@ class DefaultLane<T> implements Lane<T> {
     }
 
     @Override
-    public Lane<T> handleSync(Function<T, T> function) {
+    public Lane<T> handleSync(UnaryOperator<T> function) {
         return handleSync(view.anonymousName("sync"), function);
     }
 
     @Override
-    public Lane<T> handleSync(String name, Function<T, T> function) {
+    public Lane<T> handleSync(String name, UnaryOperator<T> function) {
         view.syncStage(name, function);
         return this;
     }

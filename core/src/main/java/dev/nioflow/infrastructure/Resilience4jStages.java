@@ -4,6 +4,7 @@ import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 
 /**
  * Resilience4j decorators for stage functions. r4j is a compileOnly
@@ -35,8 +36,11 @@ public final class Resilience4jStages {
      * Every application must be permitted by the breaker; outcomes feed its
      * state machine. Share one breaker across stages to trip them together.
      */
-    public static <T, R> Function<T, R> circuitBreaker(CircuitBreaker breaker, Function<T, R> function) {
-        return CircuitBreaker.decorateFunction(breaker, function);
+    public static <T> UnaryOperator<T> circuitBreaker(CircuitBreaker breaker, UnaryOperator<T> function) {
+        // r4j decorates into a Function; a stage is type-preserving, so hand it
+        // back as the UnaryOperator that handle() takes.
+        Function<T, T> decorated = CircuitBreaker.decorateFunction(breaker, function);
+        return decorated::apply;
     }
 
     /**
@@ -44,16 +48,17 @@ public final class Resilience4jStages {
      * bulkhead's maxWaitDuration (parking the virtual worker) and then fail
      * with BulkheadFullException.
      */
-    public static <T, R> Function<T, R> bulkhead(Bulkhead bulkhead, Function<T, R> function) {
-        return Bulkhead.decorateFunction(bulkhead, function);
+    public static <T> UnaryOperator<T> bulkhead(Bulkhead bulkhead, UnaryOperator<T> function) {
+        Function<T, T> decorated = Bulkhead.decorateFunction(bulkhead, function);
+        return decorated::apply;
     }
 
     /**
      * Both guards, breaker outermost: a saturated bulkhead trips the breaker
      * like any other failure.
      */
-    public static <T, R> Function<T, R> guarded(CircuitBreaker breaker, Bulkhead bulkhead,
-                                                Function<T, R> function) {
+    public static <T> UnaryOperator<T> guarded(CircuitBreaker breaker, Bulkhead bulkhead,
+                                               UnaryOperator<T> function) {
         return circuitBreaker(breaker, bulkhead(bulkhead, function));
     }
 }

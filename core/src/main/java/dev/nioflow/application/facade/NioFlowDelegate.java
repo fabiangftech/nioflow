@@ -15,6 +15,7 @@ import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Chaining after a fork returns to the MAIN LINE (without the fork's guards),
@@ -37,32 +38,32 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     }
 
     @Override
-    public NioFlow<I, O> handle(Function<I, I> function) {
+    public NioFlow<I, O> handle(UnaryOperator<I> function) {
         return flow().handle(function);
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function) {
         return flow().handle(name, function);
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, Duration timeout) {
         return flow().handle(name, function, timeout);
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, Retry retry) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, Retry retry) {
         return flow().handle(name, function, retry);
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, Duration timeout, Retry retry) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, Duration timeout, Retry retry) {
         return flow().handle(name, function, timeout, retry);
     }
 
     @Override
-    public NioFlow<I, O> handle(String name, Function<I, I> function, RateLimit rateLimit) {
+    public NioFlow<I, O> handle(String name, UnaryOperator<I> function, RateLimit rateLimit) {
         return flow().handle(name, function, rateLimit);
     }
 
@@ -77,12 +78,12 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     }
 
     @Override
-    public NioFlow<I, O> handleSync(Function<I, I> function) {
+    public NioFlow<I, O> handleSync(UnaryOperator<I> function) {
         return flow().handleSync(function);
     }
 
     @Override
-    public NioFlow<I, O> handleSync(String name, Function<I, I> function) {
+    public NioFlow<I, O> handleSync(String name, UnaryOperator<I> function) {
         return flow().handleSync(name, function);
     }
 
@@ -112,12 +113,12 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     }
 
     @Override
-    public NioFlow<I, O> batch(int size, Duration window, Function<List<I>, List<I>> bulk) {
+    public NioFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return flow().batch(size, window, bulk);
     }
 
     @Override
-    public NioFlow<I, O> batch(String name, int size, Duration window, Function<List<I>, List<I>> bulk) {
+    public NioFlow<I, O> batch(String name, int size, Duration window, UnaryOperator<List<I>> bulk) {
         return flow().batch(name, size, window, bulk);
     }
 
