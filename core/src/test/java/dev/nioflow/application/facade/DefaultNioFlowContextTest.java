@@ -1,6 +1,5 @@
 package dev.nioflow.application.facade;
 
-import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.Context.Key;
 import dev.nioflow.core.facade.NioFlow;
 import org.junit.jupiter.api.Test;
@@ -11,7 +10,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**

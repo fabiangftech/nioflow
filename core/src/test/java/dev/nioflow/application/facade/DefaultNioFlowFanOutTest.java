@@ -45,7 +45,7 @@ class DefaultNioFlowFanOutTest {
     @Test
     void fanOutRetypesThePipeline() {
         List<Function<Integer, String>> branches = List.of(
-                value -> "a".repeat(value),
+                "a"::repeat,
                 value -> "b".repeat(value / 2));
         NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
 
