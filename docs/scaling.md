@@ -13,7 +13,7 @@ Executions park at the link until **16 accumulated or 10ms passed**, one bulk ca
 
 - The win is **fewer downstream round trips**, not parallelism (independent stages already run in parallel on workers). Measured against a serialized downstream: 16 round trips → 1 is ~5x.
 - A bulk failure — or a result list of the wrong size — fails every batched execution, recoverable per execution.
-- Inside a fork lane, only values routed through that branch pool together.
+- Inside a branch lane, only values routed through that lane pool together.
 - Declare batches on the shared definition: only executions of the same flow pool together.
 
 ## Keyed execution: order per business entity

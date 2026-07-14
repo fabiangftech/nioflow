@@ -78,7 +78,7 @@ flow.replaceRegion("pricing", lane -> lane
 
 Region boundaries are tracked by **link identity**, not index, so edits elsewhere in the chain never break them. After a swap the region points at its new links — it stays swappable forever. An empty replacement retires the region.
 
-> Replacement segments may contain forks: nioflow records them off-chain while drawing routing ids from the live engine, so guards never collide with the running chain.
+> Replacement segments may contain branches: nioflow records them off-chain while drawing routing ids from the live engine, so guards never collide with the running chain. A `fork`'s name is an anchor too, so `splice(name, REPLACE, …)` swaps a whole detached sub-flow atomically.
 
 ## Guardrails for live edits
 

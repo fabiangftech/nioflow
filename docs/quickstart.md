@@ -11,7 +11,7 @@
 
 ```groovy
 dependencies {
-    implementation 'dev.nioflow:nioflow-core:1.2.0'
+    implementation 'dev.nioflow:nioflow-core:1.3.0'
 }
 ```
 
@@ -21,7 +21,7 @@ dependencies {
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-core</artifactId>
-    <version>1.2.0</version>
+    <version>1.3.0</version>
 </dependency>
 ```
 

@@ -29,6 +29,8 @@ engine.metrics(new NioFlowMetrics() {
 | `stageCompleted(name, nanos)` | A stage function returns (timed on the worker, fused runs included) |
 | `stageRetried(name)` | A retry attempt is about to run |
 | `recoveryApplied(name)` | A `recover` caught a failure |
+| `forkStarted / forkCompleted / forkFailed(name, …)` | A detached sub-flow spawned, finished, or failed unrecovered. **Separate from the execution metrics on purpose**: a fork's latency is not the request's — the response never waited for it |
+| `forksInFlight(count)` | Detached sub-flows running right now — what tells you whether a fork storm is real |
 | `valueDropped()` | Backpressure `DROP` discarded a value |
 | `queueDepth(depth)` | The fire-and-forget results queue changes size |
 
@@ -43,6 +45,10 @@ engine.metrics(new OpenTelemetryMetrics(meter));
 ```
 
 It publishes `nioflow.execution.duration` and `nioflow.stage.duration` histograms (µs, stages tagged with `nioflow.stage`), completion/failure/filter counters, recovery and drop counters, and a `nioflow.queue.depth` gauge — with attribute instances cached so instrumentation adds no allocation per request.
+
+Detached sub-flows report apart from the request they came from: `nioflow.fork.duration`, `nioflow.forks.started` / `.failed`, and a `nioflow.fork.in_flight` gauge, all tagged with `nioflow.fork`.
+
+Stages **inside** a fork report through the ordinary `stageCompleted` / `stageRetried` hooks under their own names — one of the main reasons to prefer `fork` over a hand-rolled `background`.
 
 ## Reading latency
 

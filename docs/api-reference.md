@@ -32,6 +32,7 @@ Compact reference for the public surface. Types live in `dev.nioflow.core.facade
 | `filter(predicate)` | Deliberate cut; `execute()` maps it to `null` |
 | `background(name, effect)` | Fire-and-forget side effect |
 | `fanOut(name, branches, join)` | Parallel split-join, declaration-order combine |
+| `fork(name, segment)` | **Detached sub-flow**: a full pipeline the main line does not wait for |
 | `batch(name, size, window, bulk)` | Cross-execution coalescing; positional bulk mapping |
 | `use(segment)` / `use(name, segment)` | Embed a `Segment<I, I>`; naming it creates a swappable region |
 | `recover(fn)` / `recover(name, fn)` | Positional error handler |
@@ -48,11 +49,26 @@ Everything above (over `T` instead of `I`), plus the steps that re-type the valu
 | `adapt(fn)` | Re-types the value — the step the compiler follows |
 | `fanOut(...)` / `batch(...)` / `use(segment)` | Also re-type (to `C` / `R` / `R`) |
 | `key(k)` | Per-key FIFO ordering |
+| `with(Context.Key, value)` | Seeds the per-execution `Context` **before** the pipeline runs (a trace id, a principal) |
 | `execute()` | Blocks; returns the value's **current** type; `null` on a filter cut |
 | `executeAsync()` | `CompletableFuture<T>` — non-blocking; fails exceptionally when unrecovered |
 | `executeResult()` | `FlowResult<T>` — `Completed(value)` vs `Filtered`, pattern-matchable |
 
-`Lane<T>` (inside fork branches and segments) exposes the same building methods, minus `just`/`execute`/lifecycle.
+`Lane<T>` (inside branch lanes, segments and fork sub-flows) exposes the same building methods, minus `just`/`execute`/lifecycle.
+
+## `ReactiveFlow` / `ReactiveStep` / `ReactiveLane` — WebFlux
+
+Subinterfaces of the three above (in `dev.nioflow.infrastructure.reactive`; `reactor-core` is `compileOnly`), so a reactive step is a step like any other. See [WebFlux](webflux.md).
+
+| Method | Effect |
+|---|---|
+| `handleMono(name, call[, budget \| retry])` | Stage whose work is a `Mono`; the budget goes on the Mono (it **cancels** the call) |
+| `adaptMono(call[, budget])` | Re-types through a `Mono`: `T → Mono<R> → R` |
+| `adaptFlux(call)` | Collects a `Flux` into a `List` — buffers it all, bounded results only |
+| `fanOutMono(name, branches, join)` | Split-join over reactive branches |
+| `executeMono()` | Terminal. Lazy: one execution per subscription; a filter cut is an empty `Mono` |
+| `pipe(concurrency, …)` / `pipeOrdered(…)` | A `Flux` through the flow; concurrency **is** the backpressure |
+| `Reactive.flow(nioFlow)` / `Reactive.lane(lane)` | Entry point, and the one unwrap needed inside a branch lane |
 
 ## `NioEngine`
 
@@ -91,7 +107,7 @@ JVM flag: `-Dnioflow.bosses=N` sizes the shared boss pool (default: cores, floor
 | `Splice` | `BEFORE` · `AFTER` · `REPLACE` |
 | `Segment<T, R>` | `Lane<R> define(Lane<T> lane)` — reusable, composable, independently testable |
 | `FlowSignal.FILTERED` | Sentinel carried by raw engine futures on a filter cut |
-| `Link` (sealed) | `Stage`, `Decision`, `Filter`, `Background`, `Recovery`, `FanOut`, `Batch` |
+| `Link` (sealed) | `Stage`, `Decision`, `Filter`, `Background`, `Recovery`, `FanOut`, `Batch`, `Fork` |
 
 > Adding link types is source-breaking for exhaustive `switch`es over `Link` — pin your minor versions if you pattern-match the chain.
 

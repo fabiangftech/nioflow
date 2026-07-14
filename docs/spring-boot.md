@@ -4,6 +4,8 @@ nioflow needs no starter: a flow **is a bean**, and every request runs an isolat
 
 A runnable version of most of this lives in [`examples/springboot-with-nioflow`](https://github.com/fabiangftech/nioflow/tree/main/examples/springboot-with-nioflow).
 
+> On **WebFlux**? A pipeline can end in a `Mono` and a `WebClient` call is an ordinary step — see [WebFlux](webflux.md) and [`examples/springwebflux-with-nioflow`](https://github.com/fabiangftech/nioflow/tree/main/examples/springwebflux-with-nioflow).
+
 ## The beans
 
 A flow bean states a contract: `NioFlow<I, O>` takes an `I` in `just()` and its pipeline must reach an `O`. Declare **one bean per contract** and let Spring match them by field name:

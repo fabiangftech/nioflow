@@ -59,7 +59,7 @@ flow.handle("inventory", stock::reserve)
 ```
 
 - Several recoveries create tiers: the closest one downstream of the failure wins; if it throws too, the search continues.
-- Inside a fork lane, `recover` only catches failures of values routed through that branch.
+- Inside a branch lane, `recover` only catches failures of values routed through that lane. Inside a `fork`, it catches the fork's own failures — they never reach the caller anyway.
 - With no recovery left, the failure completes the caller's future exceptionally and reports to `onError`.
 
 ## Failure semantics per link

@@ -5,7 +5,7 @@
 Two rules define the engine:
 
 1. **Each execution is pinned to one boss thread**, and only that boss touches its orchestration state. That is the serialization mechanism — no locks on the request path. Concurrent executions spread across the boss pool, so one boss is never a ceiling.
-2. **The boss never runs user code.** Stage functions, recoveries and effects go to virtual-thread workers; results hand back to the boss. The deliberate exceptions — fork predicates and `handleSync` stages — run on the boss and must stay cheap and non-blocking, the same rule as Netty handlers.
+2. **The boss never runs user code.** Stage functions, recoveries and effects go to virtual-thread workers; results hand back to the boss. The deliberate exceptions — branching predicates (`when` / `match`) and `handleSync` stages — run on the boss and must stay cheap and non-blocking, the same rule as Netty handlers.
 
 ```mermaid
 sequenceDiagram
@@ -29,7 +29,7 @@ A flow compiles to an immutable list of **links**:
 
 ```mermaid
 flowchart LR
-    S[Stage] --- D{Decision} --- F[Filter] --- BG[Background] --- R[Recovery] --- FO[FanOut] --- BA[Batch]
+    S[Stage] --- D{Decision} --- F[Filter] --- BG[Background] --- R[Recovery] --- FO[FanOut] --- BA[Batch] --- FK[[Fork]]
 ```
 
 | Link | Role |
@@ -41,8 +41,11 @@ flowchart LR
 | `Recovery` | Positional error handler |
 | `FanOut` | Parallel split-join across workers |
 | `Batch` | Cross-execution coalescing point |
+| `Fork` | Detached sub-flow: an immutable, guard-closed sub-chain the engine runs as an independent child execution |
 
-Forks are **sugar**: `when`/`match` append a `Decision`, and every link declared inside a lane carries *guards* (`decision id` + expected value). The engine only evaluates guards — it knows nothing about forks — which is why nested forks compose for free and routing works identically on shared definitions and per-request executions.
+Branching (`when` / `match`) is **sugar**: it appends a `Decision`, and every link declared inside a lane carries *guards* (`decision id` + expected value). The engine only evaluates guards — it knows nothing about branches — which is why nested ones compose for free and routing works identically on shared definitions and per-request executions.
+
+A `Fork` is the one link that spawns: the boss submits a child `Execution` as a **new boss task** and keeps walking with the same value. The child has its own decisions, its own copy of the context and its own (dropped) result future; its unrecovered failures reach the error handlers, never the caller. It is in-flight work, so `shutdown(grace)` waits for it.
 
 ## Stage fusion
 

@@ -42,7 +42,9 @@ Every step is a **link** in an immutable chain. A pool of **boss threads** orche
 - **Editable at runtime** — `splice` single links or swap whole named **regions** atomically; in-flight requests keep their snapshot and never notice. [Runtime editing →](runtime-editing.md)
 - **Resilient by composition** — rate limit → per-attempt timeout → retry → `recover()`, all native. [Resilience →](resilience.md)
 - **Built for load** — stage fusion, batching, per-key ordering, backpressure, dedicated event loops. [Scaling →](scaling.md)
-- **Zero required dependencies** — Resilience4j and OpenTelemetry are optional, compile-only integrations.
+- **Able to detach work** — `fork` runs a whole side pipeline the request never waits for: audit trails, notifications, replication. [Pipeline API →](pipeline-api.md)
+- **At home in WebFlux** — a pipeline ends in a `Mono`, and a `WebClient` call is an ordinary step. WebFlux gives you the non-blocking edge; nioflow gives you the blocking middle. [WebFlux →](webflux.md)
+- **Zero required dependencies** — Resilience4j, OpenTelemetry and Reactor are optional, compile-only integrations.
 
 ## Where it fits
 
@@ -63,11 +65,13 @@ flowchart LR
 
 | You need | nioflow gives you |
 |---|---|
-| Branching logic | `when()` / first-match-wins `match()` with nested forks |
+| Branching logic | `when()` / first-match-wins `match()`, nested and composable |
+| Side work nobody waits for | `fork(name, segment)` — a whole detached pipeline, not a lambda |
 | Bulk downstream calls | `batch(size, window, bulk)` — callers still get individual results |
 | Per-entity ordering | `just(x).key(orderId)` — Kafka-partition style FIFO per key |
 | Hot changes | `splice`, named regions, `replaceRegion` — atomic, validated |
 | Protection | native `RateLimit`, `Retry`, timeouts, `recover()`, circuit breaker via Resilience4j |
+| A `Mono` for WebFlux | `handleMono` / `executeMono` — blocking code stays safe inside |
 | Visibility | `onComplete`/`onError` taps, metrics SPI, OpenTelemetry adapter |
 
 Ready? Head to the [Quickstart](quickstart.md).

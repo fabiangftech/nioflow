@@ -10,6 +10,7 @@
 
 - **Integrations**
 - [Spring Boot](spring-boot.md)
+- [WebFlux (Mono/Flux)](webflux.md)
 - [Observability](observability.md)
 
 - **Deep dive**
