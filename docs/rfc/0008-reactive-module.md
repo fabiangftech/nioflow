@@ -10,11 +10,12 @@
 
 `infrastructure.reactive` is **29 of core's 86 main classes and 2 361 of its 8 231 main lines** (29 %), plus **11 test classes and 2 634 of the 8 866 test lines** (30 %). Roughly a third of the library — build time, test time, Sonar surface, review surface, `compileOnly` dependency, and the whole `CoreWithoutReactorTest` apparatus that exists to prove the other two thirds do not need it — serves consumers who bring Reactor. The ones who do not still download it in the jar.
 
-Move it to its own Gradle build, publish it as `dev.nioflow:nioflow-reactive`, and let it depend on `nioflow-core` like any other consumer.
+Move it to its own Gradle build and publish it as `dev.nioflow:nioflow-reactive`, built against `nioflow-core` exactly the way core is built against Reactor today: **`compileOnly`, and `testImplementation` for the tests. Nothing transitive, in either artifact.**
 
 ```gradle
-// a WebFlux app, after
-implementation 'dev.nioflow:nioflow-reactive:2.0.0'   // brings nioflow-core transitively
+// a WebFlux app, after — two coordinates, same version, both written down
+implementation 'dev.nioflow:nioflow-core:2.0.0'
+implementation 'dev.nioflow:nioflow-reactive:2.0.0'
 
 // a plain app, after
 implementation 'dev.nioflow:nioflow-core:2.0.0'       // and there is no Reactor code in it at all
@@ -76,11 +77,15 @@ includeBuild('../core') {
 ```
 
 ```gradle
-// reactive/build.gradle — the essentials
+// reactive/build.gradle — the essentials. Core's dependency block, applied to core itself.
 dependencies {
-    api 'dev.nioflow:nioflow-core:2.0.0'
-    api 'io.projectreactor:reactor-core:3.7.0'
+    compileOnly 'dev.nioflow:nioflow-core:2.0.0'
+    testImplementation 'dev.nioflow:nioflow-core:2.0.0'
+
+    compileOnly 'io.projectreactor:reactor-core:3.7.0'
+    testImplementation 'io.projectreactor:reactor-core:3.7.0'
     testImplementation 'io.projectreactor:reactor-test:3.7.0'
+
     // junit-bom 6.0.0, as in core
 }
 
@@ -90,7 +95,13 @@ mavenPublishing {
 }
 ```
 
-**Reactor is `api`, not `compileOnly`.** In core it was optional because a core user may legitimately not have it. In *this* artifact it is the reason the artifact exists — a `compileOnly` Reactor here would ship a jar whose every public signature mentions a type the POM never mentions, and whose only working consumer is one that happens to bring Reactor for other reasons (a WebFlux app does; a Kafka consumer using `pipeResilient` may not). `api`, not `implementation`, because `Mono` and `Flux` are in the exported signatures. The declared `3.7.0` is a floor, not a pin: a consumer under Spring Boot's BOM keeps resolving the BOM's Reactor, exactly as `examples/springwebflux-with-nioflow` does today.
+**Every dependency is `compileOnly`, `nioflow-core` included — and the published POM therefore declares none.** This is not a shortcut; it is core's own rule (`core/build.gradle:16-25`: Resilience4j, Reactor and OpenTelemetry are all `compileOnly` + `testImplementation`) applied to the module that was extracted *from* core. What it buys, and what it costs, are the same fact seen from two sides:
+
+- **No version is imposed on anyone.** A published `api 'io.projectreactor:reactor-core:3.7.0'` puts a Reactor version into every consumer's resolution graph — usually harmless under Spring Boot's BOM, occasionally not, and always a version nioflow chose on the consumer's behalf. `compileOnly` states the truth instead: *these are the types I compile against; bring your own.* Same for `nioflow-core` — the reactive jar cannot drag in a core the app did not ask for, so **a version skew between the two coordinates is impossible to create by accident and impossible to hide**: both are in the consumer's build file, in the open.
+- **The consumer declares both coordinates.** There is no transitive arrival of core. That is the cost, it is one line, and it is the same line a WebFlux user already writes today for `nioflow-core`. The install snippet in `docs/webflux.md` shows both, on the same version, and the *reason* they carry the same number is stated there rather than left to a resolution rule nobody reads.
+- **A missing `nioflow-core` fails at compile time in the consumer's own build**, not at runtime — every reactive signature mentions `NioFlow`/`NioStep`/`Lane`, so a build that forgot core does not get as far as producing a jar.
+
+The trade this rejects, explicitly: a "one coordinate, core arrives transitively" install line. It reads nicer in a README and it hands the consumer a core version they never wrote down. The library's whole dependency posture is that nioflow never picks a version for you; this RFC is not the place to make an exception, least of all for the dependency where a silent downgrade breaks the mirror (see *Risks*).
 
 The other three builds keep their own `includeBuild` graph. `tests/` will include **both** `../core` and `../reactive`, while `../reactive` itself includes `../core` — Gradle dedups included builds by directory, so this is fine, but note the coordinate mismatch that already bites in this repo: an included build advertises its **project** name (`dev.nioflow:core`, and now `dev.nioflow:reactive`) while the published artifact is `nioflow-core` / `nioflow-reactive`. `tests/` names the project coordinates directly (no substitution); the examples name the published ones and substitute. Both styles keep working; whichever a build already uses, it uses the same one for reactive.
 
@@ -115,7 +126,7 @@ Two mitigations, both mandatory parts of this RFC:
 test core → publish core → test reactive → publish reactive
 ```
 
-Sequential, one tag, two artifacts. The reactive build compiles against the **local** core through `includeBuild`, so the release does not wait for Central to index core first; dependency substitution replaces the *resolution*, not the *declaration*, so the POM it writes still says `dev.nioflow:nioflow-core:<version>` — which is what consumers resolve.
+Sequential, one tag, two artifacts, one version. The reactive build compiles against the **local** core through `includeBuild`, so the release never waits for Central to index core first — and since `nioflow-core` is `compileOnly` there, **the reactive POM declares no dependency on it at all**: nothing in the publish job can be caught resolving a core version that does not exist yet. The two jars are tied together by the tag and by the tests that ran against the working tree, not by a coordinate in a POM.
 
 ## Sonar
 
@@ -126,7 +137,7 @@ Sequential, one tag, two artifacts. The reactive build compiles against the **lo
 
 Not a chore list — these sentences currently *promise* the thing this RFC changes, and each is load-bearing somewhere:
 
-- `docs/webflux.md:28` — *"Reactor is `compileOnly` in core … core keeps its zero required runtime dependencies"*. It becomes an install line: `implementation 'dev.nioflow:nioflow-reactive'`.
+- `docs/webflux.md:28` — *"Reactor is `compileOnly` in core … core keeps its zero required runtime dependencies"*. The sentence stays true of core and becomes true of the new module too; what it grows is the install block: `nioflow-core` **and** `nioflow-reactive`, same version, and the sentence saying why nothing arrives transitively.
 - `docs/api-reference.md:61` — *"in `dev.nioflow.infrastructure.reactive`; `reactor-core` is `compileOnly`"*. The package is right; the scope is now another artifact's.
 - `CLAUDE.md:24, :66, :122-140` — the architecture section lists `infrastructure.reactive` as a core adapter and names `ReactiveMirrorTest`/`CoreWithoutReactorTest` as core build guards. Both claims expire; the WebFlux section becomes a module of its own, and the feature workflow grows the `cd reactive && ./gradlew test` line.
 - `.github/workflows/sonar.yml:16-17` carries the comment *"the library (and the sonarqube plugin) live in core/: it is a standalone Gradle build, there is no root build to analyze"* — the assumption the split invalidates. Left alone, **29 main classes silently drop out of SonarCloud** and core's coverage percentage shifts for a reason nobody will remember.
@@ -135,9 +146,9 @@ Not a chore list — these sentences currently *promise* the thing this RFC chan
 
 ## Consumers, and the acceptance test that matters
 
-- **`examples/springwebflux-with-nioflow`** adds `implementation 'dev.nioflow:nioflow-reactive'` and the substitution in `settings.gradle` — **and changes not one line of Java**. That is the acceptance test for the whole RFC: if a WebFlux app needs anything more than one coordinate, the split leaked.
+- **`examples/springwebflux-with-nioflow`** keeps its `nioflow-core` line, adds `implementation 'dev.nioflow:nioflow-reactive'` next to it, adds the second `includeBuild`/substitution in `settings.gradle` — **and changes not one line of Java**. That is the acceptance test for the whole RFC: *one build line, zero imports*. If a WebFlux app needs anything more, the split leaked.
 - **`examples/springboot-with-nioflow`** changes nothing, and *that* is the payoff: it now resolves a core jar with no reactive classes in it.
-- **`tests/`** adds `includeBuild('../reactive')`; `ReactiveBenchmark` and `ReactiveHeapProbeTest` compile against `nioflow-reactive`.
+- **`tests/`** adds `includeBuild('../reactive')`; `ReactiveBenchmark` and `ReactiveHeapProbeTest` compile against `nioflow-reactive` (and keep their own `reactor-core`, which they already declare).
 
 ## Numbers
 
@@ -164,8 +175,8 @@ What genuinely changes, and is worth measuring once: **core's own build and test
 | --- | --- |
 | **Mirror drift**: core builds green with a step the reactive facade never got. *This is the risk of this RFC.* | The `build.yml` matrix above (every module, every PR) plus the CLAUDE.md workflow line. `ReactiveMirrorTest` is unchanged and still fails the build — it just fails a different build. |
 | **A consumer upgrades core and gets `NoClassDefFoundError: …reactive.Reactive`**, because the atomic cut gives no overlap release. | The break is real and unavoidable, so it goes in the version number: release the split as **2.0.0**, with a release note whose fix is one line. It is source-compatible (imports unchanged) but not a binary drop-in, and the version has to say so. |
-| **Version skew**: someone pins `nioflow-reactive:2.1.0` against `nioflow-core:2.0.0`. An *upgrade* is resolved for them (the transitive dependency wins); a deliberate *downgrade* pin can produce a `NoSuchMethodError` on a step the mirror added. | Lockstep versions, documented on the install snippet: the two coordinates carry the same number. A `nioflow-bom` is the real answer and is future work — at two artifacts it would be ceremony. |
-| **The Reactor version is now declared in a published POM** (`api 'io.projectreactor:reactor-core:3.7.0'`), where core declared none. A consumer could end up resolving a Reactor the app did not choose. | It is a floor, not a pin: a Spring Boot app's BOM constraint wins, and Gradle/Maven pick the higher version otherwise — the resolution a WebFlux consumer gets today is the one it keeps. The alternative (`compileOnly`, i.e. a POM that never mentions the dependency every signature is made of) hides the requirement instead of managing it. The WebFlux example is the test: it must still resolve the BOM's Reactor after the split. |
+| **Version skew**: someone runs `nioflow-reactive:2.1.0` against `nioflow-core:2.0.0` and hits a `NoSuchMethodError` on a step the mirror added. `compileOnly` is what makes this *possible* — nothing resolves core for them — so the RFC owns it. | It is also `compileOnly` that makes it **visible**: both coordinates are in the consumer's own build file, so the mismatch is a diff away, not buried in a resolved graph. Lockstep versions, stated on the install snippet. A published `api` dependency would not prevent the skew either (a pin still wins over a transitive request) — it would only hide it. A `nioflow-bom` is the real answer if the pair ever becomes a trio; at two artifacts it is ceremony. |
+| **A consumer forgets `nioflow-core` entirely** — nothing brings it in. | It cannot reach runtime: every signature in the reactive jar mentions `NioFlow`/`NioStep`/`Lane`, so their build fails at compile time with a missing type, in their own module, before a jar exists. This is the failure mode `compileOnly` trades *for* — noisy and early, instead of quiet and transitive. |
 | **A fifth Gradle build** to keep in sync (JDK, JUnit BOM, plugin versions). | The repo already runs four. The duplication is the same duplication `tests/` and the examples already carry, and the alternative (a root aggregator build) is a much larger change than this RFC. |
 | The facade later needs something from core that is not public, and the module boundary turns a one-line change into an SPI negotiation. | That is the boundary working. Today the facade needs nothing (grep, above); if tomorrow it does, the right response is to ask why a *decorator over the public API* needs a private door — the answer is usually that the feature belongs in core. |
 
@@ -174,4 +185,4 @@ What genuinely changes, and is worth measuring once: **core's own build and test
 - The 10 moved test classes pass **unchanged** in `reactive/` (`cd reactive && ./gradlew test`) — no rewrite, no new base class, no widened access. If any of them needs an edit beyond its file path, the extraction is not clean and the RFC's premise is wrong.
 - `cd core && ./gradlew test` passes with Reactor **absent from every configuration** — the replacement for `CoreWithoutReactorTest`, enforced by javac instead of by a classloader.
 - `cd tests && ./gradlew test jmh` — the stress tests and the benchmarks above, against the two-artifact composite.
-- `cd examples/springwebflux-with-nioflow && ./gradlew test` — the BlockHound-guarded suite, unchanged, proving a real consumer needs only the new coordinate.
+- `cd examples/springwebflux-with-nioflow && ./gradlew test` — the BlockHound-guarded suite, unchanged, proving a real consumer needs only the new coordinate and no import change. It is also the test that the `compileOnly` posture holds end to end: the example resolves Reactor from Spring Boot's BOM and core from its own declaration, and the reactive jar contributes no dependency of its own to that graph.
