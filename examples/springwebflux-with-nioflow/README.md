@@ -7,7 +7,7 @@ The executable version of [RFC 0002](../../docs/rfc/0002-webflux.md): a WebFlux 
 ./gradlew test        # the endpoints, end to end over real HTTP
 ```
 
-The build consumes `core/` through a composite build (`includeBuild('../../core')` with an explicit `dependencySubstitution` — without it Gradle silently resolves the *published* jar from Maven Central and the example stops testing your changes).
+The build consumes `core/` **and `reactive/`** through a composite build (an `includeBuild` each, both with an explicit `dependencySubstitution` — without it Gradle silently resolves the *published* jars from Maven Central and the example stops testing your changes). The two coordinates are declared separately on purpose: `nioflow-reactive` declares every dependency `compileOnly`, so nothing — not even core — arrives transitively. See RFC 0008.
 
 ## The point
 

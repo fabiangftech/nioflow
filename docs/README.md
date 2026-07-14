@@ -1,6 +1,7 @@
 # What is nioflow
 
-[![Maven Central](https://img.shields.io/maven-central/v/dev.nioflow/nioflow-core?label=Maven%20Central&color=blue)](https://central.sonatype.com/artifact/dev.nioflow/nioflow-core)
+[![nioflow-core](https://img.shields.io/maven-central/v/dev.nioflow/nioflow-core?label=nioflow-core&color=blue)](https://central.sonatype.com/artifact/dev.nioflow/nioflow-core)
+[![nioflow-reactive](https://img.shields.io/maven-central/v/dev.nioflow/nioflow-reactive?label=nioflow-reactive&color=blue)](https://central.sonatype.com/artifact/dev.nioflow/nioflow-reactive)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](https://openjdk.org/)
 [![Website](https://img.shields.io/badge/web-nioflow.dev-1a7f5a)](https://nioflow.dev)

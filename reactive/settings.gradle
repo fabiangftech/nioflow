@@ -1,1 +1,13 @@
 rootProject.name = 'reactive'
+
+includeBuild('../core') {
+    // The included build advertises itself as 'dev.nioflow:core' (its project
+    // name), but the dependency below names the PUBLISHED artifact,
+    // 'nioflow-core'. Without this explicit substitution Gradle finds no match
+    // and silently resolves the released jar from Maven Central instead — and
+    // ReactiveMirrorTest would then be checking the mirror against yesterday's
+    // interfaces, which is the one thing it exists not to do.
+    dependencySubstitution {
+        substitute module('dev.nioflow:nioflow-core') using project(':')
+    }
+}

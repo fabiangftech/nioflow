@@ -7,11 +7,21 @@
 
 ## Install
 
+nioflow ships as **two artifacts**. Take `nioflow-core` alone unless your app is reactive.
+
+| Artifact | You need it if |
+|---|---|
+| `dev.nioflow:nioflow-core` | always — the engine, the pipeline API, resilience, branching, forks, metrics |
+| `dev.nioflow:nioflow-reactive` | your pipelines take or return `Mono`/`Flux` (WebFlux). Adds `handleMono`, `executeMono`, `pipe`, … |
+
 **Gradle**
 
 ```groovy
 dependencies {
-    implementation 'dev.nioflow:nioflow-core:1.3.1'
+    implementation 'dev.nioflow:nioflow-core:2.0.0'
+
+    // WebFlux only — same version as core, always
+    implementation 'dev.nioflow:nioflow-reactive:2.0.0'
 }
 ```
 
@@ -21,9 +31,20 @@ dependencies {
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-core</artifactId>
-    <version>1.3.1</version>
+    <version>2.0.0</version>
+</dependency>
+
+<!-- WebFlux only — same version as core, always -->
+<dependency>
+    <groupId>dev.nioflow</groupId>
+    <artifactId>nioflow-reactive</artifactId>
+    <version>2.0.0</version>
 </dependency>
 ```
+
+**Both lines, not one.** `nioflow-reactive` declares every dependency `compileOnly` — Reactor *and* `nioflow-core` — so its POM pulls in nothing: no version is picked on your behalf (your Spring Boot BOM keeps choosing Reactor), and the two nioflow coordinates sit in your build file, on the same number, where a mismatch is a diff away instead of buried in a resolved graph. Forget core and your build fails to compile, loudly, before a jar exists.
+
+Since 2.0.0 the reactive facade is its own artifact ([RFC 0008](https://github.com/fabiangftech/nioflow/blob/main/docs/rfc/0008-reactive-module.md)), so a non-reactive app carries **no Reactor code at all** — core's jar has none in it. See [WebFlux](webflux.md) for the reactive setup.
 
 ## Your first flow
 

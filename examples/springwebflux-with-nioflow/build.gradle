@@ -21,8 +21,13 @@ repositories {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
 
-    // Substituted by includeBuild('../../core'): no publishing needed.
+    // Substituted by the includeBuilds in settings.gradle: no publishing needed.
+    //
+    // Both coordinates, explicitly: nioflow-reactive declares every dependency
+    // compileOnly (core's own posture), so nothing arrives transitively and the
+    // app names the versions it runs — including nioflow's. They move in lockstep.
     implementation 'dev.nioflow:nioflow-core:1.0.0'
+    implementation 'dev.nioflow:nioflow-reactive:1.0.0'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-webflux-test'
     testImplementation 'io.projectreactor:reactor-test'

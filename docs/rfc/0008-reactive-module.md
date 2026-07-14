@@ -1,6 +1,6 @@
 # RFC 0008 — `nioflow-reactive`: the reactive facade as its own artifact
 
-- **Status**: Proposed
+- **Status**: Implemented (`reactive/`, `dev.nioflow:nioflow-reactive`, `.github/workflows/build.yml`)
 - **Target**: a new `reactive/` Gradle build (`dev.nioflow:nioflow-reactive`), `core/` (deletion + build), `tests/`, `examples/springwebflux-with-nioflow`, CI
 - **Depends on**: RFC 0002 (the mirror design), and on 0005/0006/0007 having already pushed every core terminal the facade needs (`executeAsync(Map)`, `AsyncStage`, `Cancellable`) into reactor-free core API
 - **Independent of**: every proposed RFC — this one moves files, it does not change behavior
@@ -103,7 +103,16 @@ mavenPublishing {
 
 The trade this rejects, explicitly: a "one coordinate, core arrives transitively" install line. It reads nicer in a README and it hands the consumer a core version they never wrote down. The library's whole dependency posture is that nioflow never picks a version for you; this RFC is not the place to make an exception, least of all for the dependency where a silent downgrade breaks the mirror (see *Risks*).
 
-The other three builds keep their own `includeBuild` graph. `tests/` will include **both** `../core` and `../reactive`, while `../reactive` itself includes `../core` — Gradle dedups included builds by directory, so this is fine, but note the coordinate mismatch that already bites in this repo: an included build advertises its **project** name (`dev.nioflow:core`, and now `dev.nioflow:reactive`) while the published artifact is `nioflow-core` / `nioflow-reactive`. `tests/` names the project coordinates directly (no substitution); the examples name the published ones and substitute. Both styles keep working; whichever a build already uses, it uses the same one for reactive.
+The other three builds keep their own `includeBuild` graph. `tests/` will include **both** `../core` and `../reactive`, while `../reactive` itself includes `../core` — Gradle dedups included builds by directory, so this is fine, but note the coordinate mismatch that already bites in this repo: an included build advertises its **project** name (`dev.nioflow:core`, and now `dev.nioflow:reactive`) while the published artifact is `nioflow-core` / `nioflow-reactive`. `tests/` names the project coordinates directly (no substitution); the examples name the published ones and substitute.
+
+### What the implementation changed
+
+The sentence above — *"both styles keep working"* — was **false**, and `tests/` is where it broke. Two Gradle facts, neither of them obvious until the build fails:
+
+1. **A nested included build's substitution rules do not travel.** `reactive/settings.gradle` substitutes `nioflow-core → project(':')` for its own sake, but when `tests/` includes `../reactive`, the *root composite's* rules are the only ones that apply. Reactive's compile classpath went looking for `dev.nioflow:nioflow-core:2.0.0` on Maven Central and failed the build. The substitution has to be declared again, in `tests/settings.gradle`.
+2. **An explicit `dependencySubstitution` block replaces the automatic one.** The moment `tests/` substitutes core by its published name, the project coordinates it used to name (`dev.nioflow:core`, versionless) stop resolving — `Could not find dev.nioflow:core:`.
+
+So `tests/` moved to the examples' style: published coordinates in `build.gradle`, an `includeBuild` + substitution per module in `settings.gradle`. All four consuming builds now do the same thing, which is the better outcome anyway — there is one wiring idiom in this repo, not two.
 
 **Versions are lockstep.** `nioflow-reactive:X` is compiled and tested against `nioflow-core:X` and depends on it transitively, so "add `nioflow-reactive`" is the whole instruction — a consumer never names core. A three-artifact future (an OTel or Resilience4j split, see *Non-goals*) is when a `nioflow-bom` starts earning its keep; two artifacts in lockstep do not need one.
 

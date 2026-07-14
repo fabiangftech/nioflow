@@ -10,3 +10,12 @@ includeBuild('../../core') {
         substitute module('dev.nioflow:nioflow-core') using project(':')
     }
 }
+
+// Same trick, same reason, for the reactive facade — this example is the one build
+// that asks "does a real WebFlux consumer still work?", and it must ask it of the
+// working tree, not of the last release.
+includeBuild('../../reactive') {
+    dependencySubstitution {
+        substitute module('dev.nioflow:nioflow-reactive') using project(':')
+    }
+}

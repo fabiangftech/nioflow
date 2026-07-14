@@ -1,0 +1,57 @@
+name: Build
+
+# The library is five independent Gradle builds (core, reactive, tests, two examples),
+# and since RFC 0008 split the reactive facade out of core, no single one of them can
+# tell you the repo is healthy:
+#
+#   ReactiveMirrorTest — the test that fails when a step is added to NioFlow/NioStep/Lane
+#   without its covariant override on the reactive mirror — used to run inside core's own
+#   suite. It now lives in reactive/. So a PR can add a step to core, leave core green,
+#   and break the mirror. THIS WORKFLOW is what catches that. It is not optional.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: core
+            task: build
+          # Compiles and tests against the core WORKING TREE (includeBuild), never the
+          # last release — otherwise the mirror check would be asking yesterday's question.
+          - module: reactive
+            task: build
+          - module: tests
+            task: test
+          - module: examples/springboot-with-nioflow
+            task: compileJava
+          - module: examples/springwebflux-with-nioflow
+            task: test
+    name: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: ${{ matrix.task }}
+        working-directory: ${{ matrix.module }}
+        run: ./gradlew ${{ matrix.task }}

@@ -58,7 +58,7 @@ Everything above (over `T` instead of `I`), plus the steps that re-type the valu
 
 ## `ReactiveFlow` / `ReactiveStep` / `ReactiveLane` — WebFlux
 
-Subinterfaces of the three above (in `dev.nioflow.infrastructure.reactive`; `reactor-core` is `compileOnly`), so a reactive step is a step like any other. See [WebFlux](webflux.md).
+Subinterfaces of the three above, so a reactive step is a step like any other. They live in `dev.nioflow.infrastructure.reactive` — the same package as always, now shipped by its own artifact, `dev.nioflow:nioflow-reactive` (declare it *and* `nioflow-core`, same version). See [WebFlux](webflux.md).
 
 | Method | Effect |
 |---|---|

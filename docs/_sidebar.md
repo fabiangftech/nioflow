@@ -19,4 +19,5 @@
 
 - **Links**
 - [GitHub](https://github.com/fabiangftech/nioflow)
-- [Maven Central](https://central.sonatype.com/artifact/dev.nioflow/nioflow-core)
+- [Maven Central: nioflow-core](https://central.sonatype.com/artifact/dev.nioflow/nioflow-core)
+- [Maven Central: nioflow-reactive](https://central.sonatype.com/artifact/dev.nioflow/nioflow-reactive)

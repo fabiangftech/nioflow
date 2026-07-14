@@ -1,3 +1,24 @@
 rootProject.name = 'tests'
 
-includeBuild('../core')
+// Both builds are included by their PUBLISHED names, as the examples do it.
+//
+// Two Gradle facts make this the only shape that works:
+//  - an explicit dependencySubstitution block REPLACES the automatic one, so once
+//    core is substituted, 'dev.nioflow:core' (the project coordinates this build used
+//    to name) stops resolving. Hence the published names in build.gradle;
+//  - a nested included build's substitution rules do NOT travel: reactive declares
+//    'nioflow-core -> project(:)' in its own settings.gradle, and that rule is ignored
+//    here. The root composite's rules are the ones that apply — so core is substituted
+//    for reactive's compile classpath too, and nothing goes looking on Maven Central.
+includeBuild('../core') {
+    dependencySubstitution {
+        substitute module('dev.nioflow:nioflow-core') using project(':')
+    }
+}
+
+// ReactiveBenchmark and ReactiveHeapProbeTest compile against the reactive module.
+includeBuild('../reactive') {
+    dependencySubstitution {
+        substitute module('dev.nioflow:nioflow-reactive') using project(':')
+    }
+}

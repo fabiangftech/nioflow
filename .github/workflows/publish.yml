@@ -41,16 +41,45 @@ jobs:
             VERSION="${GITHUB_REF_NAME#v}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing dev.nioflow:nioflow-core:$VERSION"
+          echo "Publishing dev.nioflow:nioflow-core:$VERSION and dev.nioflow:nioflow-reactive:$VERSION"
 
-      - name: Test
+      # One tag, two artifacts, one version. They ship in lockstep: nioflow-reactive is
+      # compiled and tested against the core in THIS working tree (includeBuild), and
+      # since every dependency it declares is compileOnly, its POM names no artifact at
+      # all — so nothing in this job can be caught resolving a core that Maven Central
+      # has not indexed yet. What ties the two jars together is the tag, not a POM entry.
+
+      - name: Test core
         working-directory: core
         run: ./gradlew test
 
-      - name: Publish
+      - name: Publish core
         working-directory: core
         # The signing key travels base64-encoded: a single-line secret cannot be
         # mangled by line wrapping or CRLF the way an armored block can.
+        run: |
+          KEY="$(printf '%s' "$GPG_SIGNING_KEY_BASE64" | base64 -d)"
+          case "$KEY" in
+            "-----BEGIN PGP PRIVATE KEY BLOCK-----"*) ;;
+            *) echo "::error::GPG_SIGNING_KEY_BASE64 does not decode to an armored PGP PRIVATE key block. Re-export with: gpg --armor --export-secret-keys <KEYID> | base64" ; exit 1 ;;
+          esac
+          export ORG_GRADLE_PROJECT_signingInMemoryKey="$KEY"
+          ./gradlew publishAndReleaseToMavenCentral -PreleaseVersion=${{ steps.resolve.outputs.version }} --no-configuration-cache
+        env:
+          GPG_SIGNING_KEY_BASE64: ${{ secrets.GPG_SIGNING_KEY_BASE64 }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_SIGNING_PASSWORD }}
+
+      # ReactiveMirrorTest runs here — against the core working tree, which is the same
+      # source the step above just published. A release cannot ship a core step whose
+      # reactive override is missing.
+      - name: Test reactive
+        working-directory: reactive
+        run: ./gradlew test
+
+      - name: Publish reactive
+        working-directory: reactive
         run: |
           KEY="$(printf '%s' "$GPG_SIGNING_KEY_BASE64" | base64 -d)"
           case "$KEY" in

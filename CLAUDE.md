@@ -8,13 +8,16 @@ Always think in English and implement in English (code, identifiers, comments, c
 
 ## Feature workflow
 
-Every new feature must ship with unit tests (in `core/`) AND JMH benchmarks (in `tests/`) showing good results: run the relevant benchmarks before and after, compare, and report the numbers. A feature that regresses the hot path is not done — either fix it or surface the trade-off explicitly. Bug-hunting stress tests in `tests/` complement, not replace, functional coverage in core.
+Every new feature must ship with unit tests (in `core/`, or in `reactive/` for the reactive facade) AND JMH benchmarks (in `tests/`) showing good results: run the relevant benchmarks before and after, compare, and report the numbers. A feature that regresses the hot path is not done — either fix it or surface the trade-off explicitly. Bug-hunting stress tests in `tests/` complement, not replace, functional coverage in core.
+
+**A step added to `NioFlow`/`NioStep`/`Lane` is not done until `cd reactive && ./gradlew test` passes.** `ReactiveMirrorTest` — the test that fails when a core step has no covariant override on its reactive mirror — lives in the reactive build since RFC 0008, so **core's own build stays green when you break the mirror**. Core no longer asks that question; you have to. (CI does too: `.github/workflows/build.yml` builds every module on every PR.)
 
 **Never skip the static analysis.** Before committing any code change, run SonarLint over every module you touched and fix what your change introduced:
 
 ```bash
-tools/sonarlint/run.sh          # core
-tools/sonarlint/run.sh tests    # the benchmarks/stress module
+tools/sonarlint/run.sh           # core
+tools/sonarlint/run.sh reactive  # the WebFlux facade
+tools/sonarlint/run.sh tests     # the benchmarks/stress module
 ```
 
 Judge by the DIFF, not the total: the repo carries known findings it violates on purpose (`tools/sonarlint/README.md` lists them — do not "fix" those). To see only what you added, run the same script over a worktree of the previous commit (`git worktree add /tmp/base HEAD~1 && tools/sonarlint/run.sh /tmp/base/core`) and diff `tools/sonarlint/build/issues.json`. New issues in your files get fixed before the commit; if one is a deliberate design decision, it goes in that README with the reason.
@@ -23,9 +26,11 @@ Judge by the DIFF, not the total: the repo carries known findings it violates on
 
 nio-flow is a Java concurrency library: a fluent, typed pipeline API (`NioFlow<I, O>` for the shared definition, `NioStep<T, O>` for the per-request pipeline) over an event-loop engine (a pool of boss threads orchestrates — each execution pinned to one boss — while virtual-thread workers run user code). Zero required runtime dependencies (Resilience4j and OpenTelemetry are `compileOnly` integrations). Requires a modern JDK — uses virtual threads and pattern matching over sealed types; developed on JDK 25.
 
+**Two published artifacts** (RFC 0008): `dev.nioflow:nioflow-core` (the engine and its facades) and `dev.nioflow:nioflow-reactive` (the WebFlux mirror, `reactive/`). Reactive is a decorator over core's *public* interfaces — it imports nothing from `application.*` — so it lives in its own Gradle build and declares every dependency `compileOnly`, core included: its POM names no artifact, a consumer writes both coordinates on the same version, and nothing is resolved on anyone's behalf. Core carries no Reactor in any configuration, which is why `CoreWithoutReactorTest` is gone: javac enforces what it used to assert.
+
 ## Build and test
 
-The library's Gradle project lives in `core/` — run Gradle from there, not the repo root:
+The engine's Gradle project lives in `core/` — run Gradle from there, not the repo root:
 
 ```bash
 cd core
@@ -33,6 +38,14 @@ cd core
 ./gradlew test                                                                 # all tests
 ./gradlew test --tests 'dev.nioflow.application.facade.DefaultNioEngineTest'   # one class
 ./gradlew test --tests '*.DefaultNioEngineTest.filterCutsTheFlow'              # one method
+```
+
+`reactive/` is the WebFlux facade's own Gradle build (composite against core, so it always compiles and tests against the working tree — never a released jar):
+
+```bash
+cd reactive
+./gradlew test                                                     # the 10 reactive test classes
+./gradlew test --tests '*.ReactiveMirrorTest'                      # the cross-module contract
 ```
 
 The Spring Boot example is a separate Gradle build that consumes core via `includeBuild('../../core')` (composite build — no publishing needed):
@@ -43,9 +56,9 @@ cd examples/springboot-with-nioflow
 ./gradlew bootRun        # serves GET /greeting on :8080
 ```
 
-Tests are JUnit 6 (Jupiter), under `core/src/test/java/dev/nioflow/application/facade/`, split **one class per feature** (`DefaultNioFlowForkTest` = the detached fork, `DefaultNioFlowBranchingTest` = when/match, `DefaultNioEngineFusionTest`, ...) — add new tests to the matching feature class or create a new one, never grow a catch-all class. Engine test classes extend `EngineTestSupport` (fresh engine per test + `stage()` helper).
+Tests are JUnit 6 (Jupiter), under `core/src/test/java/dev/nioflow/application/facade/` (and `reactive/src/test/java/dev/nioflow/infrastructure/reactive/` for the facade), split **one class per feature** (`DefaultNioFlowForkTest` = the detached fork, `DefaultNioFlowBranchingTest` = when/match, `DefaultNioEngineFusionTest`, ...) — add new tests to the matching feature class or create a new one, never grow a catch-all class. Engine test classes extend `EngineTestSupport` (fresh engine per test + `stage()` helper); the reactive tests use the public API only, which is why they moved builds without an edit.
 
-`tests/` is a third Gradle build (also composite against core) for bug-hunting stress tests and JMH benchmarks — functional coverage stays in core:
+`tests/` is a fourth Gradle build (composite against core *and* reactive) for bug-hunting stress tests and JMH benchmarks — functional coverage stays in core:
 
 ```bash
 cd tests
@@ -58,12 +71,12 @@ Benchmarks live in `tests/src/main/java` (JMH annotation processing), stress tes
 
 ## Architecture
 
-Three packages under `core/src/main/java/dev/nioflow/`, dependency direction strictly inward (`application` and `infrastructure` depend on `core`, never the reverse). Interfaces live in `core.facade`; implementations in `application.facade` with a `Default` prefix.
+Three packages under `core/src/main/java/dev/nioflow/`, dependency direction strictly inward (`application` and `infrastructure` depend on `core`, never the reverse). Interfaces live in `core.facade`; implementations in `application.facade` with a `Default` prefix. A fourth package, `infrastructure.reactive`, ships from the `reactive/` build (same package name, its own artifact) — the dependency direction is the same, and now the module boundary enforces it.
 
 - **`core/facade`** — public contracts, split by role. `NioFlow<I, O>` is the **shared definition** (the bean): `I` is what `just()` accepts, `O` is what the per-request pipeline must return. Its building steps are **type-preserving over `I`** (there is no `adapt` on it, and `fanOut`/`batch`/`use` give the value back as `I`) — that invariant is what lets `just()` hand back a pipeline that starts at the input type. `NioStep<T, O>` is that **per-request pipeline**: `T` is the value's type right here, `adapt`/`fanOut`/`batch`/`use` move it, and the terminals (`execute`/`executeAsync`/`executeResult`) return `T` — so a pipeline that has not reached `O` fails to compile at the caller's return statement. `O` is a documented contract (Java cannot demand fluently that a chain end at `O`); it is only read by `NioFlow.onComplete(Consumer<O>)`. The split also turns old runtime traps into compile errors: `execute`/`key` do not exist on the definition, `justAll`/`use(region, …)` do not exist on a pipeline. Lifecycle lives only on `DefaultNioFlow.close()` (the engine owner). `NioEngine` is the engine contract behind it — untyped (`Object`) on purpose; all unchecked casts are encapsulated in the flow implementations. `Condition`/`Branch`/`Cases` are the branching contracts on the definition (lanes over `Lane<I>`); `StepCondition`/`StepBranch`/`StepCases` their per-request counterparts (lanes over `Lane<T>`); `Lane`/`LaneCondition`/`LaneBranch`/`LaneCases` are the restricted lane-side ones, shared by both. **The type-preserving steps take `UnaryOperator`, not `Function`**: `handle`/`handleSync` (and `NioFlow.batch`, whose bulk stays at `I`) — the signature says what the step must not do (re-type the value), and `adapt`/`fanOut`/`recover`, which genuinely change the type, keep taking `Function`. A caller composing with `andThen`/`Function.identity()` gets a `Function` back and has to adapt it (`f::apply`); that is the intended friction. The `Batch` link's `bulk` field stays a `Function` on purpose (see `tools/sonarlint/README.md`).
 - **`core/model`** — the chain model: `Link` is a sealed interface permitting `Stage` (transform, optional timeout), `AsyncStage` (the stage that does NOT park: its function returns a `CompletionStage`, a worker invokes it and is released, the boss resumes on completion — see below), `Decision` (records a boolean per value), `Filter` (short-circuits the flow), `Background` (fire-and-forget side effect), `Recovery` (positional error handler), `FanOut` (parallel split-join: branches run concurrently on workers, join combines in declaration order; a branch failure fails the fan-out, recoverable downstream), `Batch` (coalescing point: executions park until size/window, one positional bulk call, each caller gets its own result; a CLASS with identity equality on purpose — the engine keys in-flight groups by link instance), `Fork` (detached sub-flow: carries an immutable, guard-closed sub-chain the engine runs as an independent child execution — see below). Every link carries `Guard`s (`decision id` + `expected`) for lane routing. `Splice` (BEFORE/AFTER/REPLACE) names the runtime-edit positions. FanOut breaks fusion runs (it is a dispatch boundary) and, due to Java inference limits, callers should type the branches list explicitly (`List<Function<T, R>> branches = List.of(...)`) so the join lambda infers `List<R>`.
 - **`application/facade`** — `DefaultNioEngine`; `AbstractChain<X>` (the untyped chain-building core: every link and every unchecked cast lives there) with three typed facades on top — `DefaultNioFlow<I, O>` (definition), `ExecutionNioFlow<T, O>` (per-request pipeline) and `DefaultLane<T>` (branch lanes and fork sub-flows); `RecordingChain` (off-chain recorder for `replaceRegion` and for a fork's sub-chain); branching impls `Default{,Step,Lane}{Condition,Branch,Cases}`, with `NioFlowDelegate`/`NioStepDelegate` carrying the "chaining after a branch returns to the main line" plumbing.
-- **`infrastructure`** — optional adapters over `compileOnly` dependencies: `OpenTelemetryMetrics` (metrics SPI → otel histograms/counters/gauge; only loads if the consumer brings `opentelemetry-api`), `Resilience4jStages` (circuit breaker / bulkhead decorators for stage functions; breaker-open and bulkhead-full failures flow to `recover()` like any stage failure, each `Retry` attempt passes the decorators, bulkhead waits park the virtual worker; only loads if the consumer brings resilience4j) and **`infrastructure.reactive`** (WebFlux — see below; only loads if the consumer brings `reactor-core`).
+- **`infrastructure`** — optional adapters over `compileOnly` dependencies: `OpenTelemetryMetrics` (metrics SPI → otel histograms/counters/gauge; only loads if the consumer brings `opentelemetry-api`), `Resilience4jStages` (circuit breaker / bulkhead decorators for stage functions; breaker-open and bulkhead-full failures flow to `recover()` like any stage failure, each `Retry` attempt passes the decorators, bulkhead waits park the virtual worker; only loads if the consumer brings resilience4j). **`infrastructure.reactive`** (WebFlux — see below) used to be the third one; since RFC 0008 it is a separate artifact in `reactive/`, and core declares no Reactor at all.
 
 ### DefaultNioEngine: the event loop
 
@@ -119,9 +132,11 @@ credits.just(cents)
 
 `execute()` without `just()` throws; `justAll` only exists on the root (injects through the shared chain, collect with `engine.await()`).
 
-### WebFlux: infrastructure.reactive
+### WebFlux: the `reactive/` module (`dev.nioflow:nioflow-reactive`)
 
-`ReactiveFlow extends NioFlow`, `ReactiveStep extends NioStep`, `ReactiveLane extends Lane` — a **subinterface mirror**, not a wrapper API: `Reactive.flow(DefaultNioFlow.from(Order.class))` and then `handleMono` / `adaptMono` / `adaptFlux` / `fanOutMono` / `executeMono` chain like any other step, with `pipe` / `pipeOrdered` / `pipeResilient` on the flow for a `Flux`. See `docs/rfc/0002-webflux.md`, `docs/rfc/0003-reactive-hardening.md` and `docs/rfc/0004-streaming-out.md`.
+`ReactiveFlow extends NioFlow`, `ReactiveStep extends NioStep`, `ReactiveLane extends Lane` — a **subinterface mirror**, not a wrapper API: `Reactive.flow(DefaultNioFlow.from(Order.class))` and then `handleMono` / `adaptMono` / `adaptFlux` / `fanOutMono` / `executeMono` chain like any other step, with `pipe` / `pipeOrdered` / `pipeResilient` on the flow for a `Flux`. See `docs/rfc/0002-webflux.md`, `docs/rfc/0003-reactive-hardening.md`, `docs/rfc/0004-streaming-out.md` and `docs/rfc/0008-reactive-module.md` (the split).
+
+**It is a decorator over core's public API, and that is a load-bearing property, not a coincidence** — it is what let the whole package move builds with an empty content diff. Every `dev.nioflow` import in the 29 classes resolves to `core.facade` or `core.model`; not one to `application.*`, not one package-private member. If the facade ever seems to need a private door into core, the answer is almost always that the feature belongs in core.
 
 Load-bearing facts, all of them verified:
 
@@ -136,7 +151,7 @@ Load-bearing facts, all of them verified:
 - **`handleMono(name, call, budget)` ≠ `handle(name, fn, timeout)`.** The budget goes on the Mono (`mono.timeout`), which *cancels* the subscription so reactor-netty releases the connection. A stage timeout only abandons the parked worker; the HTTP request stays alive on the pool.
 - **The methods are named, not overloaded.** `handle(String, UnaryOperator<T>)` + `handle(String, Function<T, Mono<T>>)` makes every existing implicit lambda ambiguous — a source-breaking change (same trap as `handleContextual`). Hence `handleMono`, in the `handleSync`/`handleContextual` naming family.
 - **The one wall: lanes.** `Condition.then` hard-codes `UnaryOperator<Lane<I>>`, and a reactive variant has the same erasure — a name clash, not an override — so a `ReactiveCondition` cannot both BE a `Condition` and hand out a `ReactiveLane`. Inside a `when`/`match` lambda you unwrap once with `Reactive.lane(lane)`. That is the only static helper that survived.
-- **Two tests guard the design**: `ReactiveMirrorTest` reflects over `NioFlow`/`NioStep`/`Lane` and fails the build if a core method has no covariant override on its mirror (otherwise a chain silently falls back to the base type and loses its reactive steps) **and if a reactive-only step of `ReactiveStep` is missing from `ReactiveLane`** — the covariance check says nothing about the reactive-only methods, and they drifted apart exactly once (`adaptMono(call, budget)` existed on the step and not on the lane, so a remote call inside a branch or a fork could not take a budget); `CoreWithoutReactorTest` runs a flow under a classloader that hides `reactor.**`, so core's zero-required-dependency promise cannot rot into a user's `NoClassDefFoundError`.
+- **`ReactiveMirrorTest` guards the design** — and, since RFC 0008, it guards it **from another build**. It reflects over `NioFlow`/`NioStep`/`Lane` and fails if a core method has no covariant override on its mirror (otherwise a chain silently falls back to the base type and loses its reactive steps) **and if a reactive-only step of `ReactiveStep` is missing from `ReactiveLane`** — the covariance check says nothing about the reactive-only methods, and they drifted apart exactly once (`adaptMono(call, budget)` existed on the step and not on the lane, so a remote call inside a branch or a fork could not take a budget). **Adding a step to core and running only core's tests will not catch this any more**: run `cd reactive && ./gradlew test`. Its sibling `CoreWithoutReactorTest` is gone — it hid `reactor.**` behind a classloader to prove core did not need it, and core no longer declares Reactor in any configuration, so javac proves it instead.
 - **The trade-off, measured** (`ReactiveHeapProbeTest`): an in-flight request parked on a remote call retains **3 615 B** (an `Execution` + a parked virtual thread's stack) against **215 B** for a pure Reactor chain — 16.8×. Fine at 1 000 concurrent; at 100 000 it is 360 MB vs 21 MB. If every stage is a remote call AND concurrency is very high AND none of the engine (retry, rate limit, batch, key, fork, recover, splice, metrics, validation) is used — recommend plain Reactor. The RFC has the decision tree.
 
 `NioStep.with(Context.Key, value)` (core, no Reactor in the signature) seeds the per-execution context before the pipeline runs — tracing needs it, and `just()` previously always passed a null context.

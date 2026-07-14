@@ -11,14 +11,17 @@ repositories {
 
 dependencies {
     // Benchmarks JMH (viven en src/main/java)
-    implementation 'dev.nioflow:core'
+    // Substituted by the includeBuilds in settings.gradle: the version is never resolved.
+    implementation 'dev.nioflow:nioflow-core:2.0.0'
+    implementation 'dev.nioflow:nioflow-reactive:2.0.0'
     implementation 'io.github.resilience4j:resilience4j-all:2.4.0'
     implementation 'io.projectreactor:reactor-core:3.7.0'
     implementation 'org.openjdk.jmh:jmh-core:1.37'
     annotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 
     // Tests de estrés / caza-bugs (viven en src/test/java)
-    testImplementation 'dev.nioflow:core'
+    testImplementation 'dev.nioflow:nioflow-core:2.0.0'
+    testImplementation 'dev.nioflow:nioflow-reactive:2.0.0'
     testImplementation 'io.projectreactor:reactor-core:3.7.0'
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'

@@ -1,15 +1,35 @@
 plugins {
     id 'java'
+    id 'jacoco'
+    id 'com.vanniktech.maven.publish' version '0.37.0'
+    id "org.sonarqube" version "7.3.1.8318"
 }
 
 group = 'dev.nioflow'
-version = '1.0-SNAPSHOT'
+version = findProperty('releaseVersion') ?: '2.0.0'
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
+    // Everything is compileOnly, nioflow-core included: the published POM declares
+    // no dependency at all. It is core's own posture (Reactor, Resilience4j and
+    // OpenTelemetry are compileOnly there) applied to the module extracted FROM
+    // core — nioflow never picks a version for you, not even its own. A consumer
+    // writes both coordinates, on the same version, in the open. Forgetting core
+    // is a compile error in their build, not a NoClassDefFoundError in production:
+    // every signature here mentions NioFlow / NioStep / Lane.
+    //
+    // The version below is substituted by includeBuild('../core'): this build always
+    // compiles and tests against the core working tree, never against a released jar.
+    compileOnly 'dev.nioflow:nioflow-core:2.0.0'
+    testImplementation 'dev.nioflow:nioflow-core:2.0.0'
+
+    compileOnly 'io.projectreactor:reactor-core:3.7.0'
+    testImplementation 'io.projectreactor:reactor-core:3.7.0'
+    testImplementation 'io.projectreactor:reactor-test:3.7.0'
+
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
@@ -17,4 +37,70 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    finalizedBy jacocoTestReport
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true   // what Sonar reads
+        html.required = true  // build/reports/jacoco/test/html/index.html
+    }
+}
+
+// A missing @param must not turn a release red.
+tasks.withType(Javadoc).configureEach {
+    options.addStringOption('Xdoclint:none', '-quiet')
+    options.addStringOption('encoding', 'UTF-8')
+}
+
+sonar {
+    properties {
+        property "sonar.projectKey", "fabiangftech_nioflow-reactive"
+        property "sonar.organization", "guaman"
+        property "sonar.coverage.jacoco.xmlReportPaths",
+                layout.buildDirectory.file("reports/jacoco/test/jacocoTestReport.xml").get().asFile.path
+        // Test code is out of scope for the analysis: only the library is rated.
+        property "sonar.tests", []
+    }
+}
+
+// `gradlew sonar` alone must still ship coverage: the analysis needs the XML.
+tasks.named('sonar') {
+    dependsOn jacocoTestReport
+}
+
+mavenPublishing {
+    // rootProject.name is 'reactive'; the published artifact is the one the docs promise
+    coordinates('dev.nioflow', 'nioflow-reactive', version.toString())
+
+    publishToMavenCentral()
+    signAllPublications()
+
+    pom {
+        name = 'nio-flow reactive'
+        description = 'The WebFlux facade for nio-flow: Mono/Flux steps that append the very same links, over nioflow-core.'
+        url = 'https://nioflow.dev'
+        inceptionYear = '2026'
+
+        licenses {
+            license {
+                name = 'The Apache License, Version 2.0'
+                url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                distribution = 'repo'
+            }
+        }
+        developers {
+            developer {
+                id = 'fabiangftech'
+                name = 'Fabián Guamán'
+                url = 'https://github.com/fabiangftech'
+            }
+        }
+        scm {
+            url = 'https://github.com/fabiangftech/nioflow'
+            connection = 'scm:git:https://github.com/fabiangftech/nioflow.git'
+            developerConnection = 'scm:git:ssh://git@github.com/fabiangftech/nioflow.git'
+        }
+    }
 }

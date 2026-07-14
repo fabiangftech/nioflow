@@ -25,7 +25,35 @@ No `subscribeOn`, no `publishOn`, no `boundedElastic`.
 
 ## Setup
 
-Reactor is **`compileOnly`** in core, like OpenTelemetry and Resilience4j: the facade only loads if your app brings `reactor-core` (every WebFlux app does), and core keeps its zero required runtime dependencies.
+The reactive facade ships as its own artifact, **`dev.nioflow:nioflow-reactive`** (RFC 0008). Declare it next to core, on the same version:
+
+**Gradle**
+
+```groovy
+implementation 'dev.nioflow:nioflow-core:2.0.0'
+implementation 'dev.nioflow:nioflow-reactive:2.0.0'
+```
+
+**Maven**
+
+```xml
+<dependency>
+    <groupId>dev.nioflow</groupId>
+    <artifactId>nioflow-core</artifactId>
+    <version>2.0.0</version>
+</dependency>
+<dependency>
+    <groupId>dev.nioflow</groupId>
+    <artifactId>nioflow-reactive</artifactId>
+    <version>2.0.0</version>
+</dependency>
+```
+
+Reactor itself comes from your app (`spring-boot-starter-webflux` brings it); nioflow does not choose its version.
+
+**Both lines are required, and that is deliberate.** `nioflow-reactive` declares every dependency `compileOnly` — Reactor *and* `nioflow-core` — exactly as core declares Reactor, OpenTelemetry and Resilience4j. Its POM therefore names no artifact at all: nothing arrives transitively, no version is chosen for you (your Spring Boot BOM keeps picking Reactor), and the two nioflow coordinates sit in your build file where a version mismatch is a diff away instead of buried in a resolved graph. They move in lockstep — same number, always. Forget core and your own build fails to compile, loudly, before a jar exists.
+
+The upshot for everyone else: a non-reactive app depends on `nioflow-core` alone, and there is no Reactor code in it at all.
 
 ```java
 @Bean(destroyMethod = "close")
