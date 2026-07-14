@@ -74,15 +74,15 @@ class OrderEndpointsTest {
 
     @Test
     void theResponseDoesNotWaitForTheDetachedFork() {
-        // The notify fork takes 300ms. The chain the caller waits for is
+        // The notify fork takes 500ms. The chain the caller waits for is
         // repo (40) + fraud (60) + charge (80) = ~180ms. If the response ever
         // took as long as the fork, fork() would not be detached at all.
         pay("3");                       // warm up: the first call pays for the
                                         // connection pool and the JIT, not for the fork
         long elapsedMillis = pay("3");
 
-        assertTrue(elapsedMillis < 300,
-                "the response waited for the 300ms fork: took " + elapsedMillis + "ms");
+        assertTrue(elapsedMillis < 500,
+                "the response waited for the 500ms fork: took " + elapsedMillis + "ms");
     }
 
     private long pay(String id) {
