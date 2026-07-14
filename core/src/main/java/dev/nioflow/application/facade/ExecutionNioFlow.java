@@ -241,6 +241,12 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
 
     @Override
     @SuppressWarnings("unchecked")
+    public CompletableFuture<T> executeAsync(Map<String, Object> context) {
+        return rawFuture(context).thenApply(value -> value == FlowSignal.FILTERED ? null : (T) value);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
     public FlowResult<T> executeResult() {
         Object value = rawFuture().join();
         return value == FlowSignal.FILTERED
@@ -249,12 +255,13 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     }
 
     private CompletableFuture<Object> rawFuture() {
+        return rawFuture(null);
+    }
+
+    private CompletableFuture<Object> rawFuture(Map<String, Object> runContext) {
         List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
-        // A fresh copy per execution: executeAsync() may be called more than
-        // once (a Mono re-subscribing, a retry), and each run must start from
-        // the seeded context rather than inherit what the previous run wrote.
-        Map<String, Object> context = state.context == null ? null : new HashMap<>(state.context);
-        CompletableFuture<Object> raw = state.nioEngine.call(state.seed, context, chain, state.key);
+        CompletableFuture<Object> raw =
+                state.nioEngine.call(state.seed, contextFor(runContext), chain, state.key);
         if (state.onComplete == null && state.onError == null) {
             // Pay for what you use: no callbacks, no dependent future.
             return raw;
@@ -271,6 +278,27 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
                 state.onComplete.accept(value == FlowSignal.FILTERED ? null : value);
             }
         });
+    }
+
+    /**
+     * The context ONE run starts from: a fresh map every time, because
+     * executeAsync() may be called more than once (a Mono re-subscribing, a
+     * retry) and each run must start from what was seeded rather than inherit
+     * what the previous run wrote.
+     *
+     * <p>The run's own entries go in first and with()'s over them: the pipeline
+     * declared those, the run merely carries them. Neither one present means no
+     * map at all — a pipeline that seeds nothing allocates nothing for it.
+     */
+    private Map<String, Object> contextFor(Map<String, Object> runContext) {
+        if (runContext == null || runContext.isEmpty()) {
+            return state.context == null ? null : new HashMap<>(state.context);
+        }
+        Map<String, Object> context = new HashMap<>(runContext);
+        if (state.context != null) {
+            context.putAll(state.context);
+        }
+        return context;
     }
 
     private static Throwable unwrap(Throwable error) {

@@ -33,11 +33,16 @@ public class OrderController {
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "no order " + id)));
     }
 
-    /** Blocking repo + two WebClient stages + a detached fork, behind one Mono. */
+    /**
+     * Blocking repo + two WebClient stages + a detached fork, behind one Mono.
+     *
+     * <p>And nothing about tracing: the trace id rides Reactor's subscriber
+     * context (a WebFilter put it there) and the flow declared propagate(TRACE),
+     * so the audit stage reads it without this method having heard of it.
+     */
     @PostMapping("/orders/{id}/pay")
-    public Mono<Receipt> pay(@PathVariable String id,
-                             @RequestParam(defaultValue = "trace-1") String traceId) {
-        return orders.pay(id, traceId)
+    public Mono<Receipt> pay(@PathVariable String id) {
+        return orders.pay(id)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "no order " + id)));
     }
 
@@ -60,6 +65,15 @@ public class OrderController {
     public Flux<Receipt> ingest(@RequestParam(defaultValue = "1,2,3") String ids,
                                 @RequestParam(defaultValue = "8") int concurrency) {
         return orders.ingest(Flux.fromArray(ids.split(",")), concurrency);
+    }
+
+    /**
+     * What the pipeline saw of the caller's trace id — and no method between the
+     * WebFilter and the stage that read it ever mentioned one.
+     */
+    @GetMapping("/orders/{id}/trace")
+    public Mono<String> trace(@PathVariable String id) {
+        return orders.trace(id);
     }
 
     /** Where each part of the request actually ran. The point of the example. */

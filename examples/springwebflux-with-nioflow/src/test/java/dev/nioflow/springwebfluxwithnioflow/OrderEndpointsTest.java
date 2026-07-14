@@ -61,6 +61,23 @@ class OrderEndpointsTest {
                 });
     }
 
+    /**
+     * The context bridge, end to end: the header goes into Reactor's subscriber
+     * context (a WebFilter), the flow declared propagate(TRACE) once, and a stage
+     * reads it out of the per-execution Context. No controller method, no service
+     * method and no pipeline mentions a traceId — which is the acceptance test of
+     * the whole feature: the boilerplate stopped existing.
+     */
+    @Test
+    void theTraceIdCrossesFromTheSubscriberContextIntoTheFlow() {
+        client.get().uri("/orders/{id}/trace", "1")
+                .header("X-Trace-Id", "abc-123")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .isEqualTo("abc-123");
+    }
+
     @Test
     void theFraudStageDeclinesTheLoudOnes() {
         // Order 2 is 90.000 cents: the fraud service (a real WebClient call)

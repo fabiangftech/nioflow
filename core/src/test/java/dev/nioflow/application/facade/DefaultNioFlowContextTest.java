@@ -2,6 +2,7 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.Context.Key;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.NioStep;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -100,6 +101,41 @@ class DefaultNioFlowContextTest extends EngineTestSupport {
         assertEquals("x:fabian", engine.call("x", handed).join());
         // Writes land in the caller's own map, under the key's name.
         assertEquals(1, handed.get("hits"));
+    }
+
+    /**
+     * The run's own context: what executeAsync(map) exists for. with() writes
+     * into the PIPELINE, so it is the wrong place for something one run knows
+     * (one Mono subscription's trace id) — this overload keeps it in the run.
+     */
+    @Test
+    void aRunCanCarryItsOwnContextWithoutWritingIntoThePipeline() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handleContextual("read", (value, ctx) -> value + ctx.getOrDefault(HITS, 0));
+        engine.seal();
+
+        NioStep<Integer, Integer> pipeline = flow.just(1);
+
+        assertEquals(11, pipeline.executeAsync(Map.of("hits", 10)).join());
+        assertEquals(21, pipeline.executeAsync(Map.of("hits", 20)).join());
+        // Nothing the first two runs carried stuck to the pipeline.
+        assertEquals(1, pipeline.executeAsync().join());
+        assertEquals(1, pipeline.executeAsync(Map.of()).join());
+    }
+
+    /** with() is what the pipeline declared; the run merely carries entries. */
+    @Test
+    void whatWithDeclaredWinsOverWhatTheRunCarries() {
+        NioFlow<String, String> flow = DefaultNioFlow.from(String.class, engine);
+        flow.handleContextual("read", (value, ctx) -> value + ":" + ctx.get(USER) + ":" + ctx.get(HITS));
+        engine.seal();
+
+        String result = flow.just("x")
+                .with(USER, "declared")
+                .executeAsync(Map.of("user", "carried", "hits", 7))
+                .join();
+
+        assertEquals("x:declared:7", result);
     }
 
     @Test

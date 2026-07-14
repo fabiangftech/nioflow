@@ -23,10 +23,10 @@ import java.util.function.UnaryOperator;
  * ones that were already there — and the result is re-wrapped so the chain keeps
  * its reactive type. The wrapping happens at BUILD time only.
  *
- * <p>The default budget (null = none) is the one piece of state the wrapper
- * carries: it rides along every re-wrap, into {@code just()}'s pipeline, into a
- * branch's lane and into a fork's segment, and every reactive step that was
- * declared without an explicit budget picks it up.
+ * <p>{@link ReactiveConfig} — the default budget and the propagated context keys
+ * — is the state the wrapper carries: it rides along every re-wrap, into
+ * {@code just()}'s pipeline, into a branch's lane and into a fork's segment, so
+ * what the flow declared once holds everywhere the chain goes.
  *
  * <p>AutoCloseable so a Spring bean declared with destroyMethod = "close" still
  * shuts the engine down through the definition that owns it.
@@ -34,36 +34,38 @@ import java.util.function.UnaryOperator;
 class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     final NioFlow<I, O> delegate;
-    final Duration budget;
+    final ReactiveConfig config;
 
     DefaultReactiveFlow(NioFlow<I, O> delegate) {
-        this(delegate, null);
+        this(delegate, ReactiveConfig.NONE);
     }
 
-    DefaultReactiveFlow(NioFlow<I, O> delegate, Duration budget) {
+    DefaultReactiveFlow(NioFlow<I, O> delegate, ReactiveConfig config) {
         this.delegate = delegate;
-        this.budget = budget;
+        this.config = config;
     }
 
     // A step that returns the flow itself stays this wrapper; one that returns
-    // a different builder (a branch's main line) gets its own — with the budget.
+    // a different builder (a branch's main line) gets its own — with the config.
     private ReactiveFlow<I, O> wrap(NioFlow<I, O> result) {
-        return result == delegate ? this : new DefaultReactiveFlow<>(result, budget);
+        return result == delegate ? this : new DefaultReactiveFlow<>(result, config);
     }
 
     @Override
     public ReactiveFlow<I, O> defaultBudget(Duration budget) {
-        if (budget == null || budget.isZero() || budget.isNegative()) {
-            throw new IllegalArgumentException("defaultBudget must be a positive duration, was " + budget);
-        }
-        return new DefaultReactiveFlow<>(delegate, budget);
+        return new DefaultReactiveFlow<>(delegate, config.withBudget(budget));
+    }
+
+    @Override
+    public ReactiveFlow<I, O> propagate(Context.Key<?>... keys) {
+        return new DefaultReactiveFlow<>(delegate, config.withKeys(keys));
     }
 
     // ── the reactive steps: ordinary stages whose function parks on a Mono ──
 
     @Override
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call) {
-        return handleMono(name, call, budget);
+        return handleMono(name, call, config.budget());
     }
 
     @Override
@@ -73,7 +75,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Retry retry) {
-        return handleMono(name, call, budget, retry);
+        return handleMono(name, call, config.budget(), retry);
     }
 
     @Override
@@ -85,7 +87,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     @Override
     public <R> ReactiveFlow<I, O> fanOutMono(String name, List<Function<I, Mono<R>>> branches,
                                              Function<List<R>, I> join) {
-        return wrap(delegate.fanOut(name, Blocking.branches(branches, budget), join));
+        return wrap(delegate.fanOut(name, Blocking.branches(branches, config.budget()), join));
     }
 
     // ── a Flux through the flow: Reactor's operators do the backpressure ──
@@ -162,7 +164,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public ReactiveStep<I, O> just(I input) {
-        return new DefaultReactiveStep<>(delegate.just(input), budget);
+        return new DefaultReactiveStep<>(delegate.just(input), config);
     }
 
     @Override
@@ -257,22 +259,22 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public <R> ReactiveFlow<I, O> fork(Segment<I, R> sub) {
-        return wrap(delegate.fork(Lanes.budgeted(sub, budget)));
+        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget())));
     }
 
     @Override
     public <R> ReactiveFlow<I, O> fork(String name, Segment<I, R> sub) {
-        return wrap(delegate.fork(name, Lanes.budgeted(sub, budget)));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget())));
     }
 
     @Override
     public ReactiveFlow<I, O> use(Segment<I, I> segment) {
-        return wrap(delegate.use(Lanes.budgeted(segment, budget)));
+        return wrap(delegate.use(Lanes.budgeted(segment, config.budget())));
     }
 
     @Override
     public ReactiveFlow<I, O> use(String region, Segment<I, I> segment) {
-        return wrap(delegate.use(region, Lanes.budgeted(segment, budget)));
+        return wrap(delegate.use(region, Lanes.budgeted(segment, config.budget())));
     }
 
     @Override
@@ -297,12 +299,12 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public ReactiveCondition<I, O> when(Predicate<I> predicate) {
-        return new DefaultReactiveCondition<>(delegate.when(predicate), budget);
+        return new DefaultReactiveCondition<>(delegate.when(predicate), config);
     }
 
     @Override
     public ReactiveCases<I, O> match() {
-        return new DefaultReactiveCases<>(delegate.match(), budget);
+        return new DefaultReactiveCases<>(delegate.match(), config);
     }
 
     @Override

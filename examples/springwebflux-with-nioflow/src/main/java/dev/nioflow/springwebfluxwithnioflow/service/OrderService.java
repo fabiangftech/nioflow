@@ -1,10 +1,10 @@
 package dev.nioflow.springwebfluxwithnioflow.service;
 
-import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.model.Retry;
 import dev.nioflow.infrastructure.reactive.Reactive;
 import dev.nioflow.infrastructure.reactive.ReactiveFlow;
 import dev.nioflow.springwebfluxwithnioflow.client.RemoteClient;
+import dev.nioflow.springwebfluxwithnioflow.config.FlowKeys;
 import dev.nioflow.springwebfluxwithnioflow.model.Order;
 import dev.nioflow.springwebfluxwithnioflow.model.Receipt;
 import dev.nioflow.springwebfluxwithnioflow.repository.OrderRepository;
@@ -28,7 +28,6 @@ import java.util.Objects;
 public class OrderService {
 
     private static final Logger LOG = LoggerFactory.getLogger(OrderService.class);
-    private static final Context.Key<String> TRACE = Context.Key.of("traceId");
 
     private final ReactiveFlow<String, Receipt> orders;
     private final OrderRepository repository;
@@ -59,10 +58,14 @@ public class OrderService {
      * <p>The notification takes 300 ms and the response does not wait for it —
      * that is what fork() means. Response latency is repo (40) + fraud (60) +
      * charge (80), not that plus 300.
+     *
+     * <p>No traceId parameter, and no deferContextual: the flow declared
+     * {@code propagate(TRACE)}, so executeMono() seeds the trace id the WebFilter
+     * left in Reactor's subscriber context — per subscription, and only the keys
+     * the config named.
      */
-    public Mono<Receipt> pay(String id, String traceId) {
+    public Mono<Receipt> pay(String id) {
         return orders.just(id)
-                .with(TRACE, traceId)                                   // seed the context the caller knew
                 .adapt(repository::findById)                            // blocking
                 .filter(Objects::nonNull)
                 .handleMono("fraud", remote::score,                     // reactive — and an ORDINARY stage:
@@ -73,9 +76,22 @@ public class OrderService {
                         .adaptMono(remote::notify)                      // Receipt -> Mono<String>: adaptMono re-types,
                         .recover(error -> "notification failed"))       // handleMono would have to give a Receipt back
                 .handleContextual("audit", (receipt, context) -> {
-                    LOG.info("[{}] order {} -> {}", context.get(TRACE), receipt.orderId(), receipt.status());
+                    LOG.info("[{}] order {} -> {}",
+                            context.get(FlowKeys.TRACE), receipt.orderId(), receipt.status());
                     return receipt;
                 })
+                .executeMono();
+    }
+
+    /**
+     * The bridge, made visible. The trace id this returns was a parameter of
+     * NOTHING: a WebFilter wrote it into Reactor's subscriber context, the flow
+     * declared {@code propagate(TRACE)} once, and a stage three thread hops away
+     * read it out of the per-execution Context.
+     */
+    public Mono<String> trace(String id) {
+        return orders.just(id)
+                .handleContextual("read-trace", (value, context) -> context.get(FlowKeys.TRACE))
                 .executeMono();
     }
 

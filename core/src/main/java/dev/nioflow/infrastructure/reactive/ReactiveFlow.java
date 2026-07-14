@@ -2,6 +2,7 @@ package dev.nioflow.infrastructure.reactive;
 
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.NioStep;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
@@ -63,6 +64,47 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      * definition, wrapped with the budget.
      */
     ReactiveFlow<I, O> defaultBudget(Duration budget);
+
+    // ── the context bridge ───────────────────────────────────────────────
+
+    /**
+     * The keys this flow lifts out of Reactor's subscriber context and into the
+     * per-execution {@link Context}, on every {@code executeMono} /
+     * {@code executeFlux} — declared once, here, so no controller method has to
+     * write the {@code Mono.deferContextual(...).with(...)} dance again.
+     *
+     * <pre>
+     * ReactiveFlow&lt;String, Receipt&gt; orders =
+     *         Reactive.&lt;String, Receipt&gt;flow(DefaultNioFlow.from(String.class))
+     *                 .propagate(TRACE, TENANT);       // once, in the config
+     *
+     * orders.just(id)
+     *       .handleContextual("charge", (order, ctx) -&gt; psp.charge(order, ctx.get(TRACE)))
+     *       .executeMono();                            // TRACE is already there
+     * </pre>
+     *
+     * <p>The keys line up by NAME: {@code Context.Key.of("traceId")} reads the
+     * subscriber-context entry {@code "traceId"} (the same correspondence that
+     * lets a map handed to {@code engine.call} interoperate). A key the
+     * subscriber context does not carry is simply not seeded — no throw, no null
+     * entry, and {@code ctx.get} gives back null exactly as it would for a key
+     * nobody ever wrote.
+     *
+     * <p><b>Declared-and-automatic, never discovered-and-automatic.</b> There is
+     * no {@code Hooks}, no Micrometer context propagation and no write-back: a
+     * reader of the config sees exactly what crosses the boundary, and nothing
+     * crosses that a person did not write down. Implicit context that is right
+     * 99 % of the time is wrong during the incident you bought it for.
+     *
+     * <p>Seeded per SUBSCRIPTION, not per assembly — two subscriptions of the
+     * same Mono under two different subscriber contexts get their own values —
+     * and an explicit {@link NioStep#with} on the pipeline wins over a propagated
+     * key of the same name: that one the caller wrote down here.
+     *
+     * @throws IllegalArgumentException if no key is given (a whitelist of nothing
+     *         is a mistake, and silence would never tell you)
+     */
+    ReactiveFlow<I, O> propagate(Context.Key<?>... keys);
 
     // ── the reactive steps ───────────────────────────────────────────────
 

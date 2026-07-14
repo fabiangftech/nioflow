@@ -2,6 +2,7 @@ package dev.nioflow.benchmark;
 
 import dev.nioflow.application.facade.DefaultNioEngine;
 import dev.nioflow.application.facade.DefaultNioFlow;
+import dev.nioflow.core.facade.Context.Key;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.infrastructure.reactive.Reactive;
 import dev.nioflow.infrastructure.reactive.ReactiveFlow;
@@ -13,6 +14,7 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import reactor.core.publisher.Mono;
+import reactor.util.context.Context;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +39,13 @@ import java.util.function.Function;
  *     "kilobytes vs bytes" claim lives or dies.</li>
  * </ul>
  *
+ * <p>The context bridge is measured the same way. {@code contextPropagated} —
+ * keys declared once with {@code propagate}, seeded from the subscriber context
+ * on every subscription — against {@code contextSeededByHand}, the
+ * deferContextual/with() dance it replaces; and {@code monoOverhead}, whose flow
+ * declares no keys at all, is the acceptance bar: <b>propagate() unused must cost
+ * exactly zero</b> (one branch on an empty list, no defer, no map).
+ *
  * The Monos here resolve immediately: the point is to measure the ENGINE's
  * overhead, not a stubbed network.
  */
@@ -45,9 +54,15 @@ import java.util.function.Function;
 @State(Scope.Benchmark)
 public class ReactiveBenchmark {
 
+    private static final String TRACE_ID = "traceId";
+    private static final Key<String> TRACE = Key.of(TRACE_ID);
+    private static final Context TRACE_CONTEXT = Context.of(TRACE_ID, "abc-123");
+
     ReactiveFlow<Integer, Integer> plainStages;
     ReactiveFlow<Integer, Integer> reactiveStages;
     ReactiveFlow<Integer, Integer> reactiveConcurrent;
+    ReactiveFlow<Integer, Integer> contextual;
+    ReactiveFlow<Integer, Integer> propagating;
 
     @Setup
     public void setUp() {
@@ -80,6 +95,20 @@ public class ReactiveBenchmark {
                         results -> results.stream().mapToInt(Integer::intValue).sum())
                 .handleMono("d", value -> Mono.just(value * 5));
         concurrentEngine.seal();
+
+        // The context bridge, against the boilerplate it replaces. Same chain,
+        // same stage reading the trace id: one flow declares propagate(TRACE),
+        // the other makes every caller write the deferContextual/with() dance.
+        NioEngine contextEngine = new DefaultNioEngine();
+        contextual = Reactive.flow(DefaultNioFlow.from(Integer.class, contextEngine));
+        contextual.handleContextual("read-trace", (value, ctx) -> value + ctx.get(TRACE).length());
+        contextEngine.seal();
+
+        NioEngine propagateEngine = new DefaultNioEngine();
+        propagating = Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, propagateEngine))
+                .propagate(TRACE);
+        propagating.handleContextual("read-trace", (value, ctx) -> value + ctx.get(TRACE).length());
+        propagateEngine.seal();
     }
 
     /** The baseline: the same chain, no Reactor anywhere. */
@@ -104,6 +133,25 @@ public class ReactiveBenchmark {
     @Benchmark
     public Object fourReactiveStagesConcurrent() {
         return reactiveConcurrent.just(1).executeMono().block();
+    }
+
+    /** The boilerplate propagate() replaces: seed by hand, at every call site. */
+    @Benchmark
+    public Object contextSeededByHand() {
+        return Mono.deferContextual(view -> contextual.just(1)
+                        .with(TRACE, view.get(TRACE_ID))
+                        .executeMono())
+                .contextWrite(TRACE_CONTEXT)
+                .block();
+    }
+
+    /** The same seeding, declared once on the flow. This is the number to watch. */
+    @Benchmark
+    public Object contextPropagated() {
+        return propagating.just(1)
+                .executeMono()
+                .contextWrite(TRACE_CONTEXT)
+                .block();
     }
 
     /**

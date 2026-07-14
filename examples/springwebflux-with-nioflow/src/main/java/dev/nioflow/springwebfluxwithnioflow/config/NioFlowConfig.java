@@ -29,6 +29,14 @@ import java.time.Duration;
  * backstop for every reactive step that declares nothing — the fraud and charge
  * calls set tighter ones of their own, and the notification inside the fork,
  * which declares none, is now covered too.
+ *
+ * <p>{@code propagate(TRACE)} is the context bridge, declared once: the trace id
+ * that {@link TraceWebFilter} put in Reactor's subscriber context is lifted into
+ * the per-execution Context on every {@code executeMono()}. This line is the
+ * reason no controller method and no service method takes a {@code traceId}
+ * parameter — and the reason a reader of this config can see exactly what
+ * crosses the boundary, which is the whole point of declaring it rather than
+ * discovering it.
  */
 @Configuration
 public class NioFlowConfig {
@@ -36,6 +44,7 @@ public class NioFlowConfig {
     @Bean(destroyMethod = "close")
     public ReactiveFlow<String, Receipt> orders() {
         return Reactive.<String, Receipt>flow(DefaultNioFlow.from(String.class))
-                .defaultBudget(Duration.ofSeconds(3));
+                .defaultBudget(Duration.ofSeconds(3))
+                .propagate(FlowKeys.TRACE);
     }
 }

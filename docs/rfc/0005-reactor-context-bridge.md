@@ -1,7 +1,7 @@
 # RFC 0005 — The Reactor context bridge, declared once
 
-- **Status**: Proposed
-- **Target**: `infrastructure.reactive` only (no `core` change)
+- **Status**: Implemented (`ReactiveFlow.propagate`, `ReactiveContextTest`)
+- **Target**: `infrastructure.reactive`, plus one `core` terminal — see *What the implementation changed*
 - **Depends on**: RFC 0002 (`NioStep.with(Context.Key, value)`, already shipped)
 - **Independent of**: every other proposed RFC (0003, 0004, 0006, 0007)
 
@@ -47,25 +47,51 @@ Mono<Receipt> pay(@PathVariable String id) {
 
 `Context.Key` is **name-based** — `record Key<T>(String name)` (`Context.java:25`), and its javadoc already says the keys interoperate with the `Map<String, Object>` handed to `engine.call`. A Reactor subscriber context is keyed by arbitrary objects, in practice by `String`. The two line up because of a design decision taken two RFCs ago, and this RFC is mostly cashing it in.
 
-The mechanics are exactly the manual pattern, hoisted into the terminal:
+The mechanics are the manual pattern, hoisted into the terminal:
 
 ```java
 // DefaultReactiveStep.executeMono(), when the flow declared keys
-return Mono.deferContextual(view -> {
-    ReactiveStep<T, O> seeded = this;
-    for (Context.Key<?> key : declaredKeys) {
-        Optional<Object> value = view.getOrEmpty(key.name());
-        if (value.isPresent()) {
-            seeded = seeded.with(cast(key), value.get());   // NioStep.with — already there
-        }
-    }
-    return Mono.fromFuture(seeded::executeAsync);
-});
+if (config.keys().isEmpty()) {
+    return Mono.fromFuture(delegate::executeAsync);      // declared nothing: unchanged
+}
+return Mono.deferContextual(view -> Mono.fromFuture(() -> delegate.executeAsync(seed(view))));
+
+// seed(view): the declared keys the subscriber context actually carries, and only them
 ```
 
-A key absent from the subscriber context is simply not seeded — no throw, no null in the map. The context map stays lazy (`ExecutionNioFlow:321`), so a flow that declares no keys, or an execution whose keys are all absent, allocates nothing. That is the acceptance bar: **`propagate()` unused must cost exactly zero.**
+A key absent from the subscriber context is simply not seeded — no throw, no null in the map. The context map stays lazy, so a flow that declares no keys, or an execution whose keys are all absent, allocates nothing. That is the acceptance bar: **`propagate()` unused must cost exactly zero** — measured, see *Numbers*.
 
 Note the laziness constraint: the seeding must happen **inside** the `deferContextual`, per subscription. Seeding at assembly time would share one value across every subscription of the same `Mono` — the same eager-vs-lazy trap `executeMono()` exists to avoid (`0002:441`).
+
+## What the implementation changed
+
+**The premise above — that `with()` can express one subscription's context — was false**, and it is the only thing this RFC got wrong. `NioStep.with()` is a *builder step*: it writes into the pipeline's state and returns `this` (`ExecutionNioFlow:214`). Seeding through it per subscription would have meant two subscriptions of the same `Mono` racing on one map, and a key that one carries and the other does not lingering into the second run — precisely the two properties this RFC set out to guarantee.
+
+So core grew **one terminal**, and the reactive package is still where all the policy lives:
+
+```java
+// NioStep — next to executeAsync()
+CompletableFuture<T> executeAsync(Map<String, Object> context);   // the context of THIS run
+```
+
+The run's entries are merged with the pipeline's own seed into a fresh map per run; `with()` wins on a name they share (it is the one the pipeline declared), and null/empty is exactly `executeAsync()` — no map is created. `Context.Key` being name-based means **no cast anywhere**: the subscriber context's `Object` value goes into a `Map<String, Object>` the engine already knows how to take.
+
+The rest is the flow's state: the propagated keys ride along with the default budget in one `ReactiveConfig`, into `just()`'s pipeline, into a branch's lane and into a fork's segment — so what the flow declared once holds everywhere the chain goes.
+
+## Numbers
+
+`ReactiveBenchmark`, JDK 25, 2 forks × (5 warmup + 8 measured) iterations, `-prof gc`. Before = `HEAD` in a worktree, after = this branch:
+
+| | throughput | allocation |
+| --- | --- | --- |
+| `monoOverhead` — the flow declares no keys — **before** | 55.4 ± 3.2 ops/ms | 1049.5 B/op |
+| `monoOverhead` — the flow declares no keys — **after** | 54.5 ± 3.8 ops/ms | 1048.4 B/op |
+| `contextPropagated` — one key, seeded per subscription | 52.9 ± 2.5 ops/ms | 1368.3 B/op |
+| `contextSeededByHand` — the `deferContextual`/`with()` dance it replaces | 50.9 ± 10.4 ops/ms | 1436.4 B/op |
+
+**The acceptance bar holds:** a flow that declares no keys allocates the same 1 048 B it allocated before `propagate()` existed (the byte-for-byte match is the honest metric here; the throughput scores of this suite overlap inside their error bars). The unused path is one branch on an empty list — no `deferContextual`, no map.
+
+**And the bridge is not a tax:** declared and seeded, it runs at parity with the hand-written dance it replaces and allocates 68 B/op *less* than it. Against seeding nothing at all it costs ~320 B/op and ~3 % throughput — one seed map, one merged copy, one `deferContextual` — which is what a trace id crossing the boundary costs however you write it.
 
 ## What this deliberately does NOT do
 
@@ -95,4 +121,4 @@ The example (`examples/springwebflux-with-nioflow`) drops the hand-threaded `tra
 | --- | --- |
 | **`propagate()` makes context seeding implicit** — the very thing RFC 0002 argued against. | Implicit *per subscription*, but the keys are **declared** at the flow. Declared-and-automatic is the line; `Hooks`/`ContextPropagation` stays out precisely because it crosses it. |
 | A key is declared but the subscriber context uses a different name, so it silently never arrives. | The whitelist test above makes absence a defined behavior (no seed, `ctx.get` → null) rather than a mystery, and the javadoc names the `String` correspondence. A "strict" mode that throws on a missing declared key is future work if anyone wants it. |
-| Type safety: `Context.Key<T>` is typed, the Reactor context is `Object`-keyed. | The cast happens at exactly one point, and a `ClassCastException` surfaces at the seeding, before any stage runs — not three stages later inside user code. |
+| Type safety: `Context.Key<T>` is typed, the Reactor context is `Object`-keyed. | There is no cast: keys are name-based, so the value travels as an `Object` in the same `Map<String, Object>` the engine already accepts from `engine.call`. A type mismatch surfaces where a mis-seeded `engine.call` map would surface it — at the `ctx.get` that reads it — and the javadoc names the `String` correspondence that produces it. |

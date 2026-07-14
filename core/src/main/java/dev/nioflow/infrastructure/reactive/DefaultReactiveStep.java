@@ -8,9 +8,12 @@ import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.util.context.ContextView;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -26,30 +29,26 @@ import java.util.function.UnaryOperator;
 class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     final NioStep<T, O> delegate;
-    final Duration budget;
+    final ReactiveConfig config;
 
-    DefaultReactiveStep(NioStep<T, O> delegate) {
-        this(delegate, null);
-    }
-
-    DefaultReactiveStep(NioStep<T, O> delegate, Duration budget) {
+    DefaultReactiveStep(NioStep<T, O> delegate, ReactiveConfig config) {
         this.delegate = delegate;
-        this.budget = budget;
+        this.config = config;
     }
 
     private ReactiveStep<T, O> wrap(NioStep<T, O> result) {
-        return result == delegate ? this : new DefaultReactiveStep<>(result, budget);
+        return result == delegate ? this : new DefaultReactiveStep<>(result, config);
     }
 
     private <R> ReactiveStep<R, O> retyped(NioStep<R, O> result) {
-        return new DefaultReactiveStep<>(result, budget);
+        return new DefaultReactiveStep<>(result, config);
     }
 
     // ── the reactive steps ──
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call) {
-        return handleMono(name, call, budget);
+        return handleMono(name, call, config.budget());
     }
 
     @Override
@@ -59,7 +58,7 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Retry retry) {
-        return handleMono(name, call, budget, retry);
+        return handleMono(name, call, config.budget(), retry);
     }
 
     @Override
@@ -70,7 +69,7 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call) {
-        return adaptMono(call, budget);
+        return adaptMono(call, config.budget());
     }
 
     @Override
@@ -81,19 +80,19 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     @Override
     public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call) {
         return retyped(delegate.adapt(
-                value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), budget))));
+                value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), config.budget()))));
     }
 
     @Override
     public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call, int maxItems) {
         Blocking.checkMaxItems(maxItems);
-        return retyped(delegate.adapt(value -> Blocking.awaitBounded(call.apply(value), maxItems, budget)));
+        return retyped(delegate.adapt(value -> Blocking.awaitBounded(call.apply(value), maxItems, config.budget())));
     }
 
     @Override
     public <R, C> ReactiveStep<C, O> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                                 Function<List<R>, C> join) {
-        return retyped(delegate.fanOut(name, Blocking.branches(branches, budget), join));
+        return retyped(delegate.fanOut(name, Blocking.branches(branches, config.budget()), join));
     }
 
     /**
@@ -102,10 +101,34 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
      * is what makes .retry()/.repeat() on the Mono re-run the pipeline).
      * A filter() cut completes with null, which Reactor turns into an empty
      * Mono — the two notions of "no value" line up.
+     *
+     * <p>With keys declared ({@code propagate}), the subscriber context is read
+     * INSIDE a deferContextual — per subscription, never at assembly, which would
+     * share one caller's trace id with every subscription of this Mono. Declared
+     * nothing, and this is the same one-line terminal it always was: no defer, no
+     * map, no cost.
      */
     @Override
     public Mono<T> executeMono() {
-        return Mono.fromFuture(delegate::executeAsync);
+        if (config.keys().isEmpty()) {
+            return Mono.fromFuture(delegate::executeAsync);
+        }
+        return Mono.deferContextual(view -> Mono.fromFuture(() -> delegate.executeAsync(seed(view))));
+    }
+
+    /**
+     * The declared keys, and only them — the bridge is a WHITELIST. A key the
+     * subscriber context does not carry is not seeded at all: no null entry, and
+     * a stage reading it gets back null exactly as it would for a key nobody ever
+     * wrote. The entries travel as the run's context, not as a write into the
+     * pipeline (with() would leak this subscription's values into the next one).
+     */
+    private Map<String, Object> seed(ContextView view) {
+        Map<String, Object> seeded = HashMap.newHashMap(config.keys().size());
+        for (Context.Key<?> key : config.keys()) {
+            view.getOrEmpty(key.name()).ifPresent(value -> seeded.put(key.name(), value));
+        }
+        return seeded;
     }
 
     /**
@@ -215,17 +238,17 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<T, O> fork(Segment<T, R> sub) {
-        return wrap(delegate.fork(Lanes.budgeted(sub, budget)));
+        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget())));
     }
 
     @Override
     public <R> ReactiveStep<T, O> fork(String name, Segment<T, R> sub) {
-        return wrap(delegate.fork(name, Lanes.budgeted(sub, budget)));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget())));
     }
 
     @Override
     public <R> ReactiveStep<R, O> use(Segment<T, R> segment) {
-        return retyped(delegate.use(Lanes.budgeted(segment, budget)));
+        return retyped(delegate.use(Lanes.budgeted(segment, config.budget())));
     }
 
     @Override
@@ -260,12 +283,12 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStepCondition<T, O> when(Predicate<T> predicate) {
-        return new DefaultReactiveStepCondition<>(delegate.when(predicate), budget);
+        return new DefaultReactiveStepCondition<>(delegate.when(predicate), config);
     }
 
     @Override
     public ReactiveStepCases<T, O> match() {
-        return new DefaultReactiveStepCases<>(delegate.match(), budget);
+        return new DefaultReactiveStepCases<>(delegate.match(), config);
     }
 
     @Override
@@ -276,6 +299,11 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     @Override
     public CompletableFuture<T> executeAsync() {
         return delegate.executeAsync();
+    }
+
+    @Override
+    public CompletableFuture<T> executeAsync(Map<String, Object> context) {
+        return delegate.executeAsync(context);
     }
 
     @Override

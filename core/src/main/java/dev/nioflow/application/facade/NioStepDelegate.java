@@ -11,6 +11,7 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -179,6 +180,11 @@ abstract class NioStepDelegate<T, O> implements NioStep<T, O> {
     @Override
     public CompletableFuture<T> executeAsync() {
         return step().executeAsync();
+    }
+
+    @Override
+    public CompletableFuture<T> executeAsync(Map<String, Object> context) {
+        return step().executeAsync(context);
     }
 
     @Override

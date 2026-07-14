@@ -5,6 +5,7 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -160,6 +161,27 @@ public interface NioStep<T, O> {
      * for a non-blocking endpoint.
      */
     CompletableFuture<T> executeAsync();
+
+    /**
+     * Same, with the context of THIS run — entries the pipeline itself did not
+     * declare, keyed by {@link Context.Key#name()} exactly like the map handed
+     * to {@code engine.call(input, map)}.
+     *
+     * <p>Why this exists next to {@link #with(Context.Key, Object)}: {@code with}
+     * is a builder step, so it writes into the pipeline and every run of that
+     * pipeline sees what it wrote. That is right for what the CALLER knew when
+     * it opened the pipeline, and wrong for what a SUBSCRIPTION knows: two
+     * subscriptions of the same Mono would race on it, and a key one of them
+     * carries would linger for the other. This overload keeps a run's entries in
+     * the run — the map is merged with the pipeline's own seed into a fresh
+     * context, and {@code with()} wins on a name they share (it is the one the
+     * pipeline declared).
+     *
+     * <p>Null or empty is exactly {@link #executeAsync()}: no map is created.
+     * The reactive bridge ({@code ReactiveFlow.propagate}) is the caller this was
+     * written for.
+     */
+    CompletableFuture<T> executeAsync(Map<String, Object> context);
 
     /**
      * Like execute(), but the outcome distinguishes a deliberate Filter cut

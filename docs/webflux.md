@@ -128,14 +128,39 @@ It inherits `executeMono()`'s semantics exactly: lazy (nothing runs until the `F
 
 ## Tracing: Reactor context → nioflow context
 
+Declare the keys **once, on the flow**, and every `executeMono()` / `executeFlux()` lifts them out of Reactor's subscriber context into the per-execution `Context`:
+
 ```java
 static final Context.Key<String> TRACE = Context.Key.of("traceId");
 
-return Mono.deferContextual(view -> orders.just(id)
-        .with(TRACE, view.get("traceId"))            // seeds the per-execution Context
-        .handleContextual("charge", (order, ctx) -> psp.charge(order, ctx.get(TRACE)))
-        .executeMono());
+@Bean(destroyMethod = "close")
+ReactiveFlow<String, Receipt> orders() {
+    return Reactive.<String, Receipt>flow(DefaultNioFlow.from(String.class))
+            .propagate(TRACE);                       // ← the whole bridge
+}
 ```
+
+```java
+@PostMapping("/orders/{id}/pay")
+Mono<Receipt> pay(@PathVariable String id) {         // no traceId parameter anywhere
+    return orders.just(id)
+            .handleContextual("charge", (order, ctx) -> psp.charge(order, ctx.get(TRACE)))
+            .executeMono();                          // TRACE is already in the context
+}
+```
+
+The keys line up **by name**: `Context.Key.of("traceId")` reads the subscriber-context entry `"traceId"` (the same correspondence that lets a map handed to `engine.call` interoperate). Whatever puts it there — typically a `WebFilter` doing `contextWrite(Context.of("traceId", id))` — is your edge's business, not the flow's.
+
+Four properties worth knowing:
+
+- **It is a whitelist.** A key the config did not name does not cross, ever. Declared-and-automatic, never discovered-and-automatic: no `Hooks`, no Micrometer context propagation, and a reader of the config sees exactly what crosses the boundary. An MDC that is right 99 % of the time is wrong during the incident you bought it for.
+- **Absence is defined.** A declared key the subscriber context does not carry is simply not seeded — no throw, no null entry, and `ctx.get` gives back null exactly as for a key nobody ever wrote.
+- **Per subscription, never per assembly.** Two subscriptions of the same `Mono` under two different subscriber contexts get their own values, and a `.retry()` re-seeds on every attempt. (This is why the seeding cannot go through `with()`, which writes into the *pipeline*: internally it runs through `NioStep.executeAsync(map)`, whose entries stay in the run.)
+- **An explicit `with()` wins** over a propagated key of the same name — that one the caller wrote down here.
+
+`propagate()` unused costs exactly zero: no `deferContextual`, no map, the same one-line terminal `executeMono()` always was.
+
+No write-back: nothing is ever published back into the subscriber context. A stage that wants to publish something publishes it in the value.
 
 ## The trap
 
