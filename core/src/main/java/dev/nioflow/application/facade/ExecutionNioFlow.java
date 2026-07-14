@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.Cancellable;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioEngine;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CompletionException;
@@ -261,31 +263,75 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public T execute() {
-        Object value = rawFuture().join();
-        return value == FlowSignal.FILTERED ? null : (T) value;
+        return typed(rawFuture().join());
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public CompletableFuture<T> executeAsync() {
-        return rawFuture().thenApply(value -> value == FlowSignal.FILTERED ? null : (T) value);
+        return rawFuture().thenApply(this::typed);
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public CompletableFuture<T> executeAsync(Map<String, Object> context) {
-        return rawFuture(context).thenApply(value -> value == FlowSignal.FILTERED ? null : (T) value);
+        return rawFuture(context).thenApply(this::typed);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public FlowResult<T> executeResult() {
         Object value = rawFuture().join();
-        return value == FlowSignal.FILTERED
-                ? new FlowResult.Filtered<>()
-                : new FlowResult.Completed<>((T) value);
+        if (value == FlowSignal.FILTERED) {
+            return new FlowResult.Filtered<>();
+        }
+        if (value == FlowSignal.CANCELLED) {
+            return new FlowResult.Cancelled<>();
+        }
+        return new FlowResult.Completed<>((T) value);
+    }
+
+    @Override
+    public Cancellable<T> executeCancellable() {
+        return executeCancellable(null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Cancellable<T> executeCancellable(Map<String, Object> runContext) {
+        Cancellable<Object> raw = state.nioEngine.callCancellable(
+                state.seed, contextFor(runContext), chain(), state.key);
+        // Built by hand rather than with thenApply: the caller must observe a
+        // CancellationException, not a CompletionException wrapping one — this
+        // is the future a Mono and an HTTP handler hang their cancellation on,
+        // and the exception type is the contract.
+        CompletableFuture<T> typed = new CompletableFuture<>();
+        decorate(raw.future()).whenComplete((value, error) -> {
+            if (error != null) {
+                typed.completeExceptionally(unwrap(error));
+            } else if (value == FlowSignal.CANCELLED) {
+                typed.completeExceptionally(new CancellationException("Execution was cancelled"));
+            } else {
+                typed.complete(value == FlowSignal.FILTERED ? null : (T) value);
+            }
+        });
+        return new StepCancellable<>(typed, raw);
+    }
+
+    /**
+     * The engine's sentinels in the caller's terms. A cancelled execution
+     * THROWS rather than yielding null: a null here would be indistinguishable
+     * from a Filter cut, and "the client hung up" is not "the value was cut".
+     */
+    @SuppressWarnings("unchecked")
+    private T typed(Object value) {
+        if (value == FlowSignal.CANCELLED) {
+            throw new CancellationException("Execution was cancelled");
+        }
+        return value == FlowSignal.FILTERED ? null : (T) value;
+    }
+
+    private List<Link> chain() {
+        return state.links != null ? state.links : state.nioEngine.chain();
     }
 
     private CompletableFuture<Object> rawFuture() {
@@ -293,9 +339,11 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     }
 
     private CompletableFuture<Object> rawFuture(Map<String, Object> runContext) {
-        List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
-        CompletableFuture<Object> raw =
-                state.nioEngine.call(state.seed, contextFor(runContext), chain, state.key);
+        return decorate(state.nioEngine.call(state.seed, contextFor(runContext), chain(), state.key));
+    }
+
+    /** Hangs the execution-scoped onComplete/onError off the raw future, if any. */
+    private CompletableFuture<Object> decorate(CompletableFuture<Object> raw) {
         if (state.onComplete == null && state.onError == null) {
             // Pay for what you use: no callbacks, no dependent future.
             return raw;
@@ -308,10 +356,22 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
                 if (state.onError != null) {
                     state.onError.accept(unwrap(error));
                 }
-            } else if (state.onComplete != null) {
+            } else if (state.onComplete != null && value != FlowSignal.CANCELLED) {
+                // Same rule the engine's complete handlers follow: a cancelled
+                // execution has no value to hand anyone.
                 state.onComplete.accept(value == FlowSignal.FILTERED ? null : value);
             }
         });
+    }
+
+    /** The typed handle: the caller's future, the engine's cancel. */
+    private record StepCancellable<T>(CompletableFuture<T> future, Cancellable<Object> raw)
+            implements Cancellable<T> {
+
+        @Override
+        public void cancel() {
+            raw.cancel();
+        }
     }
 
     /**

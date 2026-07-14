@@ -1,5 +1,6 @@
 package dev.nioflow.infrastructure.reactive;
 
+import dev.nioflow.core.facade.Cancellable;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioStep;
@@ -148,24 +149,41 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     }
 
     /**
-     * Lazy on purpose: fromFuture takes a SUPPLIER, so nothing runs until
-     * somebody subscribes, and every subscription is a fresh execution (which
-     * is what makes .retry()/.repeat() on the Mono re-run the pipeline).
+     * Lazy on purpose: the execution starts inside a defer, so nothing runs
+     * until somebody subscribes, and every subscription is a fresh execution
+     * (which is what makes .retry()/.repeat() on the Mono re-run the pipeline).
      * A filter() cut completes with null, which Reactor turns into an empty
      * Mono — the two notions of "no value" line up.
      *
+     * <p><b>A disposed subscription now cancels the execution behind it.</b>
+     * It used to cancel a DEPENDENT future (fromFuture cancels what it was
+     * handed, and thenApply's future is not the engine's), so the pipeline ran
+     * on and charged the card for a client who had already hung up. The handle
+     * from executeCancellable() reaches the execution itself: the chain stops
+     * at the next link and the in-flight async call is cancelled.
+     *
+     * <p>Cooperative, as everywhere: a blocking handleMono parked on a worker
+     * is not interrupted. That is the difference handleMonoAsync buys.
+     *
      * <p>With keys declared ({@code propagate}), the subscriber context is read
-     * INSIDE a deferContextual — per subscription, never at assembly, which would
-     * share one caller's trace id with every subscription of this Mono. Declared
-     * nothing, and this is the same one-line terminal it always was: no defer, no
-     * map, no cost.
+     * INSIDE the defer — per subscription, never at assembly, which would share
+     * one caller's trace id with every subscription of this Mono.
      */
     @Override
     public Mono<T> executeMono() {
         if (config.keys().isEmpty()) {
-            return Mono.fromFuture(delegate::executeAsync);
+            return Mono.defer(() -> cancellable(delegate.executeCancellable()));
         }
-        return Mono.deferContextual(view -> Mono.fromFuture(() -> delegate.executeAsync(seed(view))));
+        return Mono.deferContextual(view -> cancellable(delegate.executeCancellable(seed(view))));
+    }
+
+    /**
+     * The one place the Reactor side and the engine side of cancellation meet:
+     * doOnCancel fires on dispose (and on a downstream take(1), a timeout, a
+     * disconnected client) and hands it to the execution.
+     */
+    private Mono<T> cancellable(Cancellable<T> handle) {
+        return Mono.fromFuture(handle.future()).doOnCancel(handle::cancel);
     }
 
     /**
@@ -361,5 +379,15 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     @Override
     public FlowResult<T> executeResult() {
         return delegate.executeResult();
+    }
+
+    @Override
+    public Cancellable<T> executeCancellable() {
+        return delegate.executeCancellable();
+    }
+
+    @Override
+    public Cancellable<T> executeCancellable(Map<String, Object> context) {
+        return delegate.executeCancellable(context);
     }
 }

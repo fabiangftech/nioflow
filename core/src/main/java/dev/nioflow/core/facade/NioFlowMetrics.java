@@ -17,6 +17,16 @@ public interface NioFlowMetrics {
     default void executionFiltered(long nanos) {
     }
 
+    /**
+     * An execution was cancelled from the outside (Cancellable.cancel(), a
+     * disposed Mono). It lands in neither executionCompleted nor
+     * executionFailed: a request the client walked away from is not a success
+     * and not an error, and counting it as either is what makes a latency
+     * dashboard lie.
+     */
+    default void executionCancelled(long nanos) {
+    }
+
     default void stageCompleted(String stage, long nanos) {
     }
 

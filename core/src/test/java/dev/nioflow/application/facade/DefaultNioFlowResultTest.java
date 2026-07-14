@@ -53,9 +53,11 @@ class DefaultNioFlowResultTest {
         assertEquals("value:7", switch (completed) {
             case Completed<String>(String value) -> value;
             case Filtered<String>() -> "cut";
+            case FlowResult.Cancelled<String>() -> "cancelled";
         });
         assertFalse(completed.filtered());
         assertTrue(filtered.filtered());
+        assertFalse(completed.cancelled());
         assertEquals("value:7", completed.orElse("fallback"));
         assertEquals("fallback", filtered.orElse("fallback"));
     }

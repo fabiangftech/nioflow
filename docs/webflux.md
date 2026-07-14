@@ -215,6 +215,19 @@ So the choice:
 
 Otherwise the engine is buying you policy — and with `handleMonoAsync` the price is no longer a thread per in-flight call.
 
-**Not supported:** cancelling an execution from the outside (a disconnected client). A timeout on an async stage does cancel the call it is waiting on; cancelling the whole pipeline is RFC 0007.
+## Cancellation: a disposed subscription now stops the pipeline
+
+Disposing the Mono used to abandon the RESULT and nothing else — the pipeline ran on and charged the card for a client who had already hung up. It no longer does: `executeMono()` holds a handle on the execution, and a dispose (a disconnected client, a `take(1)`, a `timeout`) cancels it.
+
+It is **cooperative**, and the edge is the point:
+
+- the chain **stops advancing** — the next stage is never invoked, and that is what "the card is not charged" actually means;
+- an in-flight **async** call (`handleMonoAsync` / `adaptMonoAsync`) is **cancelled at the source**: the subscription dies, reactor-netty releases the connection;
+- a blocking `handleMono` already parked on a worker is **not interrupted**. It runs to its end and its result is dropped. This is the sharpest practical reason to reach for `handleMonoAsync`;
+- a `fork` is untouched — detached is what a fork means.
+
+A cancelled request reports `executionCancelled` (not `executionCompleted`), reaches no complete handler, and triggers no `recover()`. In core — no Reactor — the same handle is `NioStep.executeCancellable()`, because an HTTP server on virtual threads has exactly the same problem.
+
+Full design: [RFC 0007](https://github.com/fabiangftech/nioflow/blob/main/docs/rfc/0007-cancellation.md).
 
 Full design and rationale: [RFC 0002](https://github.com/fabiangftech/nioflow/blob/main/docs/rfc/0002-webflux.md). Runnable example: `examples/springwebflux-with-nioflow`.

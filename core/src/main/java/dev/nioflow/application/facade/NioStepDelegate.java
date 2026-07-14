@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.Cancellable;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioStep;
@@ -222,5 +223,15 @@ abstract class NioStepDelegate<T, O> implements NioStep<T, O> {
     @Override
     public FlowResult<T> executeResult() {
         return step().executeResult();
+    }
+
+    @Override
+    public Cancellable<T> executeCancellable() {
+        return step().executeCancellable();
+    }
+
+    @Override
+    public Cancellable<T> executeCancellable(Map<String, Object> context) {
+        return step().executeCancellable(context);
     }
 }

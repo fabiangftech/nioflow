@@ -124,6 +124,9 @@ public class SampleService {
         return switch (result) {
             case FlowResult.Completed<Integer>(Integer scaled) -> Optional.of(scaled);
             case FlowResult.Filtered<Integer> ignored -> Optional.empty();
+            // Nobody cancelled this one — it has no handle — but the outcome is
+            // sealed, so the compiler makes us say so.
+            case FlowResult.Cancelled<Integer> ignored -> Optional.empty();
         };
     }
 

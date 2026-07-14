@@ -27,6 +27,19 @@ public interface NioEngine {
      */
     CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain, Object key);
 
+    /**
+     * The same call, plus the handle to stop it. Separate from call() rather
+     * than replacing it: the plain call returns the execution's raw future with
+     * no wrapper allocated, and a caller who cannot cancel should not pay for
+     * the handle.
+     *
+     * <p>The future it hands back carries the CANCELLED sentinel like any other
+     * raw future; mapping that to a CancellationException is the flow facade's
+     * job, not the engine's.
+     */
+    Cancellable<Object> callCancellable(Object input, Map<String, Object> context,
+                                        List<Link> chain, Object key);
+
     List<Link> chain();
 
     void append(Link link);

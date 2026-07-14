@@ -212,7 +212,27 @@ public interface NioStep<T, O> {
     /**
      * Like execute(), but the outcome distinguishes a deliberate Filter cut
      * (Filtered) from a completed value (Completed) — including a genuinely
-     * null one, which execute() cannot tell apart from a cut.
+     * null one, which execute() cannot tell apart from a cut — and both from an
+     * execution stopped from the outside (Cancelled).
      */
     FlowResult<T> executeResult();
+
+    /**
+     * Runs the execution like {@link #executeAsync()}, and hands back the handle
+     * to stop it — for the caller who may stop caring about the answer: an HTTP
+     * client that disconnected, a request that lost its race, a disposed Mono
+     * (which is what {@code executeMono()} is built on).
+     *
+     * <p>Cancellation is <b>cooperative</b>: it stops the chain from advancing
+     * and cancels the in-flight call of an async stage (handleAsync / adaptAsync
+     * / handleMonoAsync — the CompletionStage is cancelled, so the connection is
+     * released), but it does NOT interrupt a blocking stage already running on a
+     * worker, and it does not touch a fork. The guarantee is the precise one:
+     * the card is not charged because {@code charge} is the stage that never
+     * gets invoked. See {@link Cancellable}.
+     */
+    Cancellable<T> executeCancellable();
+
+    /** Same, with the context of THIS run — see {@link #executeAsync(Map)}. */
+    Cancellable<T> executeCancellable(Map<String, Object> context);
 }

@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.Cancellable;
 import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioEngine;
@@ -58,6 +59,12 @@ public class DefaultNioEngine implements NioEngine {
     // execution. Engine exits (await, complete handlers) and the flow-level
     // execute()/executeAsync() map it to null; executeResult() observes it.
     private static final Object FILTERED = FlowSignal.FILTERED;
+
+    // Public sentinel carried by raw call() futures when the execution was
+    // cancelled from the outside. It ends the execution through the very same
+    // exactly-once door FILTERED does — the flow facade maps it to a
+    // CancellationException, and executeResult() reports it as Cancelled.
+    private static final Object CANCELLED = FlowSignal.CANCELLED;
 
     // Internal to advance(): the link took the execution over (dispatched to a
     // worker, forked, batched) or ended it, so the boss must stop walking.
@@ -277,19 +284,41 @@ public class DefaultNioEngine implements NioEngine {
     @Override
     public CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain, Object key) {
         if (closed) {
-            RejectedExecutionException rejection =
-                    new RejectedExecutionException("Engine is shut down; call rejected");
-            notifyError(rejection);
-            return CompletableFuture.failedFuture(rejection);
+            return CompletableFuture.failedFuture(rejection());
         }
+        // The raw result future goes straight to the caller: bookkeeping
+        // (drain slot, metrics, handlers) runs inside Execution BEFORE the
+        // future completes, so no dependent whenComplete future is allocated.
+        return submit(input, context, chain, key).result;
+    }
+
+    /**
+     * The same submission, with the handle on top. A caller who can cancel pays
+     * one small record for it; call() above still allocates nothing extra, which
+     * is why these are two methods and not one.
+     */
+    @Override
+    public Cancellable<Object> callCancellable(Object input, Map<String, Object> context,
+                                               List<Link> chain, Object key) {
+        if (closed) {
+            return new RejectedCall(CompletableFuture.failedFuture(rejection()));
+        }
+        return new ExecutionHandle(submit(input, context, chain, key));
+    }
+
+    private RejectedExecutionException rejection() {
+        RejectedExecutionException rejection =
+                new RejectedExecutionException("Engine is shut down; call rejected");
+        notifyError(rejection);
+        return rejection;
+    }
+
+    private Execution submit(Object input, Map<String, Object> context, List<Link> chain, Object key) {
         // The plan only applies to the exact chain version it was built for;
         // execution-local chains, and a chain snapshot taken before an edit
         // that has since landed (identity mismatch), fall back to interpreting.
         ChainVersion current = version.get();
         CompiledChain plan = current.links() == chain ? current.plan() : null;
-        // The raw result future goes straight to the caller: bookkeeping
-        // (drain slot, metrics, handlers) runs inside Execution BEFORE the
-        // future completes, so no dependent whenComplete future is allocated.
         Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
                 plan != null ? chain : List.copyOf(chain), context, plan, input, key, null);
         activeExecutions.incrementAndGet();
@@ -298,7 +327,30 @@ public class DefaultNioEngine implements NioEngine {
         } catch (RejectedExecutionException rejected) {
             execution.fail(rejected);
         }
-        return execution.result;
+        return execution;
+    }
+
+    /** The handle callCancellable() hands out: the execution's own future, and its cancel. */
+    private record ExecutionHandle(Execution execution) implements Cancellable<Object> {
+
+        @Override
+        public CompletableFuture<Object> future() {
+            return execution.result;
+        }
+
+        @Override
+        public void cancel() {
+            execution.cancel();
+        }
+    }
+
+    /** A call the shut-down engine never started: there is nothing to cancel. */
+    private record RejectedCall(CompletableFuture<Object> future) implements Cancellable<Object> {
+
+        @Override
+        public void cancel() {
+            // Nothing ran; the future is already failed.
+        }
     }
 
     @Override
@@ -871,6 +923,16 @@ public class DefaultNioEngine implements NioEngine {
         // Exactly-once completion guard. Written on the boss; the only off-boss
         // writer is the resume-rejection path, which implies the boss is gone.
         private volatile boolean finished;
+        // Raised by cancel() from ANY thread, read only on the boss (between
+        // links, before a recovery, before a retry) — so rule 1 holds: the flag
+        // crosses threads, the orchestration state it guards does not.
+        private volatile boolean cancelled;
+        // The CompletionStage of the async stage currently in flight, if any:
+        // the one piece of in-flight work cancellation can actually reach. Set
+        // by the invoking worker, read by the timeout and by cancel(). A blocking
+        // Stage has no equivalent — a parked worker is not a handle, which is
+        // the whole reason cancellation waited for AsyncStage (RFC 0006).
+        private volatile CompletionStage<Object> pendingCall;
         // Decisions as a bitset, 2 bits per id (bit 0 = recorded, bit 1 = value),
         // sized to the chain's highest Decision id: recording and guard checks
         // are O(1) with zero allocation, and an unrecorded decision fails any
@@ -976,6 +1038,38 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         /**
+         * Stops this execution from the outside — the only method on Execution
+         * that runs on the CALLER's thread, and it is careful about it: it
+         * raises a volatile flag, cancels the in-flight async call (a
+         * CompletableFuture, safe from anywhere), and then hands the TERMINAL to
+         * the boss, which is the thread allowed to touch orchestration state.
+         *
+         * <p>That last hop is not ceremony, it is the feature: an execution
+         * parked on an async call that never answers has no resume coming, so
+         * nobody would ever read the flag. Posting the terminal is what ends it.
+         *
+         * <p>Cooperative: a blocking stage already running on a worker is NOT
+         * interrupted. It runs to its end and its result is dropped at the next
+         * boundary, because by then the execution is finished.
+         */
+        private void cancel() {
+            if (finished || cancelled) {
+                return;
+            }
+            cancelled = true;
+            // Kills the remote call itself: the subscription dies, the
+            // connection is released. Without this the chain would merely stop
+            // advancing while the expensive call ran on.
+            cancel(pendingCall);
+            try {
+                boss.execute(() -> complete(CANCELLED));
+            } catch (RejectedExecutionException gone) {
+                // The boss is gone (engine shut down): nothing can race us.
+                complete(CANCELLED);
+            }
+        }
+
+        /**
          * The drain slot is released LAST, in a finally: "in flight" means
          * "not fully reported yet", so a clean shutdown(grace) guarantees every
          * metric and handler of every execution — request or fork — already
@@ -1005,6 +1099,8 @@ public class DefaultNioEngine implements NioEngine {
                     metrics.executionFailed(error, elapsed);
                 } else if (value == FILTERED) {
                     metrics.executionFiltered(elapsed);
+                } else if (value == CANCELLED) {
+                    metrics.executionCancelled(elapsed);
                 } else {
                     metrics.executionCompleted(elapsed);
                 }
@@ -1015,7 +1111,11 @@ public class DefaultNioEngine implements NioEngine {
             // handler is reported through the error handlers instead.
             if (error != null) {
                 notifyError(error);
-            } else {
+            } else if (value != CANCELLED) {
+                // A cancelled execution reaches neither side: it produced no
+                // output for the complete handlers (which promise an O) and it
+                // is not a failure for the error handlers. Nobody was waiting
+                // for it — that is what cancelled means.
                 Object exposed = value == FILTERED ? null : value;
                 for (Consumer<Object> handler : completeHandlers) {
                     try {
@@ -1097,6 +1197,13 @@ public class DefaultNioEngine implements NioEngine {
         private void advance(int index, Object value) {
             Object current = value;
             while (index < links.size()) {
+                // The cancellation check, at the one place where the chain is
+                // between two links and no user code is running: one volatile
+                // read per link, on the boss.
+                if (cancelled) {
+                    complete(CANCELLED);
+                    return;
+                }
                 Link link = links.get(index);
                 if (passesGuards(link)) {
                     Object next;
@@ -1269,10 +1376,26 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
 
-        // The fused run, applied on the worker as one plain call chain.
+        /**
+         * The fused run, applied on the worker as one plain call chain.
+         *
+         * <p>Cancellation is checked HERE too, and it has to be: a fused run is
+         * several links with no boss boundary between them, so the check in
+         * advance() would not fire until the whole run had finished — and the
+         * most ordinary chain there is (handle → handle → charge) is exactly one
+         * fused run. Without this, "the card is not charged" would be false in
+         * the common case, which is the entire feature.
+         *
+         * <p>Same cooperative rule as everywhere: the stage already running is
+         * not interrupted. The one after it is simply never invoked, and the run
+         * hands the sentinel back to the boss.
+         */
         private Object applyRun(Link[] run, Object value) {
             Object current = value;
             for (int i = 0; i < run.length; i++) {
+                if (cancelled) {
+                    return CANCELLED;
+                }
                 try {
                     if (run[i] instanceof Stage stage) {
                         current = applyStage(stage, current);
@@ -1426,24 +1549,25 @@ public class DefaultNioEngine implements NioEngine {
          */
         private void attemptAsync(AsyncStage stage, int resume, Object value, int attempt) {
             CompletableFuture<Object> attemptResult = new CompletableFuture<>();
-            // The in-flight call, published by the worker and read by the timeout:
-            // both may run on any thread, and only one of them wins the future.
-            AtomicReference<CompletionStage<Object>> pending = new AtomicReference<>();
             long invokedAt = metrics != null ? System.nanoTime() : 0;
 
             try {
-                workersExecutorService.execute(() -> invokeAsync(stage, value, attemptResult, pending));
+                workersExecutorService.execute(() -> invokeAsync(stage, value, attemptResult));
             } catch (RejectedExecutionException rejected) {
                 // Workers gone mid-shutdown: the execution must still end.
                 attemptResult.completeExceptionally(rejected);
             }
 
+            // The in-flight call is published by the worker into pendingCall and
+            // read from two places that may run on any thread: this timeout, and
+            // an outside cancel(). Only one of them wins the attempt future, and
+            // only the winner cancels — attemptResult's CAS is the arbiter.
             TimerWheel.Timeout budget = stage.timeout() == null ? null
                     : TimerWheel.shared().schedule(stage.timeout().toNanos(), () -> {
                         boolean expired = attemptResult.completeExceptionally(new TimeoutException(
                                 "Async stage '" + stage.name() + "' exceeded " + stage.timeout()));
                         if (expired) {
-                            cancel(pending.get());
+                            cancel(pendingCall);
                         }
                     });
 
@@ -1458,6 +1582,13 @@ public class DefaultNioEngine implements NioEngine {
         /** On the boss: continue, retry, or give the failure to the recovery path. */
         private void settleAsync(AsyncStage stage, int resume, Object value, int attempt,
                                  long invokedAt, Object nextValue, Throwable error) {
+            // Checked here and not only in advance()/recover(): the retry branch
+            // below reaches neither, and a cancelled execution must not fire the
+            // remote call one more time.
+            if (cancelled) {
+                complete(CANCELLED);
+                return;
+            }
             if (error == null) {
                 if (metrics != null) {
                     metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
@@ -1486,8 +1617,7 @@ public class DefaultNioEngine implements NioEngine {
          * there.
          */
         private void invokeAsync(AsyncStage stage, Object value,
-                                 CompletableFuture<Object> attemptResult,
-                                 AtomicReference<CompletionStage<Object>> pending) {
+                                 CompletableFuture<Object> attemptResult) {
             CompletionStage<Object> call;
             try {
                 call = stage.call().apply(value);
@@ -1500,11 +1630,17 @@ public class DefaultNioEngine implements NioEngine {
                 attemptResult.completeExceptionally(error);
                 return;
             }
-            pending.set(call);
-            // The timeout may already have fired and cancelled nothing (it read
-            // a null pending): cancel here instead, so the call never outlives
-            // the attempt that owns it.
-            if (attemptResult.isDone()) {
+            pendingCall = call;
+            // Both readers of pendingCall may have run BEFORE the line above
+            // published it, and then they cancelled nothing: the timeout (which
+            // completed the attempt future) and an outside cancel() (which raised
+            // the flag). Re-check both here, so the call never outlives the
+            // attempt that owns it.
+            //
+            // Publishing then re-reading two volatiles that the other side writes
+            // then reads in the opposite order is what makes this airtight: one of
+            // the two sides always sees the other, so the call is cancelled once.
+            if (attemptResult.isDone() || cancelled) {
                 cancel(call);
                 return;
             }
@@ -1615,6 +1751,14 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         private void recover(int from, Throwable error) {
+            // A cancelled execution runs no more user code — and a recovery is
+            // user code. This is also the door the cancelled async call comes
+            // back through (its CancellationException), which is why the failure
+            // must not be reported: nobody cancelled it by accident.
+            if (cancelled) {
+                complete(CANCELLED);
+                return;
+            }
             for (int i = from; i < links.size(); i++) {
                 if (links.get(i) instanceof Recovery recovery && passesGuards(recovery)) {
                     int next = i + 1;
