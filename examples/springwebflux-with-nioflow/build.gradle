@@ -47,4 +47,19 @@ tasks.named('test') {
     // saying so. Without it the agent fails to attach and every test here would
     // pass for the wrong reason.
     jvmArgs '-XX:+AllowRedefinitionToAddDeleteMethods'
+
+    // A failure here must explain ITSELF in the CI log. By default Gradle prints
+    // "OrderEndpointsTest > x() FAILED / AssertionFailedError at line 169" and nothing
+    // else — and these tests assert on strings (the thread report) whose CONTENT is the
+    // evidence. Chasing one such failure meant reproducing it locally, which took 40+
+    // runs; with the full trace and the assertion message, the same failure reads in one
+    // glance. The environment differs (Linux/native transport in CI, macOS here), so the
+    // log has to carry what the machine saw.
+    testLogging {
+        events 'failed'
+        exceptionFormat = 'full'
+        showStackTraces = true
+        showExceptions = true
+        showCauses = true
+    }
 }

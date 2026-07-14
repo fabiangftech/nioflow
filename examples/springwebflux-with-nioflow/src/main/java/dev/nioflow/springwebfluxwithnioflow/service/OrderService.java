@@ -152,6 +152,12 @@ public class OrderService {
      * afterReactiveStage=VIRTUAL:        ← the chain resumes on a worker
      * </pre>
      *
+     * <p>The thread NAMES above are illustrative: the transport reactor-netty picks
+     * depends on the OS (nio on macOS/Windows, the native epoll on Linux, ...), so
+     * the loop is {@code reactor-http-nio-2} here and {@code reactor-http-epoll-2}
+     * on a Linux box. What never changes is the part that matters — it is a
+     * PLATFORM thread, not a virtual worker. Assert that, not the transport.
+     *
      * <p>Read the third line twice. Operators you chain onto the WebClient's Mono
      * ({@code .map}, {@code .doOnNext}, {@code .filter}) execute on the thread
      * that completes it — Netty's event loop. That is Reactor behaving normally,

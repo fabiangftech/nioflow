@@ -166,7 +166,17 @@ class OrderEndpointsTest {
 
         // And the documented trap, asserted so nobody "fixes" the docs away: a
         // .map() chained on the Mono runs on the thread that completes it.
-        assertTrue(report.contains("insideMonoOperator=platform:reactor-http-nio"),
-                "an operator on the Mono runs on Netty — that is why work goes in stages: " + report);
+        //
+        // Assert the CLAIM, not the transport. The claim is "a platform thread of
+        // Netty's client event loop, never a virtual worker". The thread's name
+        // depends on the transport reactor-netty picked, which depends on the OS:
+        // reactor-http-nio-N on macOS/Windows, reactor-http-epoll-N on Linux (the
+        // native transport ships with reactor-netty and wins when present), and
+        // kqueue/io_uring elsewhere. Pinning "nio" passed on a developer's Mac and
+        // failed every run on the Linux CI box — a green suite that could not
+        // survive the move to another machine.
+        assertTrue(report.contains("insideMonoOperator=platform:reactor-http-"),
+                "an operator on the Mono must run on a Netty event-loop thread (platform,"
+                        + " named reactor-http-<transport>-N) — that is why work goes in stages: " + report);
     }
 }
