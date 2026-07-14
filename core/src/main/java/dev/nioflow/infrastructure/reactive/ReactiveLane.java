@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -44,6 +45,20 @@ public interface ReactiveLane<T> extends Lane<T> {
     ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call, Retry retry);
 
     ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry);
+
+    /**
+     * The reactive stage that does NOT park a worker; see
+     * {@link ReactiveFlow#handleMonoAsync}. A remote call inside a branch or a
+     * fork body is still a remote call — it deserves the same choice.
+     */
+    ReactiveLane<T> handleMonoAsync(String name, Function<T, Mono<T>> call);
+
+    ReactiveLane<T> handleMonoAsync(String name, Function<T, Mono<T>> call, Duration budget);
+
+    /** Re-types through a Mono without parking a worker; see #handleMonoAsync. */
+    <R> ReactiveLane<R> adaptMonoAsync(Function<T, Mono<R>> call);
+
+    <R> ReactiveLane<R> adaptMonoAsync(Function<T, Mono<R>> call, Duration budget);
 
     <R> ReactiveLane<R> adaptMono(Function<T, Mono<R>> call);
 
@@ -88,6 +103,25 @@ public interface ReactiveLane<T> extends Lane<T> {
 
     @Override
     ReactiveLane<T> handle(String name, UnaryOperator<T> function, RateLimit rateLimit);
+
+    @Override
+    ReactiveLane<T> handleAsync(String name, Function<T, CompletionStage<T>> call);
+
+    @Override
+    ReactiveLane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout);
+
+    @Override
+    ReactiveLane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Retry retry);
+
+    @Override
+    ReactiveLane<T> handleAsync(String name, Function<T, CompletionStage<T>> call,
+                                Duration timeout, Retry retry);
+
+    @Override
+    <R> ReactiveLane<R> adaptAsync(Function<T, CompletionStage<R>> call);
+
+    @Override
+    <R> ReactiveLane<R> adaptAsync(Function<T, CompletionStage<R>> call, Duration timeout);
 
     @Override
     ReactiveLane<T> handleContextual(BiFunction<T, Context, T> function);

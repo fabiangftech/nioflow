@@ -3,6 +3,7 @@ package dev.nioflow.application.facade;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.Segment;
+import dev.nioflow.core.model.AsyncStage;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -89,6 +91,19 @@ abstract class AbstractChain<X> {
             rateLimit.acquire();
             return body.apply(value);
         }, false, null, null, guards()));
+    }
+
+    /**
+     * The async stage: the link holds the call, the engine holds no thread while
+     * it runs. Type-preserving (handleAsync) and re-typing (adaptAsync) build the
+     * same link — only the name differs, exactly as with stage/adaptValue.
+     */
+    void asyncStage(String name, Function<X, ? extends CompletionStage<X>> call, Duration timeout, Retry retry) {
+        appendLink(new AsyncStage(name, asObjectCall(call), timeout, retry, guards()));
+    }
+
+    <R> void adaptAsyncValue(Function<X, ? extends CompletionStage<R>> call, Duration timeout) {
+        appendLink(new AsyncStage(anonymousName("adapt-async"), asObjectCall(call), timeout, null, guards()));
     }
 
     void syncStage(String name, UnaryOperator<X> function) {
@@ -191,6 +206,8 @@ abstract class AbstractChain<X> {
             case Decision decision -> new Decision(decision.predicate(), remap.get(decision.id()), guards);
             case Stage stage -> same ? stage : new Stage(stage.name(), stage.function(), stage.sync(),
                     stage.timeout(), stage.retry(), guards);
+            case AsyncStage async -> same ? async : new AsyncStage(async.name(), async.call(),
+                    async.timeout(), async.retry(), guards);
             case Filter filter -> same ? filter : new Filter(filter.predicate(), guards);
             case Recovery recovery -> same ? recovery
                     : new Recovery(recovery.name(), recovery.function(), guards);
@@ -276,5 +293,10 @@ abstract class AbstractChain<X> {
     @SuppressWarnings("unchecked")
     static Function<Object, Object> asObjectFunction(Function<?, ?> function) {
         return (Function<Object, Object>) function;
+    }
+
+    @SuppressWarnings("unchecked")
+    static Function<Object, CompletionStage<Object>> asObjectCall(Function<?, ? extends CompletionStage<?>> call) {
+        return (Function<Object, CompletionStage<Object>>) call;
     }
 }

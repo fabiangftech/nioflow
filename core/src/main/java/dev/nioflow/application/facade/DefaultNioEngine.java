@@ -4,6 +4,7 @@ import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
+import dev.nioflow.core.model.AsyncStage;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
@@ -30,6 +31,7 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
@@ -567,6 +569,7 @@ public class DefaultNioEngine implements NioEngine {
         for (int i = 0; i < links.size(); i++) {
             String name = switch (links.get(i)) {
                 case Stage stage -> stage.name();
+                case AsyncStage async -> async.name();
                 case Background background -> background.name();
                 case Recovery recovery -> recovery.name();
                 case FanOut fanOut -> fanOut.name();
@@ -1133,6 +1136,12 @@ public class DefaultNioEngine implements NioEngine {
                     dispatch(index, current); // the worker resumes on the boss when done
                     return HANDED_OFF;
                 }
+                case AsyncStage async -> {
+                    // A worker INVOKES the call and is released; the boss resumes
+                    // when the CompletionStage completes. Nothing parks.
+                    attemptAsync(async, index + 1, current, 1);
+                    return HANDED_OFF;
+                }
                 case Decision decision -> recordDecision(decision.id(), decision.predicate().test(current));
                 case Filter filter -> {
                     if (!filter.predicate().test(current)) {
@@ -1398,6 +1407,133 @@ public class DefaultNioEngine implements NioEngine {
                     recover(resume, unwrap(error));
                 }
             }, boss);
+        }
+
+        /**
+         * One attempt of an AsyncStage: the worker invokes the call and goes
+         * back to the pool — the whole point of the link. What waits is a
+         * CompletableFuture, not a thread.
+         *
+         * <p>The timeout does what a Stage's cannot: on expiry it <b>cancels</b>
+         * the CompletionStage (a Mono's subscription dies with its future; an
+         * HttpClient exchange aborts), so the remote call stops instead of
+         * merely being ignored. The cancel only happens if the timeout WON the
+         * race — the attempt future's CAS arbitrates, exactly as for Stage.
+         *
+         * <p>Retry re-invokes on a worker after a backoff scheduled on the boss's
+         * delayedExecutor: there is no parked worker to park a little longer, so
+         * the inline LockSupport loop that Stage uses has nothing to loop on.
+         */
+        private void attemptAsync(AsyncStage stage, int resume, Object value, int attempt) {
+            CompletableFuture<Object> attemptResult = new CompletableFuture<>();
+            // The in-flight call, published by the worker and read by the timeout:
+            // both may run on any thread, and only one of them wins the future.
+            AtomicReference<CompletionStage<Object>> pending = new AtomicReference<>();
+            long invokedAt = metrics != null ? System.nanoTime() : 0;
+
+            try {
+                workersExecutorService.execute(() -> invokeAsync(stage, value, attemptResult, pending));
+            } catch (RejectedExecutionException rejected) {
+                // Workers gone mid-shutdown: the execution must still end.
+                attemptResult.completeExceptionally(rejected);
+            }
+
+            TimerWheel.Timeout budget = stage.timeout() == null ? null
+                    : TimerWheel.shared().schedule(stage.timeout().toNanos(), () -> {
+                        boolean expired = attemptResult.completeExceptionally(new TimeoutException(
+                                "Async stage '" + stage.name() + "' exceeded " + stage.timeout()));
+                        if (expired) {
+                            cancel(pending.get());
+                        }
+                    });
+
+            attemptResult.whenCompleteAsync((nextValue, error) -> {
+                if (budget != null) {
+                    budget.cancel();
+                }
+                settleAsync(stage, resume, value, attempt, invokedAt, nextValue, error);
+            }, boss);
+        }
+
+        /** On the boss: continue, retry, or give the failure to the recovery path. */
+        private void settleAsync(AsyncStage stage, int resume, Object value, int attempt,
+                                 long invokedAt, Object nextValue, Throwable error) {
+            if (error == null) {
+                if (metrics != null) {
+                    metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                }
+                advance(resume, nextValue);
+                return;
+            }
+            Retry retry = stage.retry();
+            if (retry == null || attempt >= retry.attempts()) {
+                recover(resume, unwrap(error));
+                return;
+            }
+            if (metrics != null) {
+                metrics.stageRetried(stage.name());
+            }
+            CompletableFuture.delayedExecutor(retry.delayNanos(attempt), TimeUnit.NANOSECONDS, boss)
+                    .execute(() -> attemptAsync(stage, resume, value, attempt + 1));
+        }
+
+        /**
+         * The worker's whole job: apply the function, publish the stage it
+         * returned, hook the completion onto the attempt future — microseconds,
+         * then the thread is free. The callback that arms it runs on whatever
+         * thread completes the call (Netty, an HttpClient selector) and does no
+         * user code: it only completes a future, and the boss picks it up from
+         * there.
+         */
+        private void invokeAsync(AsyncStage stage, Object value,
+                                 CompletableFuture<Object> attemptResult,
+                                 AtomicReference<CompletionStage<Object>> pending) {
+            CompletionStage<Object> call;
+            try {
+                call = stage.call().apply(value);
+                if (call == null) {
+                    throw new IllegalStateException(
+                            "Async stage '" + stage.name() + "' returned a null CompletionStage");
+                }
+            } catch (Throwable error) {
+                // A synchronous throw from the call is an ordinary stage failure.
+                attemptResult.completeExceptionally(error);
+                return;
+            }
+            pending.set(call);
+            // The timeout may already have fired and cancelled nothing (it read
+            // a null pending): cancel here instead, so the call never outlives
+            // the attempt that owns it.
+            if (attemptResult.isDone()) {
+                cancel(call);
+                return;
+            }
+            call.whenComplete((outcome, error) -> {
+                if (error != null) {
+                    attemptResult.completeExceptionally(error);
+                } else {
+                    attemptResult.complete(outcome);
+                }
+            });
+        }
+
+        /**
+         * Cancellation, best effort and honest about it: a CompletableFuture
+         * (which is what {@code mono.toFuture()} and {@code HttpClient.sendAsync}
+         * hand back) cancels the work behind it; a minimal CompletionStage
+         * implementation may refuse to produce one, and then the timeout is all
+         * we have — the failure still reaches recover(), only the remote call
+         * keeps running.
+         */
+        private static void cancel(CompletionStage<Object> call) {
+            if (call == null) {
+                return;
+            }
+            try {
+                call.toCompletableFuture().cancel(false);
+            } catch (UnsupportedOperationException notCancellable) {
+                // Nothing to take back; the execution has already failed.
+            }
         }
 
         /**

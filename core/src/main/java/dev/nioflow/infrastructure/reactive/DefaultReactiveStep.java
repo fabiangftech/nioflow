@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -65,6 +66,57 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry) {
         return wrap(delegate.handle(name,
                 value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
+    }
+
+    @Override
+    public ReactiveStep<T, O> handleMonoAsync(String name, Function<T, Mono<T>> call) {
+        return handleMonoAsync(name, call, config.budget());
+    }
+
+    @Override
+    public ReactiveStep<T, O> handleMonoAsync(String name, Function<T, Mono<T>> call, Duration budget) {
+        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget));
+    }
+
+    @Override
+    public <R> ReactiveStep<R, O> adaptMonoAsync(Function<T, Mono<R>> call) {
+        return adaptMonoAsync(call, config.budget());
+    }
+
+    @Override
+    public <R> ReactiveStep<R, O> adaptMonoAsync(Function<T, Mono<R>> call, Duration budget) {
+        return retyped(delegate.adaptAsync(value -> call.apply(value).toFuture(), budget));
+    }
+
+    @Override
+    public ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call) {
+        return wrap(delegate.handleAsync(name, call));
+    }
+
+    @Override
+    public ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout) {
+        return wrap(delegate.handleAsync(name, call, timeout));
+    }
+
+    @Override
+    public ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Retry retry) {
+        return wrap(delegate.handleAsync(name, call, retry));
+    }
+
+    @Override
+    public ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call,
+                                          Duration timeout, Retry retry) {
+        return wrap(delegate.handleAsync(name, call, timeout, retry));
+    }
+
+    @Override
+    public <R> ReactiveStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call) {
+        return retyped(delegate.adaptAsync(call));
+    }
+
+    @Override
+    public <R> ReactiveStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call, Duration timeout) {
+        return retyped(delegate.adaptAsync(call, timeout));
     }
 
     @Override

@@ -11,6 +11,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -138,6 +139,29 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
 
     ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget, Retry retry);
 
+    /**
+     * The reactive stage that does NOT park a worker: the Mono becomes a
+     * {@link java.util.concurrent.CompletionStage} ({@code mono.toFuture()}) and
+     * the engine's AsyncStage holds a future, not a thread.
+     *
+     * <p>Against {@link #handleMono}, this is a choice and not an upgrade: a
+     * handleMono FUSES (four of them are 2 thread hops) and parks a virtual
+     * worker for the whole call; a handleMonoAsync is a dispatch boundary (four
+     * are 4 round trips) and parks nothing. Hops are microseconds against a
+     * remote call — heap is the axis that moves, so reach for this one at high
+     * in-flight concurrency, or when the call must be cancellable.
+     */
+    ReactiveFlow<I, O> handleMonoAsync(String name, Function<I, Mono<I>> call);
+
+    /**
+     * Same, with a budget — and here the budget is the ENGINE's timeout, not
+     * {@code mono.timeout(d)}: on expiry the engine cancels the future, and
+     * cancelling a {@code mono.toFuture()} cancels the SUBSCRIPTION (reactor-netty
+     * releases the connection). The two things {@link #handleMono} had to keep
+     * apart — the engine's timeout and the Mono's budget — are one thing here.
+     */
+    ReactiveFlow<I, O> handleMonoAsync(String name, Function<I, Mono<I>> call, Duration budget);
+
     /** Parallel split-join over reactive branches; the join gives back an I. */
     <R> ReactiveFlow<I, O> fanOutMono(String name, List<Function<I, Mono<R>>> branches,
                                       Function<List<R>, I> join);
@@ -218,6 +242,19 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
 
     @Override
     ReactiveFlow<I, O> handle(String name, UnaryOperator<I> function, RateLimit rateLimit);
+
+    @Override
+    ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call);
+
+    @Override
+    ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Duration timeout);
+
+    @Override
+    ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Retry retry);
+
+    @Override
+    ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call,
+                                   Duration timeout, Retry retry);
 
     @Override
     ReactiveFlow<I, O> handleContextual(BiFunction<I, Context, I> function);

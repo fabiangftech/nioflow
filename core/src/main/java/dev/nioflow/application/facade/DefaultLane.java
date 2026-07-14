@@ -10,6 +10,7 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -64,6 +65,38 @@ class DefaultLane<T> implements Lane<T> {
     public Lane<T> handle(String name, UnaryOperator<T> function, RateLimit rateLimit) {
         view.rateLimitedStage(name, function, rateLimit);
         return this;
+    }
+
+    @Override
+    public Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call) {
+        return handleAsync(name, call, null, null);
+    }
+
+    @Override
+    public Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout) {
+        return handleAsync(name, call, timeout, null);
+    }
+
+    @Override
+    public Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Retry retry) {
+        return handleAsync(name, call, null, retry);
+    }
+
+    @Override
+    public Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout, Retry retry) {
+        view.asyncStage(name, call, timeout, retry);
+        return this;
+    }
+
+    @Override
+    public <R> Lane<R> adaptAsync(Function<T, CompletionStage<R>> call) {
+        return adaptAsync(call, null);
+    }
+
+    @Override
+    public <R> Lane<R> adaptAsync(Function<T, CompletionStage<R>> call, Duration timeout) {
+        view.adaptAsyncValue(call, timeout);
+        return retyped();
     }
 
     @Override

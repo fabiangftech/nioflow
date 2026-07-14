@@ -61,6 +61,7 @@ public class ReactiveBenchmark {
     ReactiveFlow<Integer, Integer> plainStages;
     ReactiveFlow<Integer, Integer> reactiveStages;
     ReactiveFlow<Integer, Integer> reactiveConcurrent;
+    ReactiveFlow<Integer, Integer> asyncStages;
     ReactiveFlow<Integer, Integer> contextual;
     ReactiveFlow<Integer, Integer> propagating;
 
@@ -96,6 +97,17 @@ public class ReactiveBenchmark {
                 .handleMono("d", value -> Mono.just(value * 5));
         concurrentEngine.seal();
 
+        // The cost side of RFC 0006: four async stages are four dispatches,
+        // where the four handleMonos above fuse into ONE worker run. Same Monos,
+        // resolved immediately: what is measured is the hops, nothing else.
+        NioEngine asyncEngine = new DefaultNioEngine();
+        asyncStages = Reactive.flow(DefaultNioFlow.from(Integer.class, asyncEngine));
+        asyncStages.handleMonoAsync("a", value -> Mono.just(value + 1))
+                .handleMonoAsync("b", value -> Mono.just(value * 2))
+                .handleMonoAsync("c", value -> Mono.just(value - 3))
+                .handleMonoAsync("d", value -> Mono.just(value * 5));
+        asyncEngine.seal();
+
         // The context bridge, against the boilerplate it replaces. Same chain,
         // same stage reading the trace id: one flow declares propagate(TRACE),
         // the other makes every caller write the deferContextual/with() dance.
@@ -127,6 +139,17 @@ public class ReactiveBenchmark {
     @Benchmark
     public Object fourReactiveStages() {
         return reactiveStages.just(1).executeMono().block();
+    }
+
+    /**
+     * Four async stages: 4 dispatches, 0 parked workers. Against
+     * fourReactiveStages (2 hops, 4 parked-worker waits) this is the trade the
+     * RFC's decision tree is made of — and the heap side of it is not here, it
+     * is in ReactiveHeapProbeTest.
+     */
+    @Benchmark
+    public Object fourAsyncReactiveStages() {
+        return asyncStages.just(1).executeMono().block();
     }
 
     /** The Mono.zip shape: concurrent, but three parked workers per request. */

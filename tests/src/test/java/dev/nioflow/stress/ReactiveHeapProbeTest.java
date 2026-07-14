@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -24,49 +25,73 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>The JMH benchmarks cannot answer this — their Monos resolve immediately, so
  * nothing ever parks, and allocation rate is not retention. Here the calls never
  * complete, so every request sits exactly where a real one sits while the
- * downstream thinks: a nioflow request holds an Execution plus a PARKED VIRTUAL
- * THREAD (whose stack lives on the heap); a pure-Reactor request holds a few
- * state-machine objects.
+ * downstream thinks. Three columns, because there are three answers:
  *
- * <p>Rough by nature (heap probes are), so it asserts only the order of
- * magnitude the RFC's decision tree depends on — and prints the real numbers,
- * which are what belongs in the docs.
+ * <ul>
+ * <li><b>handleMono</b> — an Execution plus a PARKED VIRTUAL THREAD, whose stack
+ *     chunk lives on the heap. This is the 16.8× that RFC 0002 measured and that
+ *     its decision tree used to send people away from the library;</li>
+ * <li><b>handleMonoAsync</b> — an Execution plus a CompletableFuture. No thread
+ *     waits, so no stack is retained. This is the acceptance gate of RFC 0006:
+ *     if it does not land near pure Reactor, the async link buys nothing and
+ *     does not ship;</li>
+ * <li><b>pure Reactor</b> — a few state-machine objects, and the floor.</li>
+ * </ul>
+ *
+ * <p>Rough by nature (heap probes are), so it asserts orders of magnitude — and
+ * prints the real numbers, which are what belongs in the docs.
  */
 class ReactiveHeapProbeTest {
 
     private static final int IN_FLIGHT = 10_000;
 
     @Test
-    void aParkedRequestCostsKilobytesInNioflowAndBytesInPlainReactor() throws Exception {
-        long nioflowBytes = measureNioflow();
+    void theAsyncStageRetainsNoParkedThreadAndLandsNearPlainReactor() throws Exception {
+        long parkingBytes = measureNioflow((flow, sink) ->
+                flow.handleMono("remote", value -> sink.get()));
+        long asyncBytes = measureNioflow((flow, sink) ->
+                flow.handleMonoAsync("remote", value -> sink.get()));
         long reactorBytes = measureReactor();
 
         System.out.printf("retained heap per in-flight request (%d concurrent):%n", IN_FLIGHT);
-        System.out.printf("  nioflow + handleMono : %,d B%n", nioflowBytes);
-        System.out.printf("  pure Reactor chain   : %,d B%n", reactorBytes);
-        System.out.printf("  ratio                : %.1fx%n", (double) nioflowBytes / Math.max(reactorBytes, 1));
+        System.out.printf("  nioflow + handleMono      : %,d B%n", parkingBytes);
+        System.out.printf("  nioflow + handleMonoAsync : %,d B%n", asyncBytes);
+        System.out.printf("  pure Reactor chain        : %,d B%n", reactorBytes);
+        System.out.printf("  parking vs reactor        : %.1fx%n", ratio(parkingBytes, reactorBytes));
+        System.out.printf("  async   vs reactor        : %.1fx%n", ratio(asyncBytes, reactorBytes));
 
-        // The claim under test: a parked request is cheap, but NOT free — and it
-        // is the heavier of the two. If this ever inverts, the RFC's decision
-        // tree is wrong and the docs must change with it.
-        assertTrue(nioflowBytes > 0, "a parked request must retain something");
-        assertTrue(nioflowBytes > reactorBytes,
-                "nioflow parks a virtual thread; Reactor holds a state machine — nioflow: "
-                        + nioflowBytes + " B, reactor: " + reactorBytes + " B");
-        assertTrue(nioflowBytes < 100_000,
-                "a parked virtual thread must stay in the KB range, not the 100s of KB; got " + nioflowBytes + " B");
+        assertTrue(parkingBytes > 0, "a parked request must retain something");
+        assertTrue(parkingBytes > reactorBytes,
+                "handleMono parks a virtual thread; Reactor holds a state machine — parking: "
+                        + parkingBytes + " B, reactor: " + reactorBytes + " B");
+        assertTrue(parkingBytes < 100_000,
+                "a parked virtual thread must stay in the KB range; got " + parkingBytes + " B");
+
+        // The gate. An async stage that retained a thread's worth of heap would
+        // be a fusion loss bought with nothing, and RFC 0006 would not ship.
+        assertTrue(asyncBytes < parkingBytes / 2,
+                "handleMonoAsync must retain far less than the parked thread it replaces — async: "
+                        + asyncBytes + " B, parking: " + parkingBytes + " B");
+        assertTrue(asyncBytes < 4 * Math.max(reactorBytes, 1),
+                "handleMonoAsync must land within a small factor of pure Reactor — async: "
+                        + asyncBytes + " B, reactor: " + reactorBytes + " B");
     }
 
-    /** IN_FLIGHT executions, each parked on a Mono that never completes. */
-    private long measureNioflow() throws Exception {
+    /**
+     * IN_FLIGHT executions, each waiting on a Mono that never completes. The
+     * step under test is the parameter: the only difference between the two
+     * nioflow columns is which one of them the flow declared.
+     */
+    private long measureNioflow(BiConsumer<ReactiveFlow<Integer, Integer>, Sink> step) throws Exception {
         var engine = new DefaultNioEngine();
         try {
             ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
-            // One sink every request awaits: it never emits, so every worker parks.
+            // One sink every request awaits: it never emits, so every request
+            // sits at the remote call — parked on a worker, or on nothing.
             Sinks.One<Integer> never = Sinks.one();
-            var parked = new CountDownLatch(IN_FLIGHT);
-            flow.handleMono("remote", value -> {
-                parked.countDown();
+            var reached = new CountDownLatch(IN_FLIGHT);
+            step.accept(flow, () -> {
+                reached.countDown();
                 return never.asMono();
             });
             engine.seal();
@@ -76,8 +101,8 @@ class ReactiveHeapProbeTest {
             for (int i = 0; i < IN_FLIGHT; i++) {
                 pending.add(flow.just(i).executeAsync());
             }
-            assertTrue(parked.await(30, TimeUnit.SECONDS), "every request must reach the remote call");
-            // Let the last workers actually park before reading the heap.
+            assertTrue(reached.await(30, TimeUnit.SECONDS), "every request must reach the remote call");
+            // Let the last workers actually park (or actually leave) before reading.
             Thread.sleep(500);
             long perRequest = (usedHeap() - before) / IN_FLIGHT;
 
@@ -109,6 +134,15 @@ class ReactiveHeapProbeTest {
         CompletableFuture.allOf(pending.toArray(CompletableFuture[]::new))
                 .orTimeout(30, TimeUnit.SECONDS).join();
         return perRequest;
+    }
+
+    /** The call the probe hands to whichever step is being measured. */
+    private interface Sink {
+        Mono<Integer> get();
+    }
+
+    private static double ratio(long value, long floor) {
+        return (double) value / Math.max(floor, 1);
     }
 
     private static long usedHeap() throws InterruptedException {

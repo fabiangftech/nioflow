@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -60,6 +61,31 @@ public interface NioStep<T, O> {
 
     /** Rate-limited stage; see NioFlow#handle(String, Function, RateLimit). */
     NioStep<T, O> handle(String name, UnaryOperator<T> function, RateLimit rateLimit);
+
+    /**
+     * The stage that does not park: the function returns a
+     * {@link CompletionStage}, a worker invokes it and is released at once, and
+     * the boss resumes when the call completes. See NioFlow#handleAsync for the
+     * trade (it is a dispatch boundary — it does not fuse) and for the
+     * cancellation the timeout buys.
+     */
+    NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call);
+
+    /** Same, with a per-attempt budget that CANCELS the CompletionStage on expiry. */
+    NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout);
+
+    NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Retry retry);
+
+    NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout, Retry retry);
+
+    /**
+     * The re-typing async stage: {@code adapt} to {@code handleAsync} what
+     * {@code adapt} is to {@code handle}. No worker parks on the call.
+     */
+    <R> NioStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call);
+
+    /** Same, with a budget that cancels the call on expiry. */
+    <R> NioStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call, Duration timeout);
 
     /** Context-aware stage: the value plus the typed per-execution Context. */
     NioStep<T, O> handleContextual(BiFunction<T, Context, T> function);

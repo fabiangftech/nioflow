@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -49,6 +50,20 @@ public interface ReactiveStep<T, O> extends NioStep<T, O> {
     ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry);
 
     /** Re-types THROUGH a Mono: T -> Mono&lt;R&gt; -> the chain continues at R. */
+    /**
+     * The reactive stage that does NOT park a worker; see
+     * {@link ReactiveFlow#handleMonoAsync}. It does not fuse — that is the trade.
+     */
+    ReactiveStep<T, O> handleMonoAsync(String name, Function<T, Mono<T>> call);
+
+    /** Same, budgeted by the ENGINE's timeout, which CANCELS the subscription. */
+    ReactiveStep<T, O> handleMonoAsync(String name, Function<T, Mono<T>> call, Duration budget);
+
+    /** Re-types through a Mono without parking a worker; see #handleMonoAsync. */
+    <R> ReactiveStep<R, O> adaptMonoAsync(Function<T, Mono<R>> call);
+
+    <R> ReactiveStep<R, O> adaptMonoAsync(Function<T, Mono<R>> call, Duration budget);
+
     <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call);
 
     /** Re-types through a Mono with a budget on it; see #handleMono. */
@@ -123,6 +138,25 @@ public interface ReactiveStep<T, O> extends NioStep<T, O> {
 
     @Override
     ReactiveStep<T, O> handle(String name, UnaryOperator<T> function, RateLimit rateLimit);
+
+    @Override
+    ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call);
+
+    @Override
+    ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout);
+
+    @Override
+    ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Retry retry);
+
+    @Override
+    ReactiveStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call,
+                                   Duration timeout, Retry retry);
+
+    @Override
+    <R> ReactiveStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call);
+
+    @Override
+    <R> ReactiveStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call, Duration timeout);
 
     @Override
     ReactiveStep<T, O> handleContextual(BiFunction<T, Context, T> function);

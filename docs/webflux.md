@@ -175,14 +175,46 @@ afterReactiveStage=VIRTUAL:            ← the chain resumes on a worker
 
 That is Reactor behaving normally, and it is exactly where a blocking call takes the server down. **Do the work in a stage, not in a `map()` on the Mono.** A stage body always runs on a virtual worker.
 
+## The stage that does not park: `handleMonoAsync`
+
+`handleMono` parks a virtual worker for the whole remote call. `handleMonoAsync` does not: the Mono becomes a `CompletionStage` (`mono.toFuture()`), a worker *invokes* the call and leaves, and the engine holds a future instead of a thread.
+
+```java
+orders.just(id)
+        .handleMonoAsync("fraud", fraud::score, ofMillis(500))   // no worker parks
+        .adaptMonoAsync(psp::charge, ofSeconds(2))               // and it re-types
+        .executeMono();
+```
+
+It buys two things and costs one:
+
+| | `handleMono` | `handleMonoAsync` |
+| --- | --- | --- |
+| Retained per in-flight request | **3 173 B** (an `Execution` + a parked virtual thread's stack) | **489 B** (an `Execution` + a `CompletableFuture`) |
+| Four remote stages in a row | fuse: **2 thread hops** | **4 dispatches** — it is a dispatch boundary |
+| Engine overhead (four immediately-resolved Monos) | 56.2 ops/ms | 20.6 ops/ms — **~8 µs per extra dispatch** |
+| The timeout | abandons the parked worker; only `mono.timeout(budget)` cancels the call | **cancels the `CompletionStage`** — the subscription dies and reactor-netty releases the connection |
+
+Read that third row for what it is: 8 µs a stage is 0.015 % of a 200 ms remote call, and it is *most of the cost* of a `Mono.just`. `handleMonoAsync` pays a fixed dispatch to stop holding a thread — worth it in front of the network, never worth it in front of a value you already have.
+
+The budget on `handleMonoAsync(name, call, budget)` **is** the engine's timeout, and it cancels — so the two mechanisms `handleMono` had to keep apart (a stage timeout that only stops waiting, a Mono budget that actually cancels) are one thing here.
+
+Not Reactor-only: the link is `CompletionStage`-shaped, so `handleAsync` / `adaptAsync` serve `HttpClient.sendAsync`, the AWS SDK v2 and a Cassandra driver in **core**, with no Reactor anywhere.
+
+There is no `RateLimit` overload for it, on purpose: `acquire()` parks the worker for the admission wait, which is exactly what this step exists to avoid. Rate-limit an upstream `handle` instead.
+
 ## The trade-off, measured
 
-A request in flight, parked on a remote call, retains **3 615 B** (an `Execution` plus a parked virtual thread's stack) against **215 B** for a pure Reactor chain — **16.8×**. At 1 000 concurrent that is noise; at 100 000 it is ~360 MB against ~21 MB.
+A request in flight, parked on a remote call, retains **3 173 B** (an `Execution` plus a parked virtual thread's stack) against **218 B** for a pure Reactor chain — **14.6×**. With `handleMonoAsync` it retains **489 B** — **2.2×**, because nothing is parked (`ReactiveHeapProbeTest`, 10 000 concurrent).
 
-So: if **every** stage is a remote call, **and** concurrency is very high, **and** you use none of the engine (retry, rate limit, batch, `key`, `fork`, `recover`, runtime `splice`, the metrics SPI, chain validation) — use plain Reactor. `Mono.zip` and `flatMap` are the right tools and this library is not a campaign to be in front of everything.
+So the choice:
 
-Otherwise the engine is buying you policy, and the price is one parked virtual thread per in-flight call.
+- **not every stage is a remote call, concurrency is ordinary** → `handleMono`. It fuses, it is the simplest thing that works, and a parked virtual thread is cheap.
+- **high in-flight concurrency (≳10k), or the call must be cancellable** → `handleMonoAsync`. You pay one dispatch per stage and get the heap back.
+- **every stage is a remote call, and you use none of the engine** (retry, rate limit, batch, `key`, `fork`, `recover`, runtime `splice`, the metrics SPI, chain validation) → plain Reactor. `Mono.zip` and `flatMap` are the right tools and this library is not a campaign to be in front of everything.
 
-**Not supported:** cancellation. If the client disconnects, the pipeline runs to completion and its result is dropped — per-stage budgets are what bound it today.
+Otherwise the engine is buying you policy — and with `handleMonoAsync` the price is no longer a thread per in-flight call.
+
+**Not supported:** cancelling an execution from the outside (a disconnected client). A timeout on an async stage does cancel the call it is waiting on; cancelling the whole pipeline is RFC 0007.
 
 Full design and rationale: [RFC 0002](https://github.com/fabiangftech/nioflow/blob/main/docs/rfc/0002-webflux.md). Runnable example: `examples/springwebflux-with-nioflow`.

@@ -5,6 +5,7 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -82,6 +83,58 @@ public interface NioFlow<I, O> {
      * SAME RateLimit instance to several stages to protect one downstream.
      */
     NioFlow<I, O> handle(String name, UnaryOperator<I> function, RateLimit rateLimit);
+
+    /**
+     * The stage that does not park: the function returns a
+     * {@link CompletionStage}, a worker invokes it and is released at once, and
+     * the boss resumes when the call completes. An in-flight request retains no
+     * parked thread — which is the whole difference from a {@code handle} that
+     * blocks on a remote call.
+     *
+     * <pre>
+     * orders.handleAsync("quote", order -&gt; http.sendAsync(request(order), ofString())
+     *         .thenApply(response -&gt; order.withQuote(response.body())));
+     * </pre>
+     *
+     * <p><b>The trade is fusion.</b> An async stage is a dispatch boundary: four
+     * of them are four boss→worker round trips, where four consecutive
+     * {@code handle}s fuse into one. Hops are microseconds against a remote call
+     * measured in milliseconds, so the axis that moves is HEAP — pick this one
+     * when in-flight concurrency is high, or when you need the call cancelled.
+     *
+     * <p><b>Cancellation.</b> With a timeout, the engine does not merely abandon
+     * the call: it cancels the {@link CompletionStage} (a
+     * {@code mono.toFuture()} cancels the subscription and reactor-netty
+     * releases the connection; an {@code HttpClient} future aborts the exchange).
+     * A {@code handle(name, fn, timeout)} cannot do that — it can only stop
+     * waiting.
+     *
+     * <p><b>No RateLimit overload, on purpose:</b> {@code acquire()} parks the
+     * worker for the admission wait, which is precisely what this step exists to
+     * avoid. Rate-limit an upstream {@code handle} instead — the wait is then
+     * where it belongs, and the remote call still holds no thread.
+     *
+     * @throws IllegalStateException at runtime if the call returns null (a
+     *         missing CompletionStage is a bug, not an empty result)
+     */
+    NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call);
+
+    /**
+     * Same, with a time budget per attempt — and on expiry the
+     * {@link CompletionStage} is <b>cancelled</b>, not just abandoned. The
+     * failure is an ordinary {@link java.util.concurrent.TimeoutException} that
+     * {@code recover()} catches like any other stage failure.
+     */
+    NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Duration timeout);
+
+    /**
+     * Retry over the async call: a failed attempt re-invokes the function on a
+     * worker, backing off without parking anyone (there is no parked worker to
+     * back off on). Composes in the documented layers.
+     */
+    NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Retry retry);
+
+    NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Duration timeout, Retry retry);
 
     /**
      * Context-aware stage: besides the value it receives the typed

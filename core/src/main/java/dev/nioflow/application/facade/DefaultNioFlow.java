@@ -15,6 +15,7 @@ import dev.nioflow.core.model.Retry;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -142,6 +143,28 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     @Override
     public NioFlow<I, O> handle(String name, UnaryOperator<I> function, RateLimit rateLimit) {
         rateLimitedStage(name, function, rateLimit);
+        return this;
+    }
+
+    @Override
+    public NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call) {
+        return handleAsync(name, call, null, null);
+    }
+
+    @Override
+    public NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Duration timeout) {
+        return handleAsync(name, call, timeout, null);
+    }
+
+    @Override
+    public NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Retry retry) {
+        return handleAsync(name, call, null, retry);
+    }
+
+    @Override
+    public NioFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call,
+                                     Duration timeout, Retry retry) {
+        asyncStage(name, call, timeout, retry);
         return this;
     }
 

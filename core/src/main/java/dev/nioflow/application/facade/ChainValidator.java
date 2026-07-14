@@ -1,5 +1,6 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.model.AsyncStage;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
@@ -130,6 +131,7 @@ final class ChainValidator {
         // Background never fails the flow; Recovery only runs on the error path.
         return switch (link) {
             case Stage _ -> true;
+            case AsyncStage _ -> true;
             case FanOut _ -> true;
             case Batch _ -> true; // the bulk call can fail every batched value
             case Decision _ -> true; // predicates can throw
@@ -145,6 +147,7 @@ final class ChainValidator {
     private static String anchorName(Link link) {
         return switch (link) {
             case Stage stage -> stage.name();
+            case AsyncStage async -> async.name();
             case Background background -> background.name();
             case Recovery recovery -> recovery.name();
             case FanOut fanOut -> fanOut.name();

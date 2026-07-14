@@ -5,6 +5,7 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -32,6 +33,23 @@ public interface Lane<T> {
      * Rate-limited stage; see NioFlow#handle(String, Function, RateLimit).
      */
     Lane<T> handle(String name, UnaryOperator<T> function, RateLimit rateLimit);
+
+    /**
+     * The stage that does not park; see NioFlow#handleAsync. Type-preserving
+     * over the lane's T, like every other lane step.
+     */
+    Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call);
+
+    Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout);
+
+    Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Retry retry);
+
+    Lane<T> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout, Retry retry);
+
+    /** The re-typing async stage; see NioStep#adaptAsync. */
+    <R> Lane<R> adaptAsync(Function<T, CompletionStage<R>> call);
+
+    <R> Lane<R> adaptAsync(Function<T, CompletionStage<R>> call, Duration timeout);
 
     /**
      * Context-aware stage; see NioFlow#handleContextual for the contract.

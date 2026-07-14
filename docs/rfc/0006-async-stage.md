@@ -1,6 +1,6 @@
 # RFC 0006 — `AsyncStage`: the stage that does not park
 
-- **Status**: Proposed
+- **Status**: Implemented (`AsyncStage`, `DefaultNioEngine.Execution.attemptAsync`, `DefaultNioFlowAsyncStageTest`, `ReactiveAsyncStageTest`)
 - **Target**: `core/` (`core.model`, `core.facade`, `application.facade`, `infrastructure.reactive`), `tests/`
 - **Depends on**: the `TimerWheel`, the worker dispatch path, RFC 0002 (implemented)
 - **Reverses**: one non-goal of RFC 0002 — *"No reactive `Link` type"*
@@ -150,10 +150,10 @@ This is a **choice, not an upgrade**:
 
 | | Thread hops (4 remote stages) | Retained per in-flight request | Cancels the remote call |
 | --- | --- | --- | --- |
-| `handleMono` (today, fuses) | 2 | 3 615 B (measured) | only via `mono.timeout(budget)` |
-| `handleMonoAsync` (proposed) | 8 | an `Execution` + a `CF` (to measure) | yes — engine timeout, and (RFC 0007) client disconnect |
+| `handleMono` (fuses) | 2 | 3 173 B | only via `mono.timeout(budget)` |
+| `handleMonoAsync` | 8 | 489 B (an `Execution` + a `CF`) | yes — engine timeout, and (RFC 0007) client disconnect |
 
-Hops are microseconds against a remote call measured in milliseconds; `0002:332` already established that latency is not the axis that moves. Heap is. So both stay, each javadoc points at the other, and the decision tree gains one branch:
+Hops are microseconds against a remote call measured in milliseconds — **~8 µs per extra dispatch**, measured below; `0002:332` already established that latency is not the axis that moves. Heap is. So both stay, each javadoc points at the other, and the decision tree gains one branch:
 
 ```mermaid
 flowchart TB
@@ -189,13 +189,51 @@ Note what leaves the tree: the *"then use plain Reactor"* red box from `0002:366
 - The heap probe shows `handleMonoAsync` retaining within ~2× of pure Reactor per in-flight request (against today's 16.8×). **If it does not, this RFC does not ship**: it would be a fusion loss bought with nothing.
 - `NioFlowBenchmark` and the non-reactive suite are flat.
 
+## What the implementation changed
+
+Three things the RFC left open, decided in the code:
+
+- **No `RateLimit` overload for `handleAsync`** — the RFC accepted an asterisk ("a rate-limited async stage does park for the admission wait"); the implementation removes the asterisk instead of documenting it. `acquire()` parks the worker, which is exactly what the link exists to avoid, so the overload does not exist: rate-limit an upstream `handle`, where the wait belongs, and the remote call still holds no thread. "Does not park" has no footnote.
+- **`adaptAsync(call, timeout)` exists**, not just `adaptAsync(call)`. A re-typing remote call needs a budget as badly as a type-preserving one, and the budget is the whole cancellation story.
+- **A null `CompletionStage` fails the value loudly** (`IllegalStateException`, recoverable) instead of hanging the execution on a stage that does not exist. It is the one new way an async call can be wrong that a blocking one cannot.
+
+Cancellation is `toCompletableFuture().cancel(false)`, guarded: a minimal `CompletionStage` implementation may refuse to produce a future, and then the timeout still fires and `recover()` still runs — only the remote call keeps going. Honest, and asserted.
+
+## Numbers
+
+**The gate — retained heap per in-flight request** (`ReactiveHeapProbeTest`, 10 000 concurrent, all parked on a `Sinks.One` that never emits):
+
+| | retained | vs pure Reactor |
+| --- | --- | --- |
+| `handleMono` (parks a virtual thread) | 3 173 B | 14.6× |
+| **`handleMonoAsync`** (parks nothing) | **489 B** | **2.2×** |
+| pure Reactor chain | 218 B | 1× |
+
+The bar was "within ~2× of pure Reactor". It came back at 2.2× — 6.5× less than the parked thread it replaces, and the RFC ships. What is left is an `Execution` and a `CompletableFuture`, which is exactly what it predicted would be left.
+
+**The cost — fusion**, and the flat-line check (`ReactiveBenchmark` / `NioFlowBenchmark`, JDK 25, 1 fork × (3 warmup + 5 measured), `-prof gc`):
+
+| | throughput | allocation |
+| --- | --- | --- |
+| `fourReactiveStages` — four `handleMono`, FUSED (2 hops) | 56.2 ± 6.5 ops/ms | 1 057 B/op |
+| `fourAsyncReactiveStages` — four `handleMonoAsync` (4 dispatches) | 20.6 ± 1.9 ops/ms | 3 537 B/op |
+| `NioFlowBenchmark.engineCall` (8 stages) — no async stage anywhere, **before** | 57.9 ± 4.4 ops/ms | 679 B/op |
+| `NioFlowBenchmark.engineCall` (8 stages) — no async stage anywhere, **after** | 55.6 ± 9.6 ops/ms | 677 B/op |
+
+The flat line holds: a chain that declares no async stage is unchanged (within the error bars, and the allocation is identical to the byte). The ninth link costs a `switch` case to those who never use it, as predicted.
+
+The cost side came back **worse than the RFC guessed**, and both numbers deserve to be read carefully:
+
+- **Throughput: 2.7× down, not the rounding error the RFC implied.** But the benchmark resolves its Monos *immediately* — that is the point of it, it isolates engine overhead — so what it measures is 17.8 µs/op against 48.5 µs/op: **~8 µs per extra dispatch**. Against a remote call worth 200 ms, four of those are 0.015 % of the request. The decision tree does not move; the honest sentence is "microseconds per stage", and now it is a measured number instead of a claim.
+- **Allocation: 3.3× up, which sounds like it contradicts the gate — it does not.** `gc.alloc.rate.norm` is *transient garbage per completed request*; the heap probe measures *retained bytes per in-flight request*. An async stage allocates more of the former (a `CompletableFuture` chain and four dispatches instead of one fused run) and holds 6.5× less of the latter (no parked thread's stack chunk). They are different axes and they genuinely point in opposite directions: `handleMonoAsync` trades **young-gen churn**, which the GC reclaims for free, for **live-set**, which it cannot. That trade is only worth making at concurrency — which is exactly the branch of the tree it sits on.
+
 ## Risks
 
 | Risk | Mitigation |
 | --- | --- |
 | **A ninth link in the sealed model.** Every `switch` over `Link` grows a case, and the eight-link model was a selling point. | The link is `CompletionStage`-shaped, not Reactor-shaped: it is the JDK's async idiom, and `handleAsync` stands on its own for `HttpClient`/AWS/Cassandra users who have never heard of Reactor. If the ninth case cannot pay for itself in `core` alone, it does not belong in `core.model` — and then this RFC fails, cleanly. |
 | **Two ways to do a remote call**, and users will pick wrong. | One question in the decision tree, each javadoc naming the other, and benchmark numbers in the docs. The alternative is the status quo: one step that silently parks a thread per in-flight call. |
-| **Losing fusion is a real throughput regression** for chains of many small remote calls. | Measured by benchmark 2 and published. `handleMono` remains, and remains the default recommendation below ~10k in flight. |
+| **Losing fusion is a real throughput regression** for chains of many small remote calls. | Measured and published, and it is bigger than this RFC guessed: 2.7× on immediately-resolved Monos (~8 µs per extra dispatch, invisible behind a real remote call, ruinous in front of a `Mono.just`). `handleMono` remains, and remains the default recommendation below ~10k in flight. |
 | `RateLimit` + `AsyncStage` still parks for the admission wait, so "does not park" has an asterisk. | Stated in the javadoc and asserted by a test, rather than discovered in a heap dump. |
 
 ## Future work

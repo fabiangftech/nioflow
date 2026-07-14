@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -82,6 +83,39 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget, Retry retry) {
         return wrap(delegate.handle(name,
                 value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
+    }
+
+    @Override
+    public ReactiveFlow<I, O> handleMonoAsync(String name, Function<I, Mono<I>> call) {
+        return handleMonoAsync(name, call, config.budget());
+    }
+
+    // The budget is the ENGINE's timeout here: it cancels the future, and
+    // cancelling a mono.toFuture() cancels the subscription. One mechanism.
+    @Override
+    public ReactiveFlow<I, O> handleMonoAsync(String name, Function<I, Mono<I>> call, Duration budget) {
+        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget));
+    }
+
+    @Override
+    public ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call) {
+        return wrap(delegate.handleAsync(name, call));
+    }
+
+    @Override
+    public ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Duration timeout) {
+        return wrap(delegate.handleAsync(name, call, timeout));
+    }
+
+    @Override
+    public ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call, Retry retry) {
+        return wrap(delegate.handleAsync(name, call, retry));
+    }
+
+    @Override
+    public ReactiveFlow<I, O> handleAsync(String name, Function<I, CompletionStage<I>> call,
+                                          Duration timeout, Retry retry) {
+        return wrap(delegate.handleAsync(name, call, timeout, retry));
     }
 
     @Override

@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CompletionException;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -85,6 +86,39 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     public NioStep<T, O> handle(String name, UnaryOperator<T> function, RateLimit rateLimit) {
         rateLimitedStage(name, function, rateLimit);
         return this;
+    }
+
+    @Override
+    public NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call) {
+        return handleAsync(name, call, null, null);
+    }
+
+    @Override
+    public NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Duration timeout) {
+        return handleAsync(name, call, timeout, null);
+    }
+
+    @Override
+    public NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call, Retry retry) {
+        return handleAsync(name, call, null, retry);
+    }
+
+    @Override
+    public NioStep<T, O> handleAsync(String name, Function<T, CompletionStage<T>> call,
+                                     Duration timeout, Retry retry) {
+        asyncStage(name, call, timeout, retry);
+        return this;
+    }
+
+    @Override
+    public <R> NioStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call) {
+        return adaptAsync(call, null);
+    }
+
+    @Override
+    public <R> NioStep<R, O> adaptAsync(Function<T, CompletionStage<R>> call, Duration timeout) {
+        adaptAsyncValue(call, timeout);
+        return retyped();
     }
 
     @Override
