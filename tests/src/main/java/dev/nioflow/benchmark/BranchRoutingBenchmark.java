@@ -15,20 +15,22 @@ import org.openjdk.jmh.annotations.State;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Overhead del enrutamiento con forks: la misma transformación como chain
- * plana (1 stage) vs match() de 3 casos (3 Decisions evaluados en el boss +
- * guards chequeados por link, con stream().allMatch en el hot path — si la
- * brecha es grande, la mejora es evaluar guards sin streams/alloc).
+ * The cost of ROUTING (when/match) — not of fork(), which is a different feature
+ * entirely. The same transformation as a
+ * flat chain (1 stage) against a 3-case match() (3 Decisions evaluated on the
+ * boss, plus the guards checked per link). The gap is what pays for
+ * passesGuards() being a plain loop instead of a stream — the stream version
+ * cost ~20% here.
  */
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
-public class ForkRoutingBenchmark {
+public class BranchRoutingBenchmark {
 
     NioEngine plainEngine;
-    NioEngine forkedEngine;
+    NioEngine branchedEngine;
     NioFlow<Integer, Integer> plain;
-    NioFlow<Integer, Integer> forked;
+    NioFlow<Integer, Integer> branched;
 
     @Setup
     public void setUp() {
@@ -37,13 +39,13 @@ public class ForkRoutingBenchmark {
         plain.handle("only", value -> value * 2);
         plainEngine.seal();
 
-        forkedEngine = new DefaultNioEngine();
-        forked = DefaultNioFlow.from(Integer.class, forkedEngine);
-        forked.match()
+        branchedEngine = new DefaultNioEngine();
+        branched = DefaultNioFlow.from(Integer.class, branchedEngine);
+        branched.match()
                 .is(value -> value % 3 == 0, lane -> lane.handle(value -> value * 2))
                 .is(value -> value % 3 == 1, lane -> lane.handle(value -> value * 2))
                 .otherwise(lane -> lane.handle(value -> value * 2));
-        forkedEngine.seal();
+        branchedEngine.seal();
     }
 
     @Benchmark
@@ -53,6 +55,6 @@ public class ForkRoutingBenchmark {
 
     @Benchmark
     public Object matchRouting() {
-        return forked.just(7).execute();
+        return branched.just(7).execute();
     }
 }

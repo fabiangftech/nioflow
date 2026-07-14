@@ -20,12 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Chaining AFTER a fork is the main line: whatever you chain on a Branch or a
- * Cases lands on the flow the fork came from, unguarded, and runs for every
+ * Chaining AFTER a branch is the main line: whatever you chain on a Branch or a
+ * Cases lands on the flow the branch came from, unguarded, and runs for every
  * value — routed through a lane or not. These tests walk every step kind over
- * the fork objects (the NioFlowDelegate / NioStepDelegate plumbing).
+ * the branch objects (the NioFlowDelegate / NioStepDelegate plumbing).
  */
-class DefaultNioFlowForkChainingTest {
+class DefaultNioFlowBranchingChainingTest {
 
     private static final Duration GENEROUS = Duration.ofSeconds(2);
     private static final Retry TWICE = Retry.of(2, Duration.ofMillis(1));
@@ -136,9 +136,9 @@ class DefaultNioFlowForkChainingTest {
         assertEquals(new FlowResult.Completed<>(4), result.executeResult());
     }
 
-    /** A fork nested on a fork object: when()/match() also forward to the main line. */
+    /** A branch nested on a branch object: when()/match() also forward to the main line. */
     @Test
-    void forksChainedOnAForkAreThemselvesMainLine() {
+    void branchesChainedOnABranchAreThemselvesMainLine() {
         DefaultNioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
 
         Branch<Integer, Integer> branch = flow
@@ -155,9 +155,9 @@ class DefaultNioFlowForkChainingTest {
         assertEquals(36, branch.just(20).execute());     // doubled: 40, even: +1 = 41, <= 100: -5
     }
 
-    /** justAll on a fork object injects through the shared chain like the flow's own. */
+    /** justAll on a branch object injects through the shared chain like the flow's own. */
     @Test
-    void justAllOnAForkInjectsThroughTheSharedChain() {
+    void justAllOnABranchInjectsThroughTheSharedChain() {
         DefaultNioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
 
         Branch<Integer, Integer> branch = flow
@@ -199,9 +199,9 @@ class DefaultNioFlowForkChainingTest {
         assertEquals(41, cases.execute());
     }
 
-    /** A fork opened ON a StepBranch: when()/match() forward to the execution's main line. */
+    /** A branch opened ON a StepBranch: when()/match() forward to the execution's main line. */
     @Test
-    void forksChainedOnAStepBranchAreMainLineToo() {
+    void branchesChainedOnAStepBranchAreMainLineToo() {
         DefaultNioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
 
         StepBranch<Integer, Integer> branch = flow.just(20)

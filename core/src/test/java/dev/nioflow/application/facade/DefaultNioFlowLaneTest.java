@@ -16,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A lane is a guarded view of the same chain: every step kind is available
- * inside it, and everything declared there only runs for the values the fork
- * routed in. These tests pin that down for the step kinds and for a fork
+ * inside it, and everything declared there only runs for the values the branch
+ * routed in. These tests pin that down for the step kinds and for a branch
  * nested inside a lane.
  */
 class DefaultNioFlowLaneTest {

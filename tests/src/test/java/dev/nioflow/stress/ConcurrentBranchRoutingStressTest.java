@@ -10,15 +10,15 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Caza-bugs: 10k ejecuciones concurrentes a través de un fork compartido.
- * Las decisiones de when/match viven por ejecución (en el boss); si se
- * filtraran entre requests, algún valor terminaría enrutado por el lane
- * equivocado. Cada resultado debe corresponder exactamente a su input.
+ * Bug hunt: 10k concurrent executions through one shared branch (when/match).
+ * Routing decisions live PER EXECUTION, on the boss; if one ever leaked across
+ * requests, some value would come back routed down the wrong lane. Every result
+ * must match its own input, exactly.
  */
-class ConcurrentForkRoutingStressTest {
+class ConcurrentBranchRoutingStressTest {
 
     @Test
-    void concurrentExecutionsNeverLeakForkDecisions() {
+    void concurrentExecutionsNeverLeakRoutingDecisions() {
         NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class);
         flow.when(value -> value % 2 == 0)
                 .then(lane -> lane.handle("even", value -> value * 10))
