@@ -207,6 +207,17 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     }
 
     @Override
+    public <R> NioFlow<I, O> fork(Segment<I, R> sub) {
+        return fork(anonymousName("fork"), sub);
+    }
+
+    @Override
+    public <R> NioFlow<I, O> fork(String name, Segment<I, R> sub) {
+        forkSegment(name, sub);
+        return this;
+    }
+
+    @Override
     public NioFlow<I, O> use(Segment<I, I> segment) {
         embed(segment);
         return this;

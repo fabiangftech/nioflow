@@ -100,7 +100,33 @@ flow.match()
     .otherwise(lane -> lane.handle("approve", risk::approve));
 ```
 
-Inside a lane you get the same API (`handle`, `filter`, `recover`, `batch`, nested `when`/`match`…) but no `execute`/`just` — lanes only build steps. Forks nest and their routing guards compose automatically.
+Inside a lane you get the same API (`handle`, `filter`, `recover`, `batch`, nested `when`/`match`…) but no `execute`/`just` — lanes only build steps. Branches nest and their routing guards compose automatically.
+
+## Detached sub-flows — `fork`
+
+`background` is a fire-and-forget *step*. `fork` is a fire-and-forget **pipeline**: the value is handed to a child execution and the main line keeps going — the request does not wait for it, its latency does not include it, and a failure the fork does not recover never reaches the caller.
+
+```java
+flow.handle("price", pricing::apply)
+    .fork("audit", sub -> sub                          // detached: nobody waits
+            .adapt(AuditRecord::of)
+            .when(AuditRecord::highValue)
+                .then(lane -> lane.handle("compliance", compliance::file))
+                .otherwise(lane -> lane.background("log", audit::debug))
+            .handle("persist", auditRepo::save, Duration.ofSeconds(2))
+            .recover(AuditRecord::failed))             // the fork's own net
+    .handle("charge", payments::charge);               // runs without waiting for "audit"
+```
+
+The sub-flow is a real pipeline: every step works inside it (`handle`, `handleSync`, `handleContextual`, `background`, `adapt`, `filter`, `recover`, `fanOut`, `batch`, `use`, `when`/`match`, and nested forks), its stages report their own metrics, and its name is a splice anchor — `splice("audit", REPLACE, …)` swaps the whole sub-flow at runtime. Because the body is a `Segment`, it is reusable and testable on its own.
+
+Three things to keep in mind:
+
+- **Nothing comes back.** A fork gives no value to the main line — if you need the result, you want [`fanOut`](#parallel-split-join--fanout), which waits.
+- **Failures go to `onError`**, never to the caller's future. A fork with no `recover()` and no error handler fails silently, exactly like a throwing `background`.
+- **The context is copied** at the fork point: the fork reads what the main line had written so far, and its own writes stay inside the fork (parent and child run concurrently — sharing the map would be a data race).
+
+Forks are in-flight work: `shutdown(grace)` waits for them, and `NioFlowMetrics` reports `forkStarted` / `forkCompleted` / `forkFailed` / `forksInFlight`.
 
 ## Parallel split-join — `fanOut`
 

@@ -66,6 +66,14 @@ public interface Lane<T> {
 
     <R> Lane<R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk);
 
+    /**
+     * Detached sub-flow; see NioFlow#fork. Declared inside a lane it inherits
+     * the lane's guards: only values routed down this branch spawn it.
+     */
+    <R> Lane<T> fork(Segment<T, R> sub);
+
+    <R> Lane<T> fork(String name, Segment<T, R> sub);
+
     <R> Lane<R> use(Segment<T, R> segment);
 
     /**

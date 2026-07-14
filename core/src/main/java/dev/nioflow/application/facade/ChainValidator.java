@@ -5,6 +5,7 @@ import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
+import dev.nioflow.core.model.Fork;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.Recovery;
@@ -39,25 +40,38 @@ final class ChainValidator {
 
     static List<String> validate(List<Link> links) {
         List<String> problems = new ArrayList<>();
+        validate(links, "", problems);
+        return problems;
+    }
+
+    /**
+     * One scope: the main chain, or a fork's sub-chain. A fork's inner links
+     * have their own decisions, their own anchor namespace and their own
+     * recovery positions — so they are validated as a chain of their own, and
+     * their problems are reported under the fork's name.
+     */
+    private static void validate(List<Link> links, String scope, List<String> problems) {
         Set<Integer> declaredDecisions = new HashSet<>();
         Map<String, Integer> anchorNames = new HashMap<>();
         boolean fallibleUpstream = false;
 
         for (int i = 0; i < links.size(); i++) {
             Link link = links.get(i);
-            String label = describe(link, i);
+            String label = scope + describe(link, i);
 
             checkGuards(link, label, declaredDecisions, problems);
             checkAnchor(link, label, i, anchorNames, problems);
             checkRecovery(link, label, fallibleUpstream, problems);
             checkSyncStage(link, label, problems);
 
+            if (link instanceof Fork fork) {
+                validate(fork.chain(), "fork '" + fork.name() + "' → ", problems);
+            }
             if (link instanceof Decision decision) {
                 declaredDecisions.add(decision.id());
             }
             fallibleUpstream = fallibleUpstream || isFallible(link);
         }
-        return problems;
     }
 
     private static void checkGuards(Link link, String label, Set<Integer> declaredDecisions, List<String> problems) {
@@ -122,6 +136,9 @@ final class ChainValidator {
             case Filter ignored -> true;
             case Background ignored -> false;
             case Recovery ignored -> false;
+            // A fork's failures are its own: they never reach the main line, so
+            // a recover() after it has nothing to catch from it.
+            case Fork ignored -> false;
         };
     }
 
@@ -132,6 +149,7 @@ final class ChainValidator {
             case Recovery recovery -> recovery.name();
             case FanOut fanOut -> fanOut.name();
             case Batch batch -> batch.name();
+            case Fork fork -> fork.name();
             default -> null;
         };
     }

@@ -8,6 +8,7 @@ import dev.nioflow.core.model.Batch;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
+import dev.nioflow.core.model.Fork;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.RateLimit;
@@ -17,7 +18,9 @@ import dev.nioflow.core.model.Stage;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -119,6 +122,95 @@ abstract class AbstractChain<X> {
     /** Embeds a segment inline: its links are appended with the current guards. */
     <R> void embed(Segment<X, R> segment) {
         segment.define(new DefaultLane<>(this));
+    }
+
+    /**
+     * Records the segment OFF the chain and appends it as one detached Fork
+     * link. Two guard scopes meet here:
+     *
+     * <ul>
+     * <li>the Fork LINK carries the caller's guards, so a fork declared inside
+     *     a lane only spawns for values routed down that branch;</li>
+     * <li>the links INSIDE start from no guards (the recorder's), so the
+     *     sub-chain is guard-closed — the child execution has its own decision
+     *     bitset, and a guard pointing at a parent decision would be dangling
+     *     in it.</li>
+     * </ul>
+     */
+    <R> void forkSegment(String name, Segment<X, R> segment) {
+        List<Link> recorded = new ArrayList<>();
+        segment.define(new DefaultLane<>(new RecordingChain<>(engine(), recorded, this::anonymousName)));
+        if (recorded.isEmpty()) {
+            throw new IllegalArgumentException("Fork '" + name + "' is empty: the segment declared no links");
+        }
+        appendLink(new Fork(name, compactDecisions(recorded), guards()));
+    }
+
+    /**
+     * Renumbers the sub-chain's decisions to 0..n-1. Ids come from the
+     * engine-wide counter, which grows forever under per-request forks and
+     * would push the child's decision bitset into its overflow map for no
+     * reason: inside a fork they are private (the chain is guard-closed), so
+     * they can be compacted. Links with neither guards nor a decision id keep
+     * their instance — Batch in particular, whose identity keys its in-flight
+     * group.
+     */
+    private static List<Link> compactDecisions(List<Link> links) {
+        Map<Integer, Integer> remap = new HashMap<>();
+        for (Link link : links) {
+            if (link instanceof Decision decision) {
+                remap.put(decision.id(), remap.size());
+            }
+        }
+        if (remap.isEmpty()) {
+            return List.copyOf(links);
+        }
+        List<Link> compacted = new ArrayList<>(links.size());
+        for (Link link : links) {
+            compacted.add(remapped(link, remap));
+        }
+        return List.copyOf(compacted);
+    }
+
+    private static Link remapped(Link link, Map<Integer, Integer> remap) {
+        List<Guard> guards = remapGuards(link.guards(), remap);
+        boolean same = guards == link.guards();
+        return switch (link) {
+            case Decision decision -> new Decision(decision.predicate(), remap.get(decision.id()), guards);
+            case Stage stage -> same ? stage : new Stage(stage.name(), stage.function(), stage.sync(),
+                    stage.timeout(), stage.retry(), guards);
+            case Filter filter -> same ? filter : new Filter(filter.predicate(), guards);
+            case Recovery recovery -> same ? recovery
+                    : new Recovery(recovery.name(), recovery.function(), guards);
+            case Background background -> same ? background
+                    : new Background(background.name(), background.effect(), guards);
+            case FanOut fanOut -> same ? fanOut
+                    : new FanOut(fanOut.name(), fanOut.branches(), fanOut.join(), guards);
+            case Batch batch -> same ? batch
+                    : new Batch(batch.name(), batch.size(), batch.window(), batch.bulk(), guards);
+            // A nested fork's own chain was already compacted in ITS scope.
+            case Fork fork -> same ? fork : new Fork(fork.name(), fork.chain(), guards);
+        };
+    }
+
+    private static List<Guard> remapGuards(List<Guard> guards, Map<Integer, Integer> remap) {
+        if (guards == null || guards.isEmpty()) {
+            return guards;
+        }
+        List<Guard> next = new ArrayList<>(guards.size());
+        for (Guard guard : guards) {
+            Integer id = remap.get(guard.decision());
+            if (id == null) {
+                // Unreachable through the fluent API (the recorder starts with
+                // no guards, so a sub-chain guard can only name a sub-chain
+                // decision). Loud here rather than silently mis-routing: after
+                // compaction the stale id could collide with a compacted one.
+                throw new IllegalStateException("Fork sub-chain is guarded by decision " + guard.decision()
+                        + ", which is not declared inside the fork");
+            }
+            next.add(new Guard(id, guard.expected()));
+        }
+        return List.copyOf(next);
     }
 
     /**

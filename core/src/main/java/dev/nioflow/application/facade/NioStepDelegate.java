@@ -122,6 +122,16 @@ abstract class NioStepDelegate<T, O> implements NioStep<T, O> {
     }
 
     @Override
+    public <R> NioStep<T, O> fork(Segment<T, R> sub) {
+        return step().fork(sub);
+    }
+
+    @Override
+    public <R> NioStep<T, O> fork(String name, Segment<T, R> sub) {
+        return step().fork(name, sub);
+    }
+
+    @Override
     public NioStep<T, O> recover(Function<Throwable, T> function) {
         return step().recover(function);
     }

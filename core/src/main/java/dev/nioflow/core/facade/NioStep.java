@@ -97,6 +97,16 @@ public interface NioStep<T, O> {
 
     <R> NioStep<R, O> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk);
 
+    /**
+     * Detached sub-flow: the value is handed to a child execution and this
+     * pipeline continues immediately — execute() returns without waiting for
+     * it, and a failure the fork does not recover() reaches onError, never this
+     * execution's result. See NioFlow#fork.
+     */
+    <R> NioStep<T, O> fork(Segment<T, R> sub);
+
+    <R> NioStep<T, O> fork(String name, Segment<T, R> sub);
+
     /** Embeds a reusable segment inline; it may re-type the value. */
     <R> NioStep<R, O> use(Segment<T, R> segment);
 

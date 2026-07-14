@@ -123,6 +123,16 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     }
 
     @Override
+    public <R> NioFlow<I, O> fork(Segment<I, R> sub) {
+        return flow().fork(sub);
+    }
+
+    @Override
+    public <R> NioFlow<I, O> fork(String name, Segment<I, R> sub) {
+        return flow().fork(name, sub);
+    }
+
+    @Override
     public NioFlow<I, O> use(Segment<I, I> segment) {
         return flow().use(segment);
     }

@@ -149,6 +149,18 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     }
 
     @Override
+    public <R> NioStep<T, O> fork(Segment<T, R> sub) {
+        return fork(anonymousName("fork"), sub);
+    }
+
+    // Detached: the sub-flow's type never reaches the main line, so T stays.
+    @Override
+    public <R> NioStep<T, O> fork(String name, Segment<T, R> sub) {
+        forkSegment(name, sub);
+        return this;
+    }
+
+    @Override
     public <R> NioStep<R, O> use(Segment<T, R> segment) {
         embed(segment);
         return retyped();

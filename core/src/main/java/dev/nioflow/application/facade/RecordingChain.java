@@ -6,30 +6,39 @@ import dev.nioflow.core.model.Link;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.UnaryOperator;
 
 /**
- * Off-chain recorder for replaceRegion: builds a segment's links into a local
- * list instead of the live chain, while still drawing decision ids from the
- * REAL engine (a scratch engine would restart at 0 and collide with the live
- * chain's guards) and sharing the root's anonymous-name counter (a fresh
- * counter would mint duplicate anchors). Build-only: it never executes.
+ * Off-chain recorder: builds a segment's links into a local list instead of the
+ * live chain, while still drawing decision ids from the REAL engine (a scratch
+ * engine would restart at 0 and collide with the live chain's guards) and
+ * minting anonymous names through the owner's counter (a fresh counter would
+ * mint duplicate anchors). Build-only: it never executes.
+ *
+ * <p>Used by replaceRegion (records a segment to swap in) and by fork (records
+ * the detached sub-chain). It starts with NO guards, which is what makes a
+ * fork's sub-chain guard-closed even when the fork is declared inside a lane.
  */
 final class RecordingChain<X> extends AbstractChain<X> {
 
     private final NioEngine engine;
     private final List<Link> recorded;
-    private final AtomicInteger anonymousLinks;
+    private final UnaryOperator<String> naming;
     private final List<Guard> guards;
 
     RecordingChain(NioEngine engine, List<Link> recorded, AtomicInteger anonymousLinks) {
-        this(engine, recorded, anonymousLinks, List.of());
+        this(engine, recorded, prefix -> prefix + "-" + anonymousLinks.getAndIncrement(), List.of());
     }
 
-    private RecordingChain(NioEngine engine, List<Link> recorded, AtomicInteger anonymousLinks,
+    RecordingChain(NioEngine engine, List<Link> recorded, UnaryOperator<String> naming) {
+        this(engine, recorded, naming, List.of());
+    }
+
+    private RecordingChain(NioEngine engine, List<Link> recorded, UnaryOperator<String> naming,
                            List<Guard> guards) {
         this.engine = engine;
         this.recorded = recorded;
-        this.anonymousLinks = anonymousLinks;
+        this.naming = naming;
         this.guards = guards;
     }
 
@@ -50,11 +59,11 @@ final class RecordingChain<X> extends AbstractChain<X> {
 
     @Override
     AbstractChain<X> withGuards(List<Guard> guards) {
-        return new RecordingChain<>(engine, recorded, anonymousLinks, guards);
+        return new RecordingChain<>(engine, recorded, naming, guards);
     }
 
     @Override
     String anonymousName(String prefix) {
-        return prefix + "-" + anonymousLinks.getAndIncrement();
+        return naming.apply(prefix);
     }
 }

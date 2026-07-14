@@ -10,6 +10,7 @@ import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.FanOut;
 import dev.nioflow.core.model.Filter;
 import dev.nioflow.core.model.FlowSignal;
+import dev.nioflow.core.model.Fork;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
 import dev.nioflow.core.model.OverflowPolicy;
@@ -23,6 +24,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -108,6 +110,10 @@ public class DefaultNioEngine implements NioEngine {
     // in-flight ones so shutdown() can wait for them to finish.
     private volatile boolean closed;
     private final AtomicInteger activeExecutions = new AtomicInteger();
+    // Detached sub-flows currently running. They are counted in
+    // activeExecutions too (the drain must wait for them); this one only feeds
+    // the forksInFlight gauge.
+    private final AtomicInteger activeForks = new AtomicInteger();
     private final Object drainLock = new Object();
 
     /**
@@ -283,7 +289,7 @@ public class DefaultNioEngine implements NioEngine {
         // (drain slot, metrics, handlers) runs inside Execution BEFORE the
         // future completes, so no dependent whenComplete future is allocated.
         Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
-                plan != null ? chain : List.copyOf(chain), context, plan, input, key);
+                plan != null ? chain : List.copyOf(chain), context, plan, input, key, null);
         activeExecutions.incrementAndGet();
         try {
             execution.boss.execute(execution);
@@ -565,6 +571,7 @@ public class DefaultNioEngine implements NioEngine {
                 case Recovery recovery -> recovery.name();
                 case FanOut fanOut -> fanOut.name();
                 case Batch batch -> batch.name();
+                case Fork fork -> fork.name();
                 default -> null;
             };
             if (anchor.equals(name)) {
@@ -603,12 +610,26 @@ public class DefaultNioEngine implements NioEngine {
      * records the chain's highest Decision id so executions size their
      * decision bitset without rescanning.
      */
-    record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, int maxDecisionId) {
+    record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, int maxDecisionId,
+                         Map<Fork, CompiledChain> forkPlans) {
 
         static CompiledChain compile(List<Link> links) {
             int size = links.size();
             Link[][] runs = new Link[size][];
             int[] runEnds = new int[size];
+            // A fork's sub-chain is immutable, so it compiles once with the
+            // chain that carries it: the child dispatches off a real plan
+            // instead of interpreting. Keyed by link IDENTITY (two structurally
+            // equal forks are still two different links).
+            Map<Fork, CompiledChain> forkPlans = null;
+            for (int i = 0; i < size; i++) {
+                if (links.get(i) instanceof Fork fork) {
+                    if (forkPlans == null) {
+                        forkPlans = new IdentityHashMap<>();
+                    }
+                    forkPlans.put(fork, compile(fork.chain()));
+                }
+            }
             for (int i = 0; i < size; i++) {
                 // No window starts at a sync stage: advance inlines it on the
                 // boss and never dispatches there (validated chains can't
@@ -626,7 +647,8 @@ public class DefaultNioEngine implements NioEngine {
                     runs[i] = links.subList(i, end).toArray(Link[]::new);
                 }
             }
-            return new CompiledChain(links, runs, runEnds, DefaultNioEngine.maxDecisionId(links));
+            return new CompiledChain(links, runs, runEnds, DefaultNioEngine.maxDecisionId(links),
+                    forkPlans == null ? Map.of() : forkPlans);
         }
 
         // The record's generated equals/hashCode/toString would compare the two
@@ -636,11 +658,13 @@ public class DefaultNioEngine implements NioEngine {
         @Override
         public boolean equals(Object other) {
             return this == other
-                    || other instanceof CompiledChain(var otherLinks, var otherRuns, var otherRunEnds, var otherMaxId)
+                    || other instanceof CompiledChain(var otherLinks, var otherRuns, var otherRunEnds,
+                    var otherMaxId, var otherForkPlans)
                     && maxDecisionId == otherMaxId
                     && links.equals(otherLinks)
                     && Arrays.deepEquals(runs, otherRuns)
-                    && Arrays.equals(runEnds, otherRunEnds);
+                    && Arrays.equals(runEnds, otherRunEnds)
+                    && forkPlans.equals(otherForkPlans);
         }
 
         @Override
@@ -648,7 +672,8 @@ public class DefaultNioEngine implements NioEngine {
             int result = links.hashCode();
             result = 31 * result + Arrays.deepHashCode(runs);
             result = 31 * result + Arrays.hashCode(runEnds);
-            return 31 * result + maxDecisionId;
+            result = 31 * result + maxDecisionId;
+            return 31 * result + forkPlans.size();
         }
 
         @Override
@@ -656,7 +681,8 @@ public class DefaultNioEngine implements NioEngine {
             return "CompiledChain[links=" + links
                     + ", runs=" + Arrays.deepToString(runs)
                     + ", runEnds=" + Arrays.toString(runEnds)
-                    + ", maxDecisionId=" + maxDecisionId + "]";
+                    + ", maxDecisionId=" + maxDecisionId
+                    + ", forkPlans=" + forkPlans.size() + "]";
         }
 
         private static boolean staticallyFusable(Link link) {
@@ -836,18 +862,24 @@ public class DefaultNioEngine implements NioEngine {
         private final CompletableFuture<Object> result = new CompletableFuture<>();
         // Precompiled dispatch plan for this exact chain version; null = interpret.
         private final CompiledChain plan;
+        // Non-null = this execution IS a detached sub-flow (the link that
+        // spawned it). It reports fork metrics instead of execution metrics and
+        // never notifies the complete handlers: its terminal value is not the
+        // flow's output. Failures still reach the error handlers.
+        private final Fork forkOf;
         // Snapshot of the installed metrics for this execution; null = untimed.
         private final NioFlowMetrics metrics;
         private final long startNanos;
 
         private Execution(ExecutorService boss, List<Link> links, Map<String, Object> context,
-                          CompiledChain plan, Object input, Object key) {
+                          CompiledChain plan, Object input, Object key, Fork forkOf) {
             this.boss = boss;
             this.links = links;
             this.context = context;
             this.plan = plan;
             this.input = input;
             this.key = key;
+            this.forkOf = forkOf;
             int maxDecision = plan != null ? plan.maxDecisionId() : maxDecisionId(links);
             this.decisionBits = maxDecision >= 0 && maxDecision <= MAX_BITSET_DECISION_ID
                     ? new long[(maxDecision >>> 5) + 1]
@@ -923,12 +955,30 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
 
+        /**
+         * The drain slot is released LAST, in a finally: "in flight" means
+         * "not fully reported yet", so a clean shutdown(grace) guarantees every
+         * metric and handler of every execution — request or fork — already
+         * ran. For a request this still lands before its result future
+         * completes, so a joining caller observes the same ordering as before.
+         */
         private void finishBookkeeping(Object value, Throwable error) {
-            if (activeExecutions.decrementAndGet() == 0) {
-                synchronized (drainLock) {
-                    drainLock.notifyAll();
+            try {
+                if (forkOf != null) {
+                    reportFork(error);
+                } else {
+                    reportExecution(value, error);
+                }
+            } finally {
+                if (activeExecutions.decrementAndGet() == 0) {
+                    synchronized (drainLock) {
+                        drainLock.notifyAll();
+                    }
                 }
             }
+        }
+
+        private void reportExecution(Object value, Throwable error) {
             if (metrics != null) {
                 long elapsed = System.nanoTime() - startNanos;
                 if (error != null) {
@@ -955,6 +1005,71 @@ public class DefaultNioEngine implements NioEngine {
                     }
                 }
             }
+        }
+
+        /**
+         * A detached sub-flow ends here. It reports its own metrics — its
+         * terminal value is not the flow's output, so it must not land in the
+         * execution-latency histogram nor reach the complete handlers, which
+         * promise an O. A failure it did not recover() is reported exactly
+         * where a failing Background effect is: the error handlers.
+         */
+        private void reportFork(Throwable error) {
+            int running = activeForks.decrementAndGet();
+            if (metrics != null) {
+                long elapsed = System.nanoTime() - startNanos;
+                if (error != null) {
+                    metrics.forkFailed(forkOf.name(), error, elapsed);
+                } else {
+                    metrics.forkCompleted(forkOf.name(), elapsed);
+                }
+                metrics.forksInFlight(running);
+            }
+            if (error != null) {
+                notifyError(error);
+            }
+        }
+
+        /**
+         * Detaches the sub-flow: a child execution over the fork's own chain,
+         * submitted as a NEW boss task so the main line resumes on the very
+         * next instruction — running it inline would make the parent wait for
+         * the fork's boss-inlined links (handleSync, when/match predicates),
+         * which is exactly what a fork promises not to do.
+         *
+         * <p>The child gets a COPY of the context: parent and child run
+         * concurrently on different threads, and the plain HashMap behind
+         * Context is only safe because one execution's stages are serialized by
+         * its executor handoffs. Sharing it would be a data race; the price is
+         * that context writes inside a fork stay inside the fork.
+         *
+         * <p>Never keyed: inheriting the parent's key would queue the child
+         * behind the very execution it was detached from.
+         */
+        private void spawnFork(Fork fork, Object value) {
+            Execution child = new Execution(boss, fork.chain(), copyOfContext(),
+                    plan == null ? null : plan.forkPlans().get(fork), value, null, fork);
+            // Both counters BEFORE the submission: a fork is in-flight work, so
+            // shutdown(grace) must wait for it even if it is still queued.
+            activeExecutions.incrementAndGet();
+            int running = activeForks.incrementAndGet();
+            if (child.metrics != null) {
+                child.metrics.forkStarted(fork.name());
+                child.metrics.forksInFlight(running);
+            }
+            try {
+                boss.execute(child);
+            } catch (RejectedExecutionException rejected) {
+                // The boss is gone (engine-owned executor shut down mid-flight):
+                // the child must still end, reporting through the error handlers.
+                child.fail(rejected);
+            }
+        }
+
+        private Map<String, Object> copyOfContext() {
+            // Null stays null: a flow that never touched the context allocates
+            // nothing for its forks either.
+            return context == null ? null : new HashMap<>(context);
         }
 
         // Iterative, never recursive: a deep chain of cheap links is walked
@@ -1011,6 +1126,11 @@ public class DefaultNioEngine implements NioEngine {
                 case Background background -> {
                     Object snapshot = current;
                     workersExecutorService.execute(() -> runBackground(background, snapshot));
+                }
+                case Fork fork -> {
+                    // Detaches a child execution and keeps walking with the SAME
+                    // value: the main line never waits for a fork.
+                    spawnFork(fork, current);
                 }
                 case FanOut fanOut -> {
                     // the join resumes on the boss when all branches finish

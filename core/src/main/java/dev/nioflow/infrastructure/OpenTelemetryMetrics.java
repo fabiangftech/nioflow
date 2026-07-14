@@ -19,24 +19,33 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Exposes: nioflow.execution.duration and nioflow.stage.duration histograms
  * (microseconds; stages tagged with nioflow.stage), completion/failure/filter
  * counters, recovery counter (tagged with nioflow.recovery), dropped-values
- * counter and a nioflow.queue.depth gauge.
+ * counter and a nioflow.queue.depth gauge. Detached sub-flows report apart from
+ * the request they came from (they are not on its critical path):
+ * nioflow.fork.duration, nioflow.forks.started/failed and a
+ * nioflow.fork.in_flight gauge, all tagged with nioflow.fork.
  */
 public final class OpenTelemetryMetrics implements NioFlowMetrics {
 
     private static final AttributeKey<String> STAGE = AttributeKey.stringKey("nioflow.stage");
     private static final AttributeKey<String> RECOVERY = AttributeKey.stringKey("nioflow.recovery");
+    private static final AttributeKey<String> FORK = AttributeKey.stringKey("nioflow.fork");
 
     private final LongHistogram executionMicros;
     private final LongHistogram stageMicros;
+    private final LongHistogram forkMicros;
     private final LongCounter completed;
     private final LongCounter failed;
     private final LongCounter filtered;
     private final LongCounter recoveries;
     private final LongCounter dropped;
+    private final LongCounter forksStarted;
+    private final LongCounter forksFailed;
     private final AtomicInteger queueDepth = new AtomicInteger();
+    private final AtomicInteger forksInFlight = new AtomicInteger();
     // Attribute instances cached per name: no allocations on the hot path.
     private final Map<String, Attributes> stageAttributes = new ConcurrentHashMap<>();
     private final Map<String, Attributes> recoveryAttributes = new ConcurrentHashMap<>();
+    private final Map<String, Attributes> forkAttributes = new ConcurrentHashMap<>();
 
     public OpenTelemetryMetrics(Meter meter) {
         this.executionMicros = meter.histogramBuilder("nioflow.execution.duration")
@@ -48,8 +57,14 @@ public final class OpenTelemetryMetrics implements NioFlowMetrics {
         this.filtered = meter.counterBuilder("nioflow.executions.filtered").build();
         this.recoveries = meter.counterBuilder("nioflow.recoveries.applied").build();
         this.dropped = meter.counterBuilder("nioflow.values.dropped").build();
+        this.forkMicros = meter.histogramBuilder("nioflow.fork.duration")
+                .setUnit("us").ofLongs().build();
+        this.forksStarted = meter.counterBuilder("nioflow.forks.started").build();
+        this.forksFailed = meter.counterBuilder("nioflow.forks.failed").build();
         meter.gaugeBuilder("nioflow.queue.depth").ofLongs()
                 .buildWithCallback(gauge -> gauge.record(queueDepth.get()));
+        meter.gaugeBuilder("nioflow.fork.in_flight").ofLongs()
+                .buildWithCallback(gauge -> gauge.record(forksInFlight.get()));
     }
 
     @Override
@@ -80,6 +95,31 @@ public final class OpenTelemetryMetrics implements NioFlowMetrics {
     public void recoveryApplied(String recovery) {
         recoveries.add(1,
                 recoveryAttributes.computeIfAbsent(recovery, name -> Attributes.of(RECOVERY, name)));
+    }
+
+    @Override
+    public void forkStarted(String fork) {
+        forksStarted.add(1, attributesFor(fork));
+    }
+
+    @Override
+    public void forkCompleted(String fork, long nanos) {
+        forkMicros.record(nanos / 1_000, attributesFor(fork));
+    }
+
+    @Override
+    public void forkFailed(String fork, Throwable error, long nanos) {
+        forksFailed.add(1, attributesFor(fork));
+        forkMicros.record(nanos / 1_000, attributesFor(fork));
+    }
+
+    @Override
+    public void forksInFlight(int running) {
+        forksInFlight.set(running);
+    }
+
+    private Attributes attributesFor(String fork) {
+        return forkAttributes.computeIfAbsent(fork, name -> Attributes.of(FORK, name));
     }
 
     @Override

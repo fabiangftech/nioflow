@@ -134,6 +134,17 @@ class DefaultLane<T> implements Lane<T> {
     }
 
     @Override
+    public <R> Lane<T> fork(Segment<T, R> sub) {
+        return fork(view.anonymousName("fork"), sub);
+    }
+
+    @Override
+    public <R> Lane<T> fork(String name, Segment<T, R> sub) {
+        view.forkSegment(name, sub);
+        return this;
+    }
+
+    @Override
     public <R> Lane<R> use(Segment<T, R> segment) {
         view.embed(segment);
         return retyped();

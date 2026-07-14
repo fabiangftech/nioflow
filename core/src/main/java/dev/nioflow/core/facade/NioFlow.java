@@ -128,6 +128,21 @@ public interface NioFlow<I, O> {
 
     NioFlow<I, O> batch(String name, int size, Duration window, UnaryOperator<List<I>> bulk);
 
+    /**
+     * Detached sub-flow: the value is handed to a child execution and the main
+     * line continues immediately — the request does NOT wait for it, and a
+     * failure the fork does not recover() reaches onError, never the caller's
+     * future. The sub-flow is a full pipeline (handle, background, adapt,
+     * filter, recover, fanOut, batch, when/match, nested forks), so its body is
+     * a {@link Segment} and may re-type freely: nothing comes back.
+     * Type-preserving on the main line, which is why it belongs here.
+     *
+     * <p>Need the result on the main line? That is {@link #fanOut}.
+     */
+    <R> NioFlow<I, O> fork(Segment<I, R> sub);
+
+    <R> NioFlow<I, O> fork(String name, Segment<I, R> sub);
+
     /** Embeds a reusable segment inline, with the shared chain's type. */
     NioFlow<I, O> use(Segment<I, I> segment);
 
