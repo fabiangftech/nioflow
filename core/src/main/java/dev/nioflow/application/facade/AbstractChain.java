@@ -56,10 +56,13 @@ abstract class AbstractChain<X> {
      * True only for the shared definition, whose links ARE the engine's live
      * chain. A per-request pipeline and a fork's sub-chain build somewhere else,
      * which is what makes a named region meaningless for them — see embed(name).
+     *
+     * <p>Abstract rather than defaulted: a new chain gets no answer for free,
+     * because "false" here silently forbids named regions and "true" would let
+     * a chain that is not the engine's record a region span over links the
+     * engine never saw.
      */
-    boolean buildsSharedChain() {
-        return false;
-    }
+    abstract boolean buildsSharedChain();
 
     void stage(String name, UnaryOperator<X> function) {
         appendLink(new Stage(name, asObjectFunction(function), false, null, null, guards()));

@@ -2,6 +2,7 @@ package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.Segment;
+import dev.nioflow.core.facade.StepCondition;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Splice;
 import dev.nioflow.core.model.Stage;
@@ -121,6 +122,38 @@ class DefaultNioFlowRegionTest {
 
     // Registering a region from an execution no longer compiles: use(region,
     // segment) lives on NioFlow (the shared definition), not on NioStep.
+
+    // A lane, unlike NioStep, has one use(region, segment) for every chain it
+    // can view — so where the shared definition is not the one being built, the
+    // rejection can only be a runtime one. These two lock it.
+
+    private static final Segment<Integer, Integer> PRICING =
+            lane -> lane.handle("base-price", value -> value * 10);
+    private static final Segment<Integer, Integer> PRICING_AS_REGION =
+            lane -> lane.use("pricing", PRICING);
+
+    @Test
+    void aRegionInsideAPerRequestLaneIsRejected() {
+        DefaultNioFlow<Integer, Integer> localFlow = DefaultNioFlow.from(Integer.class);
+        StepCondition<Integer, Integer> positive = localFlow.just(4).when(value -> value > 0);
+
+        IllegalStateException rejected = assertThrows(IllegalStateException.class,
+                () -> positive.then(PRICING_AS_REGION::define));
+
+        assertTrue(rejected.getMessage().contains("only live on the shared definition"), rejected::getMessage);
+        localFlow.close();
+    }
+
+    @Test
+    void aRegionInsideAForkIsRejected() {
+        DefaultNioFlow<Integer, Integer> localFlow = DefaultNioFlow.from(Integer.class);
+
+        IllegalStateException rejected = assertThrows(IllegalStateException.class,
+                () -> localFlow.fork("audit", PRICING_AS_REGION));
+
+        assertTrue(rejected.getMessage().contains("only live on the shared definition"), rejected::getMessage);
+        localFlow.close();
+    }
 
     @Test
     void aRegionWhoseSegmentAppendsNothingIsRejected() {

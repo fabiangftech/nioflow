@@ -52,6 +52,12 @@ final class RecordingChain<X> extends AbstractChain<X> {
         recorded.add(link);
     }
 
+    /** Records off-chain (a replaceRegion segment, a fork's sub-chain). */
+    @Override
+    boolean buildsSharedChain() {
+        return false;
+    }
+
     @Override
     List<Guard> guards() {
         return guards;

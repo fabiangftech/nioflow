@@ -287,6 +287,12 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
         state.localLinks().add(link);
     }
 
+    /** Local links: this pipeline is one request's, never the engine's chain. */
+    @Override
+    boolean buildsSharedChain() {
+        return false;
+    }
+
     @Override
     List<Guard> guards() {
         return guards;
