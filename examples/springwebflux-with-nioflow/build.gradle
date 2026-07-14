@@ -20,7 +20,12 @@ repositories {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+    // Substituted by includeBuild('../../core'): no publishing needed.
+    implementation 'dev.nioflow:nioflow-core:1.0.0'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-webflux-test'
+    testImplementation 'io.projectreactor:reactor-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

@@ -1,2 +1,12 @@
 rootProject.name = 'springboot-with-nioflow'
-includeBuild('../../core')
+includeBuild('../../core') {
+    // The included build advertises itself as 'dev.nioflow:core' (its project
+    // name), but the dependency below names the PUBLISHED artifact,
+    // 'nioflow-core'. Without this explicit substitution Gradle finds no match
+    // and silently resolves the released jar from Maven Central instead — so the
+    // example would compile against whatever was last published, and "does core
+    // still work for consumers?" would be a question this build never asks.
+    dependencySubstitution {
+        substitute module('dev.nioflow:nioflow-core') using project(':')
+    }
+}
