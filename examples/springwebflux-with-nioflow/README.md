@@ -37,7 +37,8 @@ No `subscribeOn`, no `publishOn`, no `boundedElastic`. The blocking repository c
 | --- | --- |
 | `GET /orders/{id}` | `filter()` → empty `Mono` → **404**. A deliberate cut and "no value" are the same thing, so `switchIfEmpty` is all it takes. |
 | `POST /orders/{id}/pay` | The headline: blocking repo + two `WebClient` stages + a **detached fork**, behind one `Mono`. The notification takes 300 ms and the response does not wait for it. |
-| `POST /orders/pay-all?ids=1,2,3` | A `Flux` through the flow. Backpressure IS the `concurrency` argument; `key()` gives per-key FIFO in the **engine** while different keys stay parallel. |
+| `POST /orders/pay-all?ids=1,2,3` | A `Flux` through the flow. Backpressure IS the `concurrency` argument; `key()` gives per-key FIFO in the **engine** while different keys stay parallel. One failing element fails the stream — right for a request/response batch. |
+| `POST /orders/ingest?ids=1,nope,3` | The ingestion loop (`pipeResilient`): the poison element is reported to a handler and **dropped**, and the stream carries on. One bad message must not stop a consumer. |
 | `GET /threads` | Which thread each part of the request ran on. Read on. |
 | `POST /stub/**` | The "remote service" the `WebClient` calls — it is this same app, so the calls are real HTTP round trips, not mocks. |
 
@@ -53,6 +54,15 @@ afterReactiveStage=VIRTUAL:            ← the chain resumes on a worker
 Read the third line twice. Operators you chain onto the `WebClient`'s Mono (`.map`, `.doOnNext`, `.filter`) run on the thread that **completes** it — Netty's event loop. That is Reactor behaving normally, and it is exactly where a blocking call takes the server down.
 
 **Do the work in a stage, not in a `map()` on the Mono.** A stage body always runs on a virtual worker; that is the whole point.
+
+## BlockHound: the proof, not the prose
+
+The suite runs with [BlockHound](https://github.com/reactor/BlockHound) installed over the whole JVM (test scope only — it never reaches `core` or a consumer's runtime), and `NioFlowBlockHoundIntegration` tells it two things:
+
+- **the virtual workers may block** — they are not `NonBlocking` threads, so nothing needs allowlisting. That IS the design: a stage parks a thread that unmounts;
+- **the bosses may not** — they are marked non-blocking, so the engine's own event-loop rule ("the boss never runs user code") is now checked by the JVM. `BlockHoundTest` plants a `Thread.sleep` inside a boss-inlined `handleSync` and asserts it trips.
+
+`/orders/{id}/pay` — blocking repository, `WebClient` calls parked on with `block()`, a detached fork — runs green with all of that armed. That is the central promise, held mechanically instead of by a thread-name assertion.
 
 ## What it does not show
 

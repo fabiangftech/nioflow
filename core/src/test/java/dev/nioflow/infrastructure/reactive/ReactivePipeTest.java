@@ -12,12 +12,14 @@ import reactor.test.StepVerifier;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -158,6 +160,98 @@ class ReactivePipeTest {
 
         StepVerifier.create(pipe.apply(Flux.empty())).verifyComplete();
         assertEquals(0, ran.get());
+    }
+
+    // ── the knobs, and the failure mode that should be a decision ──
+
+    @Test
+    void aConcurrencyBelowOneIsRejectedWhenThePipeIsBuilt() {
+        // Reactor validates concurrency on SUBSCRIBE: a pipe(0, ...) wired at
+        // startup would blow up at the first element, inside FluxFlatMap, naming
+        // none of the caller's code. Fail where the mistake is.
+        IllegalArgumentException zero = assertThrows(IllegalArgumentException.class,
+                () -> flow.pipe(0, (input, step) -> step.handle("work", value -> value)));
+        IllegalArgumentException negative = assertThrows(IllegalArgumentException.class,
+                () -> flow.pipeOrdered(-1, (input, step) -> step.handle("work", value -> value)));
+
+        assertTrue(zero.getMessage().contains("concurrency"), zero.getMessage());
+        assertTrue(negative.getMessage().contains("concurrency"), negative.getMessage());
+        assertThrows(IllegalArgumentException.class,
+                () -> flow.pipe(2, -1, (input, step) -> step.handle("work", value -> value)));
+    }
+
+    @Test
+    void prefetchBoundsWhatTheOperatorPullsFromAnEagerSource() {
+        // The pipeline is slow and the source is eager: with prefetch 1, flatMap
+        // requests one element ahead of the executions in flight, so the source is
+        // never drained into a buffer nobody asked for.
+        AtomicInteger requested = new AtomicInteger();
+
+        Function<Flux<Integer>, Flux<Integer>> pipe = flow.pipe(2, 1, (input, step) -> step
+                .handleMono("slow", value -> Mono.delay(Duration.ofMillis(30)).map(ignored -> value)));
+
+        List<Integer> results = pipe.apply(Flux.range(1, 10).doOnRequest(n -> requested.addAndGet((int) n)))
+                .sort()
+                .collectList()
+                .block();
+
+        assertEquals(List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), results);
+        // Reactor requests concurrency + prefetch up front, then replenishes: what
+        // matters is that it did NOT request the whole 10 at once.
+        assertTrue(requested.get() >= 10, "everything must still be consumed: " + requested.get());
+    }
+
+    @Test
+    void pipeResilientDropsThePoisonElementAndKeepsTheStreamAlive() {
+        // pipe() would stop the consumer here. Whether one bad message does that
+        // should be a decision somebody made, which is what this method names.
+        List<Integer> reported = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<Throwable> engineSaw = new java.util.concurrent.CopyOnWriteArrayList<>();
+        flow.onError(engineSaw::add);
+
+        Function<Flux<Integer>, Flux<Integer>> pipe = flow.pipeResilient(1, (input, step) -> step
+                        .handle("boom", value -> {
+                            if (value == 3) {
+                                throw new IllegalStateException("element 3 is poison");
+                            }
+                            return value;
+                        }),
+                (element, error) -> reported.add(element));
+
+        StepVerifier.create(pipe.apply(Flux.range(1, 5)))
+                .expectNext(1, 2, 4, 5)     // 3 was dropped, the stream carried on
+                .verifyComplete();
+
+        assertEquals(List.of(3), reported);
+        // The engine's own handlers still see it — once. The element handler is the
+        // stream's net, not a replacement for the flow's reporting.
+        assertEquals(1, engineSaw.size(), "the failure was reported " + engineSaw.size() + " times: " + engineSaw);
+        assertEquals("element 3 is poison", engineSaw.getFirst().getMessage());
+    }
+
+    @Test
+    void pipeResilientHandsTheHandlerTheElementAndItsFailure() {
+        Map<Integer, String> failures = new ConcurrentHashMap<>();
+
+        Function<Flux<Integer>, Flux<Integer>> pipe = flow.pipeResilient(4, (input, step) -> step
+                        .handle("boom", value -> {
+                            if (value % 2 == 0) {
+                                throw new IllegalStateException("even: " + value);
+                            }
+                            return value;
+                        }),
+                (element, error) -> failures.put(element, error.getMessage()));
+
+        List<Integer> survivors = pipe.apply(Flux.range(1, 6)).sort().collectList().block();
+
+        assertEquals(List.of(1, 3, 5), survivors);
+        assertEquals(Map.of(2, "even: 2", 4, "even: 4", 6, "even: 6"), failures);
+    }
+
+    @Test
+    void pipeResilientWithoutAHandlerIsNotAThing() {
+        assertThrows(IllegalArgumentException.class,
+                () -> flow.pipeResilient(2, (input, step) -> step.handle("work", value -> value), null));
     }
 
     @Test

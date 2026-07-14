@@ -1,6 +1,6 @@
 # RFC 0003 — Reactive hardening: the thread leak, the missing knobs, the stale promises
 
-- **Status**: Proposed
+- **Status**: Implemented
 - **Target**: `infrastructure.reactive`, `tests/`, `examples/springwebflux-with-nioflow`, `docs/`
 - **Depends on**: RFC 0002
 - **Independent of**: RFC 0004–0007. **Ship this one first** — it is days of work, carries no design risk, and closes a thread leak.
@@ -116,3 +116,15 @@ Every item on that list exists today except the BlockHound allowlist (gap 5). Th
 | **`defaultBudget` silently times out a stage that legitimately takes minutes** (a long export, a slow batch job). | Opt-in: a flow that declares no default keeps today's behavior exactly. And the javadoc states the trade plainly — no default means one hung socket leaks a worker for the life of the JVM. |
 | `pipeResilient` swallows failures a caller wanted to see. | The `BiConsumer` is **mandatory** in the signature, not an optional overload — you cannot drop an element without being handed it. |
 | BlockHound is famously fragile across JDK versions and instruments everything. | It lives in the **example's test scope only**, never in `core`, never in a consumer's runtime. If it breaks on a JDK bump, the example's tests break — not the library. |
+
+## What shipped, and where it differed from the proposal
+
+Everything above, plus three things the implementation forced into the open.
+
+**1. The default budget had to reach into lanes and forks, or it would have been a half-fix.** Core hands a plain `DefaultLane` to a `when`/`match` lambda and to a `Segment` body, so a `handleMono` declared inside a branch or a fork would have been born unbudgeted — and a fork's failure reaches nobody's future, so that one would leak *silently*. `Lanes.budgeted` wraps the lane lambda and the segment before core sees it, which is invisible to core (it ignores what a lane lambda returns) and means `Reactive.lane(lane)` finds a budgeted `ReactiveLane` already there. `ReactiveDefaultBudgetTest` pins both.
+
+**2. The BlockHound allowlist for `dev.nioflow` workers does not exist, because it must not.** Virtual workers are not `NonBlocking` threads: BlockHound ignores them by default, and *allowing* blocking inside `Blocking.await` would have masked the very bug worth catching. What the example ships instead is stronger — it marks the **bosses** non-blocking, turning the engine's own rule ("the boss never runs user code, never blocks") into a mechanical check, with a test that a blocking `handleSync` really does trip it. Two allowances, neither of them nioflow's: the boss's idle park on its own task queue, and Jackson's `DeserializerCache` lock (framework code, cold path, on Netty's decode thread — without it the first POST of the suite 500s and says nothing about nioflow).
+
+**3. `pipeOrdered` got the `prefetch` overload too.** The eager-source problem is not unique to the unordered variant, and an asymmetric pair is the next gap-2.
+
+Not done: `pipe`'s `prefetch` is Reactor's, not a promise of ours — the test asserts the stream drains, not an exact buffer size, because that number is Reactor's to change.

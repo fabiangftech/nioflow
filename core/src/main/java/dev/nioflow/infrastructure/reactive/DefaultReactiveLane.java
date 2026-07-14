@@ -16,55 +16,76 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
-/** Delegating mirror of a fork lane. See DefaultReactiveFlow. */
+/**
+ * Delegating mirror of a fork lane. See DefaultReactiveFlow — the default budget
+ * it carries is the one the flow declared, handed down by the branch or segment
+ * that opened this lane.
+ */
 class DefaultReactiveLane<T> implements ReactiveLane<T> {
 
     final Lane<T> delegate;
+    final Duration budget;
 
     DefaultReactiveLane(Lane<T> delegate) {
+        this(delegate, null);
+    }
+
+    DefaultReactiveLane(Lane<T> delegate, Duration budget) {
         this.delegate = delegate;
+        this.budget = budget;
     }
 
     private ReactiveLane<T> wrap(Lane<T> result) {
-        return result == delegate ? this : new DefaultReactiveLane<>(result);
+        return result == delegate ? this : new DefaultReactiveLane<>(result, budget);
+    }
+
+    private <R> ReactiveLane<R> retyped(Lane<R> result) {
+        return new DefaultReactiveLane<>(result, budget);
     }
 
     // ── the reactive steps ──
 
     @Override
     public ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value))));
+        return handleMono(name, call, budget);
     }
 
     @Override
     public ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call, Duration budget) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value).timeout(budget))));
+        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
     @Override
     public ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call, Retry retry) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value)), retry));
+        return handleMono(name, call, budget, retry);
     }
 
     @Override
     public ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value).timeout(budget)), retry));
+        return wrap(delegate.handle(name,
+                value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
     }
 
     @Override
     public <R> ReactiveLane<R> adaptMono(Function<T, Mono<R>> call) {
-        return new DefaultReactiveLane<>(delegate.adapt(value -> Blocking.await(call.apply(value))));
+        return adaptMono(call, budget);
+    }
+
+    @Override
+    public <R> ReactiveLane<R> adaptMono(Function<T, Mono<R>> call, Duration budget) {
+        return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
     @Override
     public <R> ReactiveLane<List<R>> adaptFlux(Function<T, Flux<R>> call) {
-        return new DefaultReactiveLane<>(delegate.adapt(value -> Blocking.await(call.apply(value).collectList())));
+        return retyped(delegate.adapt(
+                value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), budget))));
     }
 
     @Override
     public <R, C> ReactiveLane<C> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                              Function<List<R>, C> join) {
-        return new DefaultReactiveLane<>(delegate.fanOut(name, Blocking.branches(branches), join));
+        return retyped(delegate.fanOut(name, Blocking.branches(branches, budget), join));
     }
 
     // ── everything else ──
@@ -131,48 +152,48 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
 
     @Override
     public <R> ReactiveLane<R> adapt(Function<T, R> function) {
-        return new DefaultReactiveLane<>(delegate.adapt(function));
+        return retyped(delegate.adapt(function));
     }
 
     @Override
     public <R, C> ReactiveLane<C> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join) {
-        return new DefaultReactiveLane<>(delegate.fanOut(branches, join));
+        return retyped(delegate.fanOut(branches, join));
     }
 
     @Override
     public <R, C> ReactiveLane<C> fanOut(String name, List<Function<T, R>> branches,
                                          Function<List<R>, C> join) {
-        return new DefaultReactiveLane<>(delegate.fanOut(name, branches, join));
+        return retyped(delegate.fanOut(name, branches, join));
     }
 
     @Override
     public <R> ReactiveLane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
-        return new DefaultReactiveLane<>(delegate.batch(size, window, bulk));
+        return retyped(delegate.batch(size, window, bulk));
     }
 
     @Override
     public <R> ReactiveLane<R> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk) {
-        return new DefaultReactiveLane<>(delegate.batch(name, size, window, bulk));
+        return retyped(delegate.batch(name, size, window, bulk));
     }
 
     @Override
     public <R> ReactiveLane<R> use(Segment<T, R> segment) {
-        return new DefaultReactiveLane<>(delegate.use(segment));
+        return retyped(delegate.use(Lanes.budgeted(segment, budget)));
     }
 
     @Override
     public <R> ReactiveLane<R> use(String region, Segment<T, R> segment) {
-        return new DefaultReactiveLane<>(delegate.use(region, segment));
+        return retyped(delegate.use(region, Lanes.budgeted(segment, budget)));
     }
 
     @Override
     public <R> ReactiveLane<T> fork(Segment<T, R> sub) {
-        return wrap(delegate.fork(sub));
+        return wrap(delegate.fork(Lanes.budgeted(sub, budget)));
     }
 
     @Override
     public <R> ReactiveLane<T> fork(String name, Segment<T, R> sub) {
-        return wrap(delegate.fork(name, sub));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, budget)));
     }
 
     @Override
@@ -192,11 +213,11 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
 
     @Override
     public ReactiveLaneCondition<T> when(Predicate<T> predicate) {
-        return new DefaultReactiveLaneCondition<>(delegate.when(predicate));
+        return new DefaultReactiveLaneCondition<>(delegate.when(predicate), budget);
     }
 
     @Override
     public ReactiveLaneCases<T> match() {
-        return new DefaultReactiveLaneCases<>(delegate.match());
+        return new DefaultReactiveLaneCases<>(delegate.match(), budget);
     }
 }

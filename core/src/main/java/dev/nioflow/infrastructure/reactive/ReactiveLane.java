@@ -24,6 +24,10 @@ import java.util.function.UnaryOperator;
  * not let a reactive variant both BE a Condition and hand out a reactive lane
  * (same erasure — it is a name clash, not an override). That single unwrap is
  * the whole price.
+ *
+ * <p>The lane a reactive flow hands to that lambda already carries the flow's
+ * {@link ReactiveFlow#defaultBudget}, so a {@code handleMono} inside a branch or
+ * a fork is protected exactly like one on the main line.
  */
 public interface ReactiveLane<T> extends Lane<T> {
 
@@ -42,6 +46,14 @@ public interface ReactiveLane<T> extends Lane<T> {
     ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry);
 
     <R> ReactiveLane<R> adaptMono(Function<T, Mono<R>> call);
+
+    /**
+     * Re-types through a Mono with the budget ON THE MONO — see
+     * {@link ReactiveFlow#handleMono(String, Function, Duration)}. A remote call
+     * inside a branch or a fork body is still a remote call: it needs a budget
+     * as much as one on the main line does.
+     */
+    <R> ReactiveLane<R> adaptMono(Function<T, Mono<R>> call, Duration budget);
 
     <R> ReactiveLane<List<R>> adaptFlux(Function<T, Flux<R>> call);
 

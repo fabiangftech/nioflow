@@ -51,6 +51,17 @@ public class OrderController {
         return orders.payAll(Flux.fromArray(ids.split(",")), concurrency);
     }
 
+    /**
+     * The ingestion loop: an unknown id is a poison element, and it is dropped
+     * (reported to the log) instead of killing the stream — which is what would
+     * happen on /orders/pay-all.
+     */
+    @PostMapping("/orders/ingest")
+    public Flux<Receipt> ingest(@RequestParam(defaultValue = "1,2,3") String ids,
+                                @RequestParam(defaultValue = "8") int concurrency) {
+        return orders.ingest(Flux.fromArray(ids.split(",")), concurrency);
+    }
+
     /** Where each part of the request actually ran. The point of the example. */
     @GetMapping("/threads")
     public Mono<String> threads() {

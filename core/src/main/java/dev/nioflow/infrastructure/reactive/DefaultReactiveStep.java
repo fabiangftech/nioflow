@@ -18,60 +18,76 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
-/** Delegating mirror of a per-request pipeline. See DefaultReactiveFlow. */
+/**
+ * Delegating mirror of a per-request pipeline. See DefaultReactiveFlow — the
+ * default budget it carries comes from the flow that opened this pipeline, and
+ * applies to every reactive step here that declares none of its own.
+ */
 class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     final NioStep<T, O> delegate;
+    final Duration budget;
 
     DefaultReactiveStep(NioStep<T, O> delegate) {
+        this(delegate, null);
+    }
+
+    DefaultReactiveStep(NioStep<T, O> delegate, Duration budget) {
         this.delegate = delegate;
+        this.budget = budget;
     }
 
     private ReactiveStep<T, O> wrap(NioStep<T, O> result) {
-        return result == delegate ? this : new DefaultReactiveStep<>(result);
+        return result == delegate ? this : new DefaultReactiveStep<>(result, budget);
+    }
+
+    private <R> ReactiveStep<R, O> retyped(NioStep<R, O> result) {
+        return new DefaultReactiveStep<>(result, budget);
     }
 
     // ── the reactive steps ──
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value))));
+        return handleMono(name, call, budget);
     }
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value).timeout(budget))));
+        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Retry retry) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value)), retry));
+        return handleMono(name, call, budget, retry);
     }
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry) {
-        return wrap(delegate.handle(name, value -> Blocking.await(call.apply(value).timeout(budget)), retry));
+        return wrap(delegate.handle(name,
+                value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
     }
 
     @Override
     public <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call) {
-        return new DefaultReactiveStep<>(delegate.adapt(value -> Blocking.await(call.apply(value))));
+        return adaptMono(call, budget);
     }
 
     @Override
     public <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call, Duration budget) {
-        return new DefaultReactiveStep<>(delegate.adapt(value -> Blocking.await(call.apply(value).timeout(budget))));
+        return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
     @Override
     public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call) {
-        return new DefaultReactiveStep<>(delegate.adapt(value -> Blocking.await(call.apply(value).collectList())));
+        return retyped(delegate.adapt(
+                value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), budget))));
     }
 
     @Override
     public <R, C> ReactiveStep<C, O> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                                 Function<List<R>, C> join) {
-        return new DefaultReactiveStep<>(delegate.fanOut(name, Blocking.branches(branches), join));
+        return retyped(delegate.fanOut(name, Blocking.branches(branches, budget), join));
     }
 
     /**
@@ -150,7 +166,7 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<R, O> adapt(Function<T, R> function) {
-        return new DefaultReactiveStep<>(delegate.adapt(function));
+        return retyped(delegate.adapt(function));
     }
 
     @Override
@@ -160,39 +176,39 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R, C> ReactiveStep<C, O> fanOut(List<Function<T, R>> branches, Function<List<R>, C> join) {
-        return new DefaultReactiveStep<>(delegate.fanOut(branches, join));
+        return retyped(delegate.fanOut(branches, join));
     }
 
     @Override
     public <R, C> ReactiveStep<C, O> fanOut(String name, List<Function<T, R>> branches,
                                             Function<List<R>, C> join) {
-        return new DefaultReactiveStep<>(delegate.fanOut(name, branches, join));
+        return retyped(delegate.fanOut(name, branches, join));
     }
 
     @Override
     public <R> ReactiveStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
-        return new DefaultReactiveStep<>(delegate.batch(size, window, bulk));
+        return retyped(delegate.batch(size, window, bulk));
     }
 
     @Override
     public <R> ReactiveStep<R, O> batch(String name, int size, Duration window,
                                         Function<List<T>, List<R>> bulk) {
-        return new DefaultReactiveStep<>(delegate.batch(name, size, window, bulk));
+        return retyped(delegate.batch(name, size, window, bulk));
     }
 
     @Override
     public <R> ReactiveStep<T, O> fork(Segment<T, R> sub) {
-        return wrap(delegate.fork(sub));
+        return wrap(delegate.fork(Lanes.budgeted(sub, budget)));
     }
 
     @Override
     public <R> ReactiveStep<T, O> fork(String name, Segment<T, R> sub) {
-        return wrap(delegate.fork(name, sub));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, budget)));
     }
 
     @Override
     public <R> ReactiveStep<R, O> use(Segment<T, R> segment) {
-        return new DefaultReactiveStep<>(delegate.use(segment));
+        return retyped(delegate.use(Lanes.budgeted(segment, budget)));
     }
 
     @Override
@@ -227,12 +243,12 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStepCondition<T, O> when(Predicate<T> predicate) {
-        return new DefaultReactiveStepCondition<>(delegate.when(predicate));
+        return new DefaultReactiveStepCondition<>(delegate.when(predicate), budget);
     }
 
     @Override
     public ReactiveStepCases<T, O> match() {
-        return new DefaultReactiveStepCases<>(delegate.match());
+        return new DefaultReactiveStepCases<>(delegate.match(), budget);
     }
 
     @Override

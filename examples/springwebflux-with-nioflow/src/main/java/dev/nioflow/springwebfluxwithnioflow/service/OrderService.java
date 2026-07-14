@@ -98,6 +98,34 @@ public class OrderService {
     }
 
     /**
+     * The ingestion shape: one poison message must not stop the consumer.
+     *
+     * <p>{@link #payAll} is a request/response Flux — a failing element fails the
+     * stream, and that is right for a caller waiting on the whole batch. A Kafka
+     * loop or an SSE feed is the other case entirely: {@code pipeResilient} hands
+     * the failing element to the handler and drops it, and the stream carries on.
+     * The handler is mandatory in the signature — you cannot drop an element
+     * without being handed it.
+     *
+     * <p>Here an id nobody has heard of is the poison message: the pipeline FAILS
+     * it (rather than filtering it away) because in an ingestion loop that is a
+     * data error worth reporting — and reporting it must not cost the consumer
+     * the rest of the stream.
+     */
+    public Flux<Receipt> ingest(Flux<String> ids, int concurrency) {
+        return ids.transform(orders.pipeResilient(concurrency, (id, step) -> step
+                        .adapt(repository::findById)
+                        .handle("require-known-order", order -> {
+                            if (order == null) {
+                                throw new IllegalArgumentException("no such order");
+                            }
+                            return order;
+                        })
+                        .adaptMono(remote::charge, Duration.ofSeconds(2)),
+                (id, error) -> LOG.warn("dropping order {}: {}", id, error.toString())));
+    }
+
+    /**
      * Proof, not prose — and the one trap worth knowing. Reports the thread each
      * part of the request ran on:
      *

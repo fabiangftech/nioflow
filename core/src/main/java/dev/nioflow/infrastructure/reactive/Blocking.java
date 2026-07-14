@@ -3,6 +3,7 @@ package dev.nioflow.infrastructure.reactive;
 import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletionException;
@@ -13,10 +14,30 @@ import java.util.function.Function;
  * function the chain can hold. It parks a VIRTUAL worker — never a boss, never
  * a Netty event loop — so the "block" here is a thread that unmounts, not a
  * thread that is lost.
+ *
+ * <p>Lost is exactly what it becomes without a budget, though: a Mono that never
+ * completes parks its worker for the life of the JVM (the engine has no
+ * cancellation). Hence {@link #budgeted}: every reactive step routes its Mono
+ * through it, so a flow that declared a {@code defaultBudget} cannot leak a
+ * worker on a hung socket.
  */
 final class Blocking {
 
     private Blocking() {
+    }
+
+    /**
+     * Puts the budget ON THE MONO — {@code mono.timeout(d)} cancels the
+     * subscription (reactor-netty releases the connection), where a stage
+     * timeout would only abandon the parked worker.
+     *
+     * <p>A null budget means "none declared": neither on the step nor as the
+     * flow's default. The Mono travels through untouched, which is the right
+     * thing for {@code Mono.just(...)} or a cache lookup — and a permanently
+     * parked worker for anything that talks to the network.
+     */
+    static <T> Mono<T> budgeted(Mono<T> mono, Duration budget) {
+        return budget == null ? mono : mono.timeout(budget);
     }
 
     /**
@@ -47,10 +68,10 @@ final class Blocking {
     }
 
     /** Fan-out branches: each Mono awaits on its own worker, concurrently. */
-    static <T, R> List<Function<T, R>> branches(List<Function<T, Mono<R>>> reactive) {
+    static <T, R> List<Function<T, R>> branches(List<Function<T, Mono<R>>> reactive, Duration budget) {
         List<Function<T, R>> blocking = new ArrayList<>(reactive.size());
         for (Function<T, Mono<R>> branch : reactive) {
-            blocking.add(value -> await(branch.apply(value)));
+            blocking.add(value -> await(budgeted(branch.apply(value), budget)));
         }
         return blocking;
     }

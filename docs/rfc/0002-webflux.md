@@ -457,7 +457,7 @@ The table is the contract. Everything in it is a test.
 | Cancellation leaks work: a client disconnects and the pipeline keeps charging a card. | Documented loudly. The mitigation that exists today is the per-stage budget — the same one a non-reactive caller has. Real cancellation is *Future work* and needs engine support. |
 | `flatMap` concurrency set far above what the downstream can take. | That is what `RateLimit` and the bulkhead are for, and they park a virtual worker rather than the producer. The `forksInFlight` / `queueDepth` gauges show the truth. |
 | A reactive call ends up on the **boss** (`handleSync`, which is boss-inlined) and parks the event loop. | There is no `handleSyncMono` — the mirror simply does not offer one, so the mistake is not expressible. `handleSync` keeps taking a `UnaryOperator`, and a `Mono`-returning method reference does not fit it. |
-| Reactor's `BlockHound` (if the app enables it) flags the worker's park. | Virtual workers are not `NonBlocking` threads, so Reactor's own check passes. BlockHound instruments *all* threads, so the example ships the one-line allowlist for `dev.nioflow` workers. |
+| Reactor's `BlockHound` (if the app enables it) flags the worker's park. | Virtual workers are not `NonBlocking` threads, so Reactor's own check passes, and nothing needs allowlisting. The example ships BlockHound in its test scope anyway (RFC 0003), and goes one better: it marks the **bosses** non-blocking, so the engine's own event-loop rule is checked mechanically. |
 
 ## Testing and benchmarks
 
@@ -496,4 +496,5 @@ Acceptance bar, in two parts:
 - **A `Flux`-returning stage** (1:N), if a real streaming use case appears (chunked LLM responses, paginated fetches). Today: `adapt` to a `List` and `Flux.fromIterable`.
 - **`Reactive.flow(Publisher)`** — treating a `Flux` as a nioflow *source* with the engine's `OverflowPolicy` as the backpressure strategy. Deliberately deferred: it is the design that most tempts you to write a custom `Publisher`, and `flatMap` already covers the use case.
 - **Kotlin coroutines** (`suspend` stages, `Flow`): the same three properties make it work; different RFC.
-- **`examples/springwebflux-with-nioflow`** is an empty Spring Boot skeleton today. It becomes the executable version of this RFC: a controller returning `Mono`, a `Flux` ingestion endpoint, a `WebClient` stage, a fork, and the BlockHound allowlist.
+- ~~**`examples/springwebflux-with-nioflow`**~~ — **done**. It is the executable version of this RFC: a controller returning `Mono`, a `Flux` ingestion endpoint, `WebClient` stages, a detached fork, and (since RFC 0003) BlockHound armed over the whole test suite.
+- **The un-budgeted `handleMono` leaks a virtual worker forever** — a Mono that never completes parks it for the life of the JVM. Closed by RFC 0003 (`defaultBudget`); the permanent fix is cancellation, above.

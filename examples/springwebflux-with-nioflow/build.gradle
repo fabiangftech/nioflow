@@ -26,9 +26,20 @@ dependencies {
 
     testImplementation 'org.springframework.boot:spring-boot-starter-webflux-test'
     testImplementation 'io.projectreactor:reactor-test'
+
+    // The mechanical proof of the central promise: no blocking call ever reaches
+    // a Netty event loop. OrderEndpointsTest observes thread NAMES; BlockHound
+    // instruments the JVM and observes the actual park. Test scope only — it
+    // never touches core, and never a consumer's runtime.
+    testImplementation 'io.projectreactor.tools:blockhound-junit-platform:1.0.13.RELEASE'
+
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    // BlockHound redefines JDK methods to add its hook; since JDK 13 that needs
+    // saying so. Without it the agent fails to attach and every test here would
+    // pass for the wrong reason.
+    jvmArgs '-XX:+AllowRedefinitionToAddDeleteMethods'
 }

@@ -19,12 +19,20 @@ import java.util.function.UnaryOperator;
 /**
  * The per-request pipeline, with Mono/Flux steps and a Mono terminal.
  * See {@link ReactiveFlow} for why the reactive steps are ordinary stages.
+ *
+ * <p>A pipeline inherits the {@link ReactiveFlow#defaultBudget} of the flow whose
+ * {@code just()} opened it: every reactive step here that declares no budget of
+ * its own gets that one.
  */
 public interface ReactiveStep<T, O> extends NioStep<T, O> {
 
     // ── the reactive steps ───────────────────────────────────────────────
 
-    /** A stage whose work IS a Mono: the virtual worker parks on it. */
+    /**
+     * A stage whose work IS a Mono: the virtual worker parks on it — forever, if
+     * the Mono never completes and no budget (here or as the flow's default)
+     * bounds it. See {@link ReactiveFlow#defaultBudget}.
+     */
     ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call);
 
     /** Same, with the budget on the MONO — see ReactiveFlow#handleMono. */

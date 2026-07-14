@@ -10,6 +10,7 @@ import reactor.core.publisher.Mono;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -35,9 +36,42 @@ import java.util.function.UnaryOperator;
  */
 public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
 
+    // ── the default budget ───────────────────────────────────────────────
+
+    /**
+     * The budget every reactive step of this flow gets when it declares none of
+     * its own — {@code handleMono}, {@code adaptMono}, {@code adaptFlux} and
+     * {@code fanOutMono}, on this flow, in the pipelines its {@code just()}
+     * opens, inside its branches and inside its forks. An explicit per-step
+     * budget always wins.
+     *
+     * <p><b>Declare one if the flow talks to the network.</b> The engine has no
+     * cancellation: a Mono that never completes — a hung connection, a broken
+     * server, a Sinks.One nobody emits into — parks its virtual worker for the
+     * life of the JVM, and nothing can ever free it. A default budget makes that
+     * impossible: the subscription is cancelled (reactor-netty releases the
+     * connection) and the failure reaches {@code recover()} as a
+     * {@link java.util.concurrent.TimeoutException}, exactly like an explicit
+     * {@code handleMono(name, call, budget)}.
+     *
+     * <p>Not mandatory, on purpose: a {@code Mono.just(...)} or an in-memory
+     * cache lookup does not need one, and a legitimately long step (an export, a
+     * slow batch job) would be cut short by a default that was chosen for the
+     * fast path — give that one its own, larger budget.
+     *
+     * <p>Build-time only, and it does not mutate: the returned flow is the same
+     * definition, wrapped with the budget.
+     */
+    ReactiveFlow<I, O> defaultBudget(Duration budget);
+
     // ── the reactive steps ───────────────────────────────────────────────
 
-    /** A stage whose work IS a Mono: the virtual worker parks on it. */
+    /**
+     * A stage whose work IS a Mono: the virtual worker parks on it.
+     *
+     * <p>With no {@link #defaultBudget} declared on the flow, this parks
+     * FOREVER on a Mono that never completes. See defaultBudget.
+     */
     ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call);
 
     /**
@@ -47,6 +81,8 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      * alive on the connection pool. {@code mono.timeout(d)} cancels the
      * subscription, and reactor-netty releases the connection. For a reactive
      * call, this is the timeout you want.
+     *
+     * <p>Overrides the flow's {@link #defaultBudget}, if it declared one.
      */
     ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget);
 
@@ -71,13 +107,49 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      * in flight — flatMap, so the output is UNORDERED. Backpressure IS the
      * concurrency argument: it is the number of executions in flight. Reactor's
      * operator does the request(n) accounting; we do not implement a Publisher.
+     *
+     * <p>One failing element FAILS THE WHOLE STREAM (a recover() inside the
+     * pipeline is the per-element net). For an ingestion loop — Kafka, SSE, a
+     * batch import — that is one poison message stopping the consumer: see
+     * {@link #pipeResilient}.
+     *
+     * @throws IllegalArgumentException if concurrency is below 1 — at build
+     *         time, not at the first element
      */
     <R> Function<Flux<I>, Flux<R>> pipe(int concurrency,
                                         BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline);
 
-    /** Same, but the output order matches the input order (flatMapSequential). */
+    /**
+     * Same, plus Reactor's {@code prefetch}: how many elements the operator
+     * requests upstream ahead of the pipeline. Lower it when the source is eager
+     * and the pipeline is slow, and the default buffer holds more than you want
+     * in memory.
+     */
+    <R> Function<Flux<I>, Flux<R>> pipe(int concurrency, int prefetch,
+                                        BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline);
+
+    /** Same as pipe, but the output order matches the input order (flatMapSequential). */
     <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency,
                                                BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline);
+
+    /** Ordered, with the prefetch — see {@link #pipe(int, int, BiFunction)}. */
+    <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency, int prefetch,
+                                               BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline);
+
+    /**
+     * Like {@link #pipe}, but a failing element does not kill the stream: it is
+     * handed to {@code onElementError} and dropped, and the Flux carries on with
+     * the rest. This is the ingestion-loop shape — one poison message must not
+     * stop the consumer.
+     *
+     * <p>The handler is a parameter and not an overload on purpose: dropping an
+     * element is a decision, so you cannot make it without being handed what you
+     * dropped. The engine's own {@code onError} handlers still see the failure
+     * (once) — this is the stream's net, not a replacement for the flow's.
+     */
+    <R> Function<Flux<I>, Flux<R>> pipeResilient(int concurrency,
+                                                 BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline,
+                                                 BiConsumer<I, Throwable> onElementError);
 
     // ── every NioFlow step, re-declared covariantly ──────────────────────
 

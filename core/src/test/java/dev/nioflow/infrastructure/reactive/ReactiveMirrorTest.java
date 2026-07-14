@@ -40,6 +40,48 @@ class ReactiveMirrorTest {
     }
 
     /**
+     * The other half of the tax, and the one the covariance check has nothing to
+     * say about: the REACTIVE-ONLY steps must exist on the lane too.
+     *
+     * <p>They went out of sync exactly once already — ReactiveStep grew
+     * {@code adaptMono(call, budget)} and ReactiveLane did not, so a remote call
+     * inside a when()/match() branch or a fork body could not take a budget at
+     * all. A pipeline's steps and a lane's steps are the same steps; the only
+     * ones that legitimately live on the step alone are the terminal and the
+     * builders that re-type OUT of the lane's world.
+     */
+    @Test
+    void everyReactiveStepAlsoExistsOnTheLane() {
+        List<String> missing = new ArrayList<>();
+        for (Method method : ReactiveStep.class.getDeclaredMethods()) {
+            if (method.isSynthetic() || !isReactiveOnly(method) || STEP_ONLY.contains(method.getName())) {
+                continue;
+            }
+            try {
+                ReactiveLane.class.getDeclaredMethod(method.getName(), method.getParameterTypes());
+            } catch (NoSuchMethodException absent) {
+                missing.add(signature(method) + " — on ReactiveStep but not on ReactiveLane, so the step is"
+                        + " unreachable inside a when()/match() branch and inside a fork body");
+            }
+        }
+        assertTrue(missing.isEmpty(), "ReactiveStep and ReactiveLane have drifted apart:\n  "
+                + String.join("\n  ", missing));
+    }
+
+    // executeMono is the terminal (a lane has no terminal — it is not an execution).
+    private static final Set<String> STEP_ONLY = Set.of("executeMono");
+
+    /** A step core does not have: the ones this facade adds, and must add everywhere. */
+    private static boolean isReactiveOnly(Method method) {
+        try {
+            NioStep.class.getDeclaredMethod(method.getName(), method.getParameterTypes());
+            return false;
+        } catch (NoSuchMethodException reactiveOnly) {
+            return true;
+        }
+    }
+
+    /**
      * A covariant override is one the mirror re-declares with the same name and
      * parameter types, whose return type is a STRICT subtype of the base one.
      * Terminals that must not change (execute, executeAsync, executeResult)

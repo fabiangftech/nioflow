@@ -107,6 +107,21 @@ class OrderEndpointsTest {
                 });
     }
 
+    @Test
+    void aPoisonElementDoesNotStopTheIngestionLoop() {
+        // "nope" is an unknown order: the pipeline fails it, pipeResilient reports
+        // it to the handler and drops it, and the stream still delivers the rest.
+        // On /orders/pay-all (plain pipe) the same element would fail the response.
+        client.post().uri("/orders/ingest?ids=1,nope,3&concurrency=4")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBodyList(Receipt.class)
+                .value(receipts -> {
+                    assertEquals(2, receipts.size(), "the poison element took the stream with it: " + receipts);
+                    assertTrue(receipts.stream().allMatch(receipt -> "PAID".equals(receipt.status())), "" + receipts);
+                });
+    }
+
     /**
      * The claim the whole example exists to make: YOUR code never runs on a Netty
      * event loop. And the trap that comes with it: an operator chained onto the
