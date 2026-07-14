@@ -129,16 +129,16 @@ final class ChainValidator {
     private static boolean isFallible(Link link) {
         // Background never fails the flow; Recovery only runs on the error path.
         return switch (link) {
-            case Stage ignored -> true;
-            case FanOut ignored -> true;
-            case Batch ignored -> true; // the bulk call can fail every batched value
-            case Decision ignored -> true; // predicates can throw
-            case Filter ignored -> true;
-            case Background ignored -> false;
-            case Recovery ignored -> false;
+            case Stage _ -> true;
+            case FanOut _ -> true;
+            case Batch _ -> true; // the bulk call can fail every batched value
+            case Decision _ -> true; // predicates can throw
+            case Filter _ -> true;
+            case Background _ -> false;
+            case Recovery _ -> false;
             // A fork's failures are its own: they never reach the main line, so
             // a recover() after it has nothing to catch from it.
-            case Fork ignored -> false;
+            case Fork _ -> false;
         };
     }
 

@@ -1148,7 +1148,7 @@ public class DefaultNioEngine implements NioEngine {
                     joinBatch(batch, index + 1, current);
                     return HANDED_OFF;
                 }
-                case Recovery ignored -> {
+                case Recovery _ -> {
                     // Only applies on the error path (see recover)
                 }
             }
