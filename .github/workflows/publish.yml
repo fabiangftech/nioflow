@@ -10,6 +10,20 @@ on:
         description: 'Version to publish (e.g. 1.0.0)'
         required: true
         type: string
+      # A tag ALWAYS publishes both, on one version — that is the lockstep the split
+      # depends on (ReactiveMirrorTest only means something against the core it was
+      # compiled with). This picker exists for the exception: re-publishing one artifact
+      # after a failed half-release, or a fix that touches only the facade. Choosing a
+      # single module is a deliberate act, so it lives here and nowhere else.
+      modules:
+        description: 'What to publish'
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - core
+          - reactive
 
 permissions:
   contents: read
@@ -31,29 +45,39 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      # Tag v1.2.3 -> 1.2.3; manual run takes the version from the input.
-      - name: Resolve version
+      # Tag v1.2.3 -> 1.2.3 and publishes BOTH artifacts; a manual run takes the version
+      # and the module selection from the inputs.
+      - name: Resolve version and modules
         id: resolve
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
+            MODULES="${{ inputs.modules }}"
           else
             VERSION="${GITHUB_REF_NAME#v}"
+            MODULES="both"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing dev.nioflow:nioflow-core:$VERSION and dev.nioflow:nioflow-reactive:$VERSION"
+          echo "core=$([ "$MODULES" = both ] || [ "$MODULES" = core ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "reactive=$([ "$MODULES" = both ] || [ "$MODULES" = reactive ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "Publishing '$MODULES' at version $VERSION"
+          if [ "$MODULES" != both ]; then
+            echo "::warning::Publishing '$MODULES' ALONE. The two artifacts are meant to ship in lockstep — nioflow-reactive is only tested against the core of its own version. Make sure dev.nioflow:nioflow-core:$VERSION already exists on Maven Central, or consumers will resolve a version pair that was never tested together."
+          fi
 
-      # One tag, two artifacts, one version. They ship in lockstep: nioflow-reactive is
-      # compiled and tested against the core in THIS working tree (includeBuild), and
-      # since every dependency it declares is compileOnly, its POM names no artifact at
-      # all — so nothing in this job can be caught resolving a core that Maven Central
-      # has not indexed yet. What ties the two jars together is the tag, not a POM entry.
+      # One version, in lockstep: nioflow-reactive is compiled and tested against the core
+      # in THIS working tree (includeBuild), and since every dependency it declares is
+      # compileOnly, its POM names no artifact at all — so nothing in this job can be
+      # caught resolving a core that Maven Central has not indexed yet. What ties the two
+      # jars together is the tag, not a POM entry.
 
       - name: Test core
+        if: steps.resolve.outputs.core == 'true'
         working-directory: core
         run: ./gradlew test
 
       - name: Publish core
+        if: steps.resolve.outputs.core == 'true'
         working-directory: core
         # The signing key travels base64-encoded: a single-line secret cannot be
         # mangled by line wrapping or CRLF the way an armored block can.
@@ -75,10 +99,12 @@ jobs:
       # source the step above just published. A release cannot ship a core step whose
       # reactive override is missing.
       - name: Test reactive
+        if: steps.resolve.outputs.reactive == 'true'
         working-directory: reactive
         run: ./gradlew test
 
       - name: Publish reactive
+        if: steps.resolve.outputs.reactive == 'true'
         working-directory: reactive
         run: |
           KEY="$(printf '%s' "$GPG_SIGNING_KEY_BASE64" | base64 -d)"
