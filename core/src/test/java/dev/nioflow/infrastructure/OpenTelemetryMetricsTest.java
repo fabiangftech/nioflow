@@ -101,6 +101,43 @@ class OpenTelemetryMetricsTest {
         engine.shutdown(Duration.ofMillis(200));
     }
 
+    /**
+     * Detached sub-flows export apart from the request that spawned them: their
+     * latency is not the request's, so it must not pollute
+     * nioflow.execution.duration.
+     */
+    @Test
+    void exportsForkMetricsSeparatelyFromTheRequest() {
+        var reader = InMemoryMetricReader.create();
+        var meterProvider = SdkMeterProvider.builder().registerMetricReader(reader).build();
+        var engine = new DefaultNioEngine();
+        engine.metrics(new OpenTelemetryMetrics(meterProvider.get("nioflow-test")));
+
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.fork("audit", sub -> sub.handle("persist", value -> value))
+                .fork("doomed", sub -> sub.handle("boom", value -> {
+                    throw new IllegalStateException("boom");
+                }))
+                .handle("main", value -> value + 1);
+
+        assertEquals(2, flow.just(1).execute());
+        assertEquals(0, engine.shutdown(Duration.ofSeconds(2)), "both forks must drain");
+
+        Map<String, MetricData> metrics = reader.collectAllMetrics().stream()
+                .collect(Collectors.toMap(MetricData::getName, Function.identity()));
+
+        assertEquals(2, sum(metrics, "nioflow.forks.started"), () -> "started: " + metrics.keySet());
+        assertEquals(1, sum(metrics, "nioflow.forks.failed"), () -> "failed: " + metrics.keySet());
+        assertTrue(metrics.containsKey("nioflow.fork.duration"), () -> "duration: " + metrics.keySet());
+        assertTrue(metrics.containsKey("nioflow.fork.in_flight"), () -> "gauge: " + metrics.keySet());
+
+        // The request is ONE execution — a fork is not one.
+        assertEquals(1, sum(metrics, "nioflow.executions.completed"));
+        assertEquals(0, sum(metrics, "nioflow.executions.failed"));
+
+        meterProvider.close();
+    }
+
     private static long sum(Map<String, MetricData> metrics, String name) {
         MetricData data = metrics.get(name);
         if (data == null) {

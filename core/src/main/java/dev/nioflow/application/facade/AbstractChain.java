@@ -52,6 +52,15 @@ abstract class AbstractChain<X> {
 
     abstract String anonymousName(String prefix);
 
+    /**
+     * True only for the shared definition, whose links ARE the engine's live
+     * chain. A per-request pipeline and a fork's sub-chain build somewhere else,
+     * which is what makes a named region meaningless for them — see embed(name).
+     */
+    boolean buildsSharedChain() {
+        return false;
+    }
+
     void stage(String name, UnaryOperator<X> function) {
         appendLink(new Stage(name, asObjectFunction(function), false, null, null, guards()));
     }
@@ -218,6 +227,16 @@ abstract class AbstractChain<X> {
      * identity) so spliceRegion can swap it atomically later.
      */
     <R> void embed(String region, Segment<X, R> segment) {
+        // A region exists to be spliced at runtime, which only the shared chain
+        // can be. Elsewhere (a per-request pipeline, a fork's sub-chain) the
+        // links land off the engine's chain, so the span below would measure
+        // nothing and report the segment as "empty" — a lie. Say the truth
+        // instead.
+        if (!buildsSharedChain()) {
+            throw new IllegalStateException("Region '" + region + "' cannot be declared here: named regions"
+                    + " exist to be spliced at runtime, so they only live on the shared definition."
+                    + " Use the unnamed use(segment) inside a per-request pipeline or a fork.");
+        }
         List<Link> before = engine().chain();
         segment.define(new DefaultLane<>(this));
         List<Link> after = engine().chain();

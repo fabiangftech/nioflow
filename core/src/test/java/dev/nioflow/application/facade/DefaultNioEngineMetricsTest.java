@@ -31,6 +31,10 @@ class DefaultNioEngineMetricsTest {
         final List<String> recoveries = new CopyOnWriteArrayList<>();
         final List<String> retries = new CopyOnWriteArrayList<>();
         final List<Integer> queueDepths = new CopyOnWriteArrayList<>();
+        final List<String> forksStarted = new CopyOnWriteArrayList<>();
+        final List<String> forksCompleted = new CopyOnWriteArrayList<>();
+        final List<String> forksFailed = new CopyOnWriteArrayList<>();
+        final List<Integer> forkGauge = new CopyOnWriteArrayList<>();
 
         @Override
         public void executionCompleted(long nanos) {
@@ -71,6 +75,26 @@ class DefaultNioEngineMetricsTest {
         @Override
         public void queueDepth(int pending) {
             queueDepths.add(pending);
+        }
+
+        @Override
+        public void forkStarted(String fork) {
+            forksStarted.add(fork);
+        }
+
+        @Override
+        public void forkCompleted(String fork, long nanos) {
+            forksCompleted.add(fork);
+        }
+
+        @Override
+        public void forkFailed(String fork, Throwable error, long nanos) {
+            forksFailed.add(fork);
+        }
+
+        @Override
+        public void forksInFlight(int running) {
+            forkGauge.add(running);
         }
     }
 
@@ -231,5 +255,57 @@ class DefaultNioEngineMetricsTest {
 
         assertEquals(1, metrics.completed.get());   // the second execution reported nothing
         engine.shutdown(Duration.ofMillis(200));
+    }
+
+    /**
+     * A fork reports apart from the request that spawned it: its latency is NOT
+     * the request's (the response never waited for it), so it must never land in
+     * the execution histogram. Its stages, on the other hand, are ordinary stages
+     * and report as such — which is a main reason to prefer fork over a
+     * hand-rolled background.
+     */
+    @Test
+    void aForkReportsThroughTheForkHooksAndNotAsAnExecution() {
+        var metrics = new RecordingMetrics();
+        var engine = new DefaultNioEngine();
+        engine.metrics(metrics);
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.fork("audit", sub -> sub.handle("persist", value -> value * 2));
+        flow.handle("main", value -> value + 1);
+
+        assertEquals(2, flow.just(1).execute());
+        assertEquals(0, engine.shutdown(Duration.ofSeconds(2)), "the fork must drain");
+
+        // ONE execution (the request), ONE fork — not two executions.
+        assertEquals(1, metrics.completed.get());
+        assertEquals(List.of("audit"), metrics.forksStarted);
+        assertEquals(List.of("audit"), metrics.forksCompleted);
+        assertTrue(metrics.forksFailed.isEmpty());
+        // The fork's stage is a stage like any other.
+        assertTrue(metrics.stages.contains("persist"), () -> "stages: " + metrics.stages);
+        assertTrue(metrics.stages.contains("main"), () -> "stages: " + metrics.stages);
+        // The gauge went up and came back down.
+        assertEquals(1, metrics.forkGauge.get(0));
+        assertEquals(0, metrics.forkGauge.get(metrics.forkGauge.size() - 1));
+    }
+
+    @Test
+    void anUnrecoveredForkFailureReportsForkFailedAndNotExecutionFailed() {
+        var metrics = new RecordingMetrics();
+        var engine = new DefaultNioEngine();
+        engine.metrics(metrics);
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.fork("doomed", sub -> sub.handle("boom", value -> {
+            throw new IllegalStateException("fork blew up");
+        }));
+        flow.handle("main", value -> value + 1);
+
+        assertEquals(2, flow.just(1).execute());   // the caller never sees it
+        assertEquals(0, engine.shutdown(Duration.ofSeconds(2)));
+
+        assertEquals(List.of("doomed"), metrics.forksFailed);
+        assertTrue(metrics.forksCompleted.isEmpty());
+        assertEquals(1, metrics.completed.get());  // the REQUEST completed...
+        assertEquals(0, metrics.failed.get());     // ...and nothing failed at execution level
     }
 }

@@ -3,6 +3,7 @@ package dev.nioflow.application.facade;
 import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.Context.Key;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.Fork;
@@ -431,6 +432,119 @@ class DefaultNioFlowForkTest extends EngineTestSupport {
         assertTrue(fork.chain().stream().allMatch(link -> link.guards().stream()
                 .allMatch(guard -> guard.decision() == inner.id())),
                 "every guard inside the fork names a decision declared inside the fork");
+    }
+
+    /**
+     * Decision compaction has to rewrite the guards of EVERY link kind, not just
+     * stages: the ids inside a fork are private, so they are renumbered to
+     * 0..n-1, and each guarded link has to be rebuilt carrying the new ids. A
+     * link kind missed by that switch would silently keep a stale id and stop
+     * matching its own decision — the branch would go dead. So the sub-flow here
+     * puts one of every guarded kind inside a lane.
+     */
+    @Test
+    void compactionRewritesTheGuardsOfEveryLinkKind() throws InterruptedException {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        // Burn engine-wide ids first, so the fork's own ids really are renumbered.
+        flow.when(value -> value > 0).then(lane -> lane.handle(value -> value));
+        CountDownLatch done = new CountDownLatch(1);
+        ConcurrentLinkedQueue<Object> seen = new ConcurrentLinkedQueue<>();
+        List<Function<Integer, Integer>> branches = List.of(value -> value, value -> 1);
+
+        flow.fork("everything", sub -> sub
+                .when(value -> value > 10)
+                    .then(lane -> lane
+                            .filter(value -> value > 0)                     // guarded Filter
+                            .background("effect", seen::add)                // guarded Background
+                            .fanOut("split", branches,
+                                    results -> results.get(0) + results.get(1))   // guarded FanOut
+                            .batch("bulk", 1, Duration.ofMillis(50),
+                                    values -> values.stream().map(value -> value + 1).toList())  // guarded Batch
+                            .fork("nested", inner -> inner.handle("deep", value -> value))       // guarded Fork
+                            .handle("boom", value -> {
+                                throw new IllegalStateException("caught in-lane");
+                            })
+                            .recover("in-lane", error -> -1))               // guarded Recovery
+                    .otherwise(lane -> lane.handle("small", value -> -999))
+                .handle("done", value -> {
+                    seen.add(value);
+                    done.countDown();
+                    return value;
+                }));
+        engine.seal();
+
+        flow.just(42).execute();
+
+        assertTrue(done.await(3, TimeUnit.SECONDS), () -> "the fork ran: " + seen);
+        // 42 -> guarded lane -> fanOut(42, 1) = 43 -> batch +1 = 44 -> boom -> recover -> -1
+        assertTrue(seen.contains(-1), () -> "every guarded link ran with its renumbered id: " + seen);
+    }
+
+    /** The no-op defaults of the metrics SPI: a sink that overrides nothing. */
+    @Test
+    void aMetricsSinkThatOverridesNothingStillWorks() {
+        engine.metrics(new NioFlowMetrics() {
+        });
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.fork("audit", sub -> sub.handle("persist", value -> value));
+        // A failing fork too: the default forkFailed() must swallow it quietly.
+        flow.fork("doomed", sub -> sub.handle("boom", value -> {
+            throw new IllegalStateException("boom");
+        }));
+        flow.handle("main", value -> value + 1);
+
+        assertEquals(2, flow.just(1).execute());
+        assertEquals(0, engine.shutdown(Duration.ofSeconds(2)));
+    }
+
+    /** fork() reached through a branch object (the delegate plumbing). */
+    @Test
+    void forkChainedOnABranchIsMainLine() throws InterruptedException {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        CountDownLatch forks = new CountDownLatch(2);
+
+        flow.when(value -> value > 10)
+                .then(lane -> lane.handle("big", value -> value))
+                // Chained ON the Branch: unguarded, so it forks for EVERY value.
+                .fork(sub -> sub.handle("anon", value -> {
+                    forks.countDown();
+                    return value;
+                }))
+                .fork("named", sub -> sub.handle("named-fork", value -> {
+                    forks.countDown();
+                    return value;
+                }));
+        engine.seal();
+
+        flow.just(3).execute();   // does not take the lane, still forks twice
+
+        assertTrue(forks.await(3, TimeUnit.SECONDS), "both forks are on the main line");
+    }
+
+    /** fork() and with() reached through a per-request branch object. */
+    @Test
+    void forkAndWithChainedOnAStepBranch() throws InterruptedException {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        CountDownLatch forked = new CountDownLatch(2);
+        Key<String> trace = Key.of("trace");
+
+        Integer result = flow.just(3)
+                .when(value -> value > 10)
+                    .then(lane -> lane.handle("big", value -> value * 2))
+                .fork(sub -> sub.handle("anon", value -> {
+                    forked.countDown();
+                    return value;
+                }))
+                .fork("named", sub -> sub.handle("named-fork", value -> {
+                    forked.countDown();
+                    return value;
+                }))
+                .with(trace, "abc")
+                .handleContextual("read", (value, ctx) -> value + ctx.get(trace).length())
+                .execute();
+
+        assertEquals(6, result);
+        assertTrue(forked.await(3, TimeUnit.SECONDS));
     }
 
     // Records a Fork link off-chain, the way the flow builder does, so the test

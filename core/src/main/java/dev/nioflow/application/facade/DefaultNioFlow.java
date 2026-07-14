@@ -332,6 +332,12 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
         nioEngine.append(link);
     }
 
+    /** The only chain that IS the engine's — see AbstractChain#embed(String, Segment). */
+    @Override
+    boolean buildsSharedChain() {
+        return true;
+    }
+
     @Override
     List<Guard> guards() {
         return guards;
