@@ -16,7 +16,7 @@ series (split from two earlier monolithic drafts so each idea stands on its own)
 | [0006](0006-async-stage.md) | `AsyncStage`: the stage that does not park | ✅ Implemented | core | 0002 |
 | [0007](0007-cancellation.md) | Cooperative cancellation | ✅ Implemented | core | 0006 |
 | [0008](0008-reactive-module.md) | `nioflow-reactive` as its own artifact | ✅ Implemented | reactive | 0002, 0005, 0006, 0007 |
-| [0009](0009-boss-event-loop.md) | Boss event loop (MPSC + spin-park) + uncontended counters | 📝 Proposed | core | — |
+| [0009](0009-boss-event-loop.md) | Boss event loop (MPSC + spin-park) + uncontended counters | ✅ Implemented | core | — |
 | [0010](0010-terminal-on-the-worker.md) | The last hop: complete on the worker | 📝 Proposed | core | 0007 |
 | [0011](0011-per-request-plan.md) | A dispatch plan for per-request pipelines | 📝 Proposed | core | — |
 | [0012](0012-lock-free-fanout.md) | Lock-free fan-out + `fanOutAsync` | 📝 Proposed | core | — |
@@ -52,7 +52,7 @@ flowchart TD
     R0007 --> R0008
 
     %% ── proposed core (0009–0013) ──
-    R0009["0009 Boss event loop"]:::prop
+    R0009["0009 Boss event loop"]:::done
     R0010["0010 Terminal on worker"]:::prop
     R0011["0011 Per-request plan"]:::prop
     R0012["0012 Lock-free fan-out"]:::prop

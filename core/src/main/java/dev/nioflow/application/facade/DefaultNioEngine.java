@@ -46,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -92,7 +93,10 @@ public class DefaultNioEngine implements NioEngine {
         ThreadFactory factory = Thread.ofPlatform().name(namePrefix, 0).daemon(true).factory();
         ExecutorService[] bosses = new ExecutorService[count];
         for (int i = 0; i < bosses.length; i++) {
-            bosses[i] = Executors.newSingleThreadExecutor(factory);
+            // A purpose-built single-consumer event loop, not a ThreadPoolExecutor:
+            // handoffs to a busy boss cost an atomic swap, not a lock plus an
+            // unpark syscall. See BossLoop.
+            bosses[i] = new BossLoop(factory);
         }
         return bosses;
     }
@@ -100,7 +104,6 @@ public class DefaultNioEngine implements NioEngine {
     private final ExecutorService[] bossExecutorServices;
     private final ExecutorService workersExecutorService;
     private final boolean ownsExecutors;
-    private final AtomicInteger bossCursor = new AtomicInteger();
 
     // Backpressure for inject/await: permits are acquired BEFORE the execution
     // starts and released when await() collects the result — the bounded
@@ -116,14 +119,17 @@ public class DefaultNioEngine implements NioEngine {
     private final AtomicReference<NioFlowMetrics> metrics = new AtomicReference<>();
 
     // Graceful drain: closed rejects new work; activeExecutions tracks
-    // in-flight ones so shutdown() can wait for them to finish.
+    // in-flight ones so shutdown() can wait for them to finish. A LongAdder,
+    // not an AtomicInteger: it is bumped for every execution and every fork on
+    // one JVM-wide cacheline, and striping it removes that contention from the
+    // hot path. The cost is that the zero transition is no longer atomically
+    // observable, so awaitDrain polls sum() (a cold path — shutdown only).
     private volatile boolean closed;
-    private final AtomicInteger activeExecutions = new AtomicInteger();
+    private final LongAdder activeExecutions = new LongAdder();
     // Detached sub-flows currently running. They are counted in
     // activeExecutions too (the drain must wait for them); this one only feeds
     // the forksInFlight gauge.
     private final AtomicInteger activeForks = new AtomicInteger();
-    private final Object drainLock = new Object();
 
     /**
      * The chain and the plan compiled for it are ONE value, swapped atomically:
@@ -321,7 +327,7 @@ public class DefaultNioEngine implements NioEngine {
         CompiledChain plan = current.links() == chain ? current.plan() : null;
         Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
                 plan != null ? chain : List.copyOf(chain), context, plan, input, key, null);
-        activeExecutions.incrementAndGet();
+        activeExecutions.increment();
         try {
             execution.boss.execute(execution);
         } catch (RejectedExecutionException rejected) {
@@ -570,21 +576,19 @@ public class DefaultNioEngine implements NioEngine {
 
     private int awaitDrain(Duration gracePeriod) {
         long deadline = System.nanoTime() + gracePeriod.toNanos();
-        synchronized (drainLock) {
-            while (activeExecutions.get() > 0) {
-                long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-                if (remainingMillis <= 0) {
-                    break;
-                }
-                try {
-                    drainLock.wait(remainingMillis);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
+        // Poll instead of wait/notify: a LongAdder cannot signal its zero
+        // transition, and this is the shutdown path — millisecond latency here
+        // is invisible. The contract is unchanged: 0 returned means every
+        // execution has fully reported.
+        while (activeExecutions.sum() > 0 && System.nanoTime() < deadline) {
+            try {
+                TimeUnit.MILLISECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             }
         }
-        return activeExecutions.get();
+        return Math.toIntExact(Math.max(0, activeExecutions.sum()));
     }
 
     // Error handlers never break the engine or each other: one throwing
@@ -604,17 +608,26 @@ public class DefaultNioEngine implements NioEngine {
         return keyLanes.size();
     }
 
+    // Caller-thread affinity instead of a shared round-robin cursor: no atomic
+    // on the call() path, and a request thread keeps landing on the same boss
+    // (cache locality). Sequential thread ids spread across the pool at least
+    // as evenly as a counter would; execute() is synchronous per thread, so
+    // one producer never floods one boss with concurrent work.
     private ExecutorService nextBoss() {
         if (bossExecutorServices.length == 1) {
             return bossExecutorServices[0];
         }
-        return bossExecutorServices[Math.floorMod(bossCursor.getAndIncrement(), bossExecutorServices.length)];
+        return bossExecutorServices[Math.floorMod(Thread.currentThread().threadId(), bossExecutorServices.length)];
     }
 
     // Deterministic affinity: the same key always lands on the same boss, so
-    // its lane state is only ever touched by one thread — no locks.
+    // its lane state is only ever touched by one thread — no locks. The hash is
+    // spread (as HashMap does) so keys with clustered low bits — a Long id, a
+    // sequential order number — do not all serialize onto one boss.
     private ExecutorService bossFor(Object key) {
-        return bossExecutorServices[Math.floorMod(key.hashCode(), bossExecutorServices.length)];
+        int h = key.hashCode();
+        h ^= (h >>> 16);
+        return bossExecutorServices[Math.floorMod(h, bossExecutorServices.length)];
     }
 
     private static int anchorIndex(List<Link> links, String anchor) {
@@ -1084,11 +1097,10 @@ public class DefaultNioEngine implements NioEngine {
                     reportExecution(value, error);
                 }
             } finally {
-                if (activeExecutions.decrementAndGet() == 0) {
-                    synchronized (drainLock) {
-                        drainLock.notifyAll();
-                    }
-                }
+                // Released last: "in flight" means "not fully reported yet", so
+                // a clean drain guarantees every metric and handler already ran.
+                // awaitDrain observes the decrement by polling sum().
+                activeExecutions.decrement();
             }
         }
 
@@ -1171,7 +1183,7 @@ public class DefaultNioEngine implements NioEngine {
                     plan == null ? null : plan.forkPlans().get(fork), value, null, fork);
             // Both counters BEFORE the submission: a fork is in-flight work, so
             // shutdown(grace) must wait for it even if it is still queued.
-            activeExecutions.incrementAndGet();
+            activeExecutions.increment();
             int running = activeForks.incrementAndGet();
             if (child.metrics != null) {
                 child.metrics.forkStarted(fork.name());

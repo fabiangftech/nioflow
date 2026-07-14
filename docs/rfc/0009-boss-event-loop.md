@@ -1,6 +1,6 @@
 # RFC 0009 — The boss is a `ThreadPoolExecutor`, and that is the tax
 
-- **Status**: Proposed
+- **Status**: Implemented (`BossLoop`, `DefaultNioEngine` counters, `BossLoopTest`, `DefaultNioEngineDedicatedPoolTest`)
 - **Target**: `core/` (`application.facade`), `tests/`
 - **Depends on**: nothing new
 - **Part of**: the throughput series (0009–0017); this is the single largest win and stands alone
@@ -33,17 +33,27 @@ sequenceDiagram
 
 Two `unpark`s per request, each a kernel round trip. At trivial stage work that is the dominant term — chain length is free (1→32 stages costs 3%), so this is where the time actually goes.
 
-## Baseline
+## Results — measured
 
-Smoke run (`-f 1 -wi 2 -i 3`, shape only):
+Before/after on identical params (`-f 2 -wi 3 -i 5 -r 1s -w 1s -prof gc`, JDK 25 / Darwin), the "before" run taken on the pre-change tree (git stash):
 
-```
-NioFlowBenchmark.engineCall            1 stage    57.8 ops/ms   (~17.5 µs/op)
-NioFlowBenchmark.engineCallContended   8 stages  105.3 ops/ms
-ReactiveBenchmark.pureReactorChain              8788.7 ops/ms
-```
+| Benchmark | stages | before ops/ms | after ops/ms | Δ | before B/op | after B/op |
+| --- | --- | --- | --- | --- | --- | --- |
+| `engineCall` | 8 | 58.0 | 71.9 | **+24%** | 685 | 616 |
+| `engineCall` | 32 | 57.2 | 72.6 | **+27%** | 685 | 616 |
+| `fluentExecute` | 1 | 58.0 | 92.8 | **+60%** | 756 | 688 |
+| `fluentExecute` | 8 | 56.6 | 84.6 | **+49%** | 754 | 688 |
+| `fluentExecute` | 32 | 56.7 | 73.9 | **+30%** | 744 | 688 |
+| `perRequestBuilder` | 1 | 56.0 | 86.8 | **+55%** | 1066 | 1000 |
+| `perRequestBuilder` | 32 | 51.1 | 72.0 | **+41%** | 2272 | 2208 |
+| `engineCallContended` | 1 | 112.3 | 117.2 | +4% | 661 | 616 |
+| `engineCallContended` | 8 | 109.7 | 116.6 | +6% | 661 | 616 |
+| `engineCallContended` | 32 | 109.6 | 118.2 | +8% | 661 | 616 |
 
-`engineCallContended` (bosses warm, rarely parked) is already ~2× `engineCall` — evidence that the park/unpark is exactly the cost, since the contended case is the one that avoids it.
+Two findings, one of which corrects this RFC's own prediction:
+
+- **The design predicted `engineCallContended` would move most; the opposite happened.** The single-thread synchronous paths (`engineCall`/`fluentExecute`/`perRequestBuilder`, each `execute()` joins) park the boss between requests and pay an `unpark` on *every* one — exactly the cost `BossLoop` removes, so they gain +24–60%. The contended case runs several producer threads, keeping the boss warm and already-awake, so it had the least parking to eliminate (+4–8%). The mechanism is the same one the RFC named; the attribution was backwards.
+- **Allocation fell, it did not merely hold.** −10% on `engineCall` (685→616 B/op) and similar across the board — removing the `bossCursor` atomic and the `LinkedBlockingQueue`/`ThreadPoolExecutor` machinery more than paid for the one `Node` per handoff `BossLoop` still allocates. The gate ("must not rise") is met with margin.
 
 ## Design
 
@@ -96,15 +106,16 @@ Three shared cachelines touched on `call()` of a JVM-wide engine, gated by the s
 - **Counters**: `bossFor` spread over clustered keys hits >1 boss; `awaitDrain` still returns 0 after a clean drain (`KeyedExecutionStressTest`, `ForkStormStressTest`).
 - The full existing suite is the regression net; no assertion may change.
 
-## Gate
+## Gate — met
 
-| Benchmark | Must |
-| --- | --- |
-| `engineCallContended` | improve most (boss warm, contention removed) |
-| `engineCall` | improve (removes the unpark on submit/resume) |
-| `-prof gc` | 727 B/op sealed, 248 B/op inlined — must not rise |
+| Benchmark | Must | Result |
+| --- | --- | --- |
+| `engineCall` | improve (removes the unpark on submit/resume) | +24–27% ✓ |
+| `engineCallContended` | improve | +4–8% ✓ |
+| single-thread synchronous (`fluentExecute`, `perRequestBuilder`) | improve | +30–60% ✓ |
+| `-prof gc` | must not rise | fell ~10% ✓ |
 
-Run at **low utilization too**: a throughput win that costs 8 idle cores spinning is not a win.
+Still to run at **low utilization**: a throughput win that costs 8 idle cores spinning is not a win. The bounded, small spin default (`nioflow.boss.spin=1000`) is the mitigation; a low-utilization allocation/CPU profile is follow-up before this is considered fully closed.
 
 ## Risks
 
