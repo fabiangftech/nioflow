@@ -1,6 +1,6 @@
 # RFC 0002 — WebFlux: `Mono` and `Flux` without a bridge
 
-- **Status**: Draft
+- **Status**: Implemented (see `infrastructure.reactive`, `NioStep.with`)
 - **Target**: `core/` (`dev.nioflow.infrastructure`, plus one small addition to `NioStep`), `examples/springwebflux-with-nioflow`
 - **Depends on**: `executeAsync()` (already returns a `CompletableFuture`), the virtual-thread workers, `FlowSignal.FILTERED`, `key()`
 
@@ -315,14 +315,18 @@ orders.handleMono("fraud",   fraud::score,   ofMillis(200))
 
 **Threads.** Those four stages **fuse into one run** (consecutive, no stage timeout — the budget is on the `Mono`, which is exactly why the API pushes you there). So the whole chain travels boss→worker→boss **once**: two thread hops for the four calls, and the four awaits park *the same* virtual worker, one after another. The engine is not paying a hop per remote call.
 
-**Heap.** This is the real cost, and it is the one number that separates nioflow from plain Reactor at scale. A request in flight is:
+Measured (`ReactiveBenchmark`, Monos that resolve immediately, so the score is pure engine overhead): four `handleMono` stages run at **57.1 ops/ms** against **56.0 ops/ms** for the same chain built from four plain `handle`s. A reactive stage costs what a stage costs — the fusion claim is not a hope.
 
-| | Per in-flight request |
+**Heap.** This is the real cost, and it is the one number that separates nioflow from plain Reactor at scale. **Measured** (`ReactiveHeapProbeTest`, 10 000 requests each parked on a Mono that never completes — the shape of a request waiting on a slow downstream):
+
+| | Retained heap per in-flight request |
 | --- | --- |
-| Pure Reactor chain | a few state-machine objects — **hundreds of bytes** |
-| nioflow + `handleMono` | an `Execution` + **a parked virtual thread**, whose stack is retained on the heap while it waits — **kilobytes** |
+| Pure Reactor chain | a few state-machine objects — **215 B** |
+| nioflow + `handleMono` | an `Execution` + **a parked virtual thread**, whose stack is retained while it waits — **3 615 B** |
 
-A parked virtual thread is cheap, not free: its stack chunk lives on the heap for as long as the remote call takes. At 1 000 concurrent requests that is noise. At 100 000 in flight against a slow downstream, "a few KB each" is the difference between a healthy heap and a GC death spiral — the exact scenario reactive programming was invented for.
+**16.8× more.** A parked virtual thread is cheap, not free: its stack chunk lives on the heap for as long as the remote call takes. At 1 000 concurrent requests that is 3.6 MB — noise. At 100 000 in flight against a slow downstream it is **~360 MB against ~21 MB**, which is the difference between a healthy heap and a GC death spiral — the exact scenario reactive programming was invented for.
+
+(The JMH benchmarks cannot see this: their Monos resolve immediately, so nothing ever parks, and allocation *rate* is not *retention*. That is why the number comes from a heap probe and not from `-prof gc`.)
 
 **Latency.** Two hops (~microseconds) per fused run against a remote call measured in *milliseconds*: unmeasurable. Latency is not the trade-off; heap is.
 
@@ -337,7 +341,7 @@ orders.fanOutMono("enrich",
       .handleMono("psp", psp::charge, ofSeconds(2));
 ```
 
-But note what this means for the heap line above: a fan-out of 3 parks **3** virtual threads per request instead of 1.
+But note what this means for the heap line above: a fan-out of 3 parks **3** virtual threads per request instead of 1. Measured: 26.3 ops/ms and 3 496 B/op allocated, against 57.1 ops/ms and 1 112 B/op for the sequential version. Concurrency is not free — it is three workers.
 
 ### So when should you not do this?
 

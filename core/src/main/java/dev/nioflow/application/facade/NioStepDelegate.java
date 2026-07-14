@@ -157,6 +157,11 @@ abstract class NioStepDelegate<T, O> implements NioStep<T, O> {
     }
 
     @Override
+    public <V> NioStep<T, O> with(Context.Key<V> key, V value) {
+        return step().with(key, value);
+    }
+
+    @Override
     public StepCondition<T, O> when(Predicate<T> predicate) {
         return step().when(predicate);
     }

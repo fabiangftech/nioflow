@@ -130,6 +130,19 @@ public interface NioStep<T, O> {
      */
     NioStep<T, O> key(Object key);
 
+    /**
+     * Seeds the per-execution {@link Context} before the pipeline runs, so a
+     * {@code handleContextual} stage can read what the CALLER knew — a trace
+     * id, the authenticated principal, a tenant. Without it the context can
+     * only be written from inside a stage, which is too late for anything the
+     * caller had and the pipeline needs.
+     *
+     * <p>Pay for what you use: the backing map is created on the first
+     * {@code with()}, so a pipeline that never seeds anything allocates
+     * nothing for it.
+     */
+    <V> NioStep<T, O> with(Context.Key<V> key, V value);
+
     StepCondition<T, O> when(Predicate<T> predicate);
 
     StepCases<T, O> match();

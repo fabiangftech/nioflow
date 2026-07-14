@@ -15,7 +15,9 @@ import dev.nioflow.core.model.Retry;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.BiFunction;
@@ -209,6 +211,12 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     }
 
     @Override
+    public <V> NioStep<T, O> with(Context.Key<V> key, V value) {
+        state.putContext(key.name(), value);
+        return this;
+    }
+
+    @Override
     public StepCondition<T, O> when(Predicate<T> predicate) {
         return new DefaultStepCondition<>(this, appendDecision(predicate));
     }
@@ -242,7 +250,11 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
 
     private CompletableFuture<Object> rawFuture() {
         List<Link> chain = state.links != null ? state.links : state.nioEngine.chain();
-        CompletableFuture<Object> raw = state.nioEngine.call(state.seed, null, chain, state.key);
+        // A fresh copy per execution: executeAsync() may be called more than
+        // once (a Mono re-subscribing, a retry), and each run must start from
+        // the seeded context rather than inherit what the previous run wrote.
+        Map<String, Object> context = state.context == null ? null : new HashMap<>(state.context);
+        CompletableFuture<Object> raw = state.nioEngine.call(state.seed, context, chain, state.key);
         if (state.onComplete == null && state.onError == null) {
             // Pay for what you use: no callbacks, no dependent future.
             return raw;
@@ -300,6 +312,9 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
         // null = the shared definition as it is; copied only when local links appear
         private List<Link> links;
         private final Object seed;
+        // Context seeded by with(): null until the first one, so a pipeline
+        // that never seeds anything allocates nothing for it.
+        private Map<String, Object> context;
         private int anonymousLinks;
         // Callbacks scoped to THIS execution (null = none), composed with andThen.
         private Consumer<Object> onComplete;
@@ -317,6 +332,13 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
                 links = new ArrayList<>(nioEngine.chain());
             }
             return links;
+        }
+
+        private void putContext(String name, Object value) {
+            if (context == null) {
+                context = new HashMap<>();
+            }
+            context.put(name, value);
         }
     }
 }
