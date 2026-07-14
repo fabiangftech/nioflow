@@ -48,7 +48,7 @@ class WildcardFlowBeanTest {
 
         String shout(String value) {
             return textFlow.just(value)
-                    .handle(item -> item.toUpperCase())
+                    .handle(String::toUpperCase)
                     .execute();
         }
 

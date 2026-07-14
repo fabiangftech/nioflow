@@ -8,6 +8,8 @@ import dev.nioflow.springwebfluxwithnioflow.client.RemoteClient;
 import dev.nioflow.springwebfluxwithnioflow.model.Order;
 import dev.nioflow.springwebfluxwithnioflow.model.Receipt;
 import dev.nioflow.springwebfluxwithnioflow.repository.OrderRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -25,6 +27,7 @@ import java.util.Objects;
 @Service
 public class OrderService {
 
+    private static final Logger LOG = LoggerFactory.getLogger(OrderService.class);
     private static final Context.Key<String> TRACE = Context.Key.of("traceId");
 
     private final ReactiveFlow<String, Receipt> orders;
@@ -70,8 +73,7 @@ public class OrderService {
                         .adaptMono(remote::notify)                      // Receipt -> Mono<String>: adaptMono re-types,
                         .recover(error -> "notification failed"))       // handleMono would have to give a Receipt back
                 .handleContextual("audit", (receipt, context) -> {
-                    System.out.printf("[%s] order %s -> %s%n",
-                            context.get(TRACE), receipt.orderId(), receipt.status());
+                    LOG.info("[{}] order {} -> {}", context.get(TRACE), receipt.orderId(), receipt.status());
                     return receipt;
                 })
                 .executeMono();

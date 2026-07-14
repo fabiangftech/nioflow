@@ -3,7 +3,6 @@ package dev.nioflow.springwebfluxwithnioflow.config;
 import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.infrastructure.reactive.Reactive;
 import dev.nioflow.infrastructure.reactive.ReactiveFlow;
-import dev.nioflow.springwebfluxwithnioflow.model.Order;
 import dev.nioflow.springwebfluxwithnioflow.model.Receipt;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

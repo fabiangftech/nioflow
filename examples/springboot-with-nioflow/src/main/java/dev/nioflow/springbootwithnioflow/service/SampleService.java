@@ -122,7 +122,7 @@ public class SampleService {
                 .executeResult();
 
         return switch (result) {
-            case FlowResult.Completed<Integer> completed -> Optional.of(completed.value());
+            case FlowResult.Completed<Integer>(Integer scaled) -> Optional.of(scaled);
             case FlowResult.Filtered<Integer> ignored -> Optional.empty();
         };
     }
