@@ -10,6 +10,15 @@ Always think in English and implement in English (code, identifiers, comments, c
 
 Every new feature must ship with unit tests (in `core/`) AND JMH benchmarks (in `tests/`) showing good results: run the relevant benchmarks before and after, compare, and report the numbers. A feature that regresses the hot path is not done — either fix it or surface the trade-off explicitly. Bug-hunting stress tests in `tests/` complement, not replace, functional coverage in core.
 
+**Never skip the static analysis.** Before committing any code change, run SonarLint over every module you touched and fix what your change introduced:
+
+```bash
+tools/sonarlint/run.sh          # core
+tools/sonarlint/run.sh tests    # the benchmarks/stress module
+```
+
+Judge by the DIFF, not the total: the repo carries known findings it violates on purpose (`tools/sonarlint/README.md` lists them — do not "fix" those). To see only what you added, run the same script over a worktree of the previous commit (`git worktree add /tmp/base HEAD~1 && tools/sonarlint/run.sh /tmp/base/core`) and diff `tools/sonarlint/build/issues.json`. New issues in your files get fixed before the commit; if one is a deliberate design decision, it goes in that README with the reason.
+
 ## Project
 
 nio-flow is a Java concurrency library: a fluent, typed pipeline API (`NioFlow<I, O>` for the shared definition, `NioStep<T, O>` for the per-request pipeline) over an event-loop engine (a pool of boss threads orchestrates — each execution pinned to one boss — while virtual-thread workers run user code). Zero required runtime dependencies (Resilience4j and OpenTelemetry are `compileOnly` integrations). Requires a modern JDK — uses virtual threads and pattern matching over sealed types; developed on JDK 25.

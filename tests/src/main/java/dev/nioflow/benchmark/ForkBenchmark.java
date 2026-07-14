@@ -13,6 +13,8 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Consumer;
 
 /**
  * What a detached fork costs the MAIN LINE — the only cost that matters, since
@@ -102,7 +104,7 @@ public class ForkBenchmark {
         return forkHeavy.just(1).execute();
     }
 
-    private static NioFlow<Integer, Integer> sealed(java.util.function.Consumer<NioFlow<Integer, Integer>> define) {
+    private static NioFlow<Integer, Integer> sealed(Consumer<NioFlow<Integer, Integer>> define) {
         NioEngine engine = new DefaultNioEngine();
         NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
         define.accept(flow);
@@ -110,16 +112,17 @@ public class ForkBenchmark {
         return flow;
     }
 
-    // Blackhole-ish sinks: keep the fork's work from being optimized away
-    // without adding cost the main line could be blamed for.
-    private static int consumed;
+    // Blackhole-ish sink: keeps the fork's work from being optimized away
+    // without adding cost the main line could be blamed for. An adder, not a
+    // plain field: the forks write it from many virtual workers at once.
+    private static final LongAdder CONSUMED = new LongAdder();
 
     private static void sink(Integer value) {
-        consumed += value;
+        CONSUMED.add(value);
     }
 
     private static Integer consume(Integer value) {
-        consumed += value;
+        CONSUMED.add(value);
         return value;
     }
 

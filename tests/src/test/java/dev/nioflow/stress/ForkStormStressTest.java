@@ -14,7 +14,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Fork storm: many concurrent requests, each detaching several sub-flows that
@@ -32,7 +31,7 @@ class ForkStormStressTest {
     private static final int FORKS_PER_REQUEST = 3;
 
     @Test
-    void forksNeverFailNorHangTheRequestsThatSpawnedThem() throws Exception {
+    void forksNeverFailNorHangTheRequestsThatSpawnedThem() {
         var engine = new DefaultNioEngine();
         var forksRun = new AtomicInteger();
         var forkFailures = new AtomicInteger();
@@ -98,7 +97,7 @@ class ForkStormStressTest {
     }
 
     @Test
-    void aForkThatAlwaysFailsNeverBreaksTheMainLine() throws Exception {
+    void aForkThatAlwaysFailsNeverBreaksTheMainLine() {
         var engine = new DefaultNioEngine();
         var reported = new AtomicInteger();
         NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
@@ -119,8 +118,7 @@ class ForkStormStressTest {
         }
 
         assertEquals(0, engine.shutdown(Duration.ofSeconds(20)));
-        assertTrue(reported.get() == requests,
-                "each unrecovered fork failure reports once to onError, got " + reported.get());
+        assertEquals(requests, reported.get(), "each unrecovered fork failure reports once to onError");
     }
 
     private static void awaitQuietly(CountDownLatch latch) {

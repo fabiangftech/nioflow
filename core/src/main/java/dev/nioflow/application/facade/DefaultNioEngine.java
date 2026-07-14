@@ -617,19 +617,6 @@ public class DefaultNioEngine implements NioEngine {
             int size = links.size();
             Link[][] runs = new Link[size][];
             int[] runEnds = new int[size];
-            // A fork's sub-chain is immutable, so it compiles once with the
-            // chain that carries it: the child dispatches off a real plan
-            // instead of interpreting. Keyed by link IDENTITY (two structurally
-            // equal forks are still two different links).
-            Map<Fork, CompiledChain> forkPlans = null;
-            for (int i = 0; i < size; i++) {
-                if (links.get(i) instanceof Fork fork) {
-                    if (forkPlans == null) {
-                        forkPlans = new IdentityHashMap<>();
-                    }
-                    forkPlans.put(fork, compile(fork.chain()));
-                }
-            }
             for (int i = 0; i < size; i++) {
                 // No window starts at a sync stage: advance inlines it on the
                 // boss and never dispatches there (validated chains can't
@@ -648,7 +635,26 @@ public class DefaultNioEngine implements NioEngine {
                 }
             }
             return new CompiledChain(links, runs, runEnds, DefaultNioEngine.maxDecisionId(links),
-                    forkPlans == null ? Map.of() : forkPlans);
+                    compileForks(links));
+        }
+
+        /**
+         * A fork's sub-chain is immutable, so it compiles once with the chain
+         * that carries it: the child dispatches off a real plan instead of
+         * interpreting. Keyed by link IDENTITY (two structurally equal forks
+         * are still two different links).
+         */
+        private static Map<Fork, CompiledChain> compileForks(List<Link> links) {
+            Map<Fork, CompiledChain> plans = null;
+            for (int i = 0; i < links.size(); i++) {
+                if (links.get(i) instanceof Fork fork) {
+                    if (plans == null) {
+                        plans = new IdentityHashMap<>();
+                    }
+                    plans.put(fork, compile(fork.chain()));
+                }
+            }
+            return plans == null ? Map.of() : plans;
         }
 
         // The record's generated equals/hashCode/toString would compare the two
@@ -1127,11 +1133,9 @@ public class DefaultNioEngine implements NioEngine {
                     Object snapshot = current;
                     workersExecutorService.execute(() -> runBackground(background, snapshot));
                 }
-                case Fork fork -> {
-                    // Detaches a child execution and keeps walking with the SAME
-                    // value: the main line never waits for a fork.
-                    spawnFork(fork, current);
-                }
+                // Detaches a child execution and keeps walking with the SAME
+                // value: the main line never waits for a fork.
+                case Fork fork -> spawnFork(fork, current);
                 case FanOut fanOut -> {
                     // the join resumes on the boss when all branches finish
                     dispatchFanOut(fanOut, index + 1, current);
