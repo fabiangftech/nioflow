@@ -3,9 +3,11 @@ package dev.nioflow.application.facade;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.model.Decision;
 import dev.nioflow.core.model.Recovery;
+import dev.nioflow.core.model.Retry;
 import dev.nioflow.core.model.Stage;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -69,6 +71,71 @@ class DefaultNioEngineRecoveryTest extends EngineTestSupport {
     }
 
     /**
+     * A stage may fail with a CompletionException wrapping the real cause —
+     * a CompletableFuture-shaped failure the engine itself produces (a retried
+     * stage that exhausts its attempts rethrows the last one that way), and the
+     * shape the reactive facade uses for a Mono's checked failure.
+     *
+     * <p>recover() must see the CAUSE, not the wrapper — and it must see the
+     * same thing whether or not the recovery happened to fuse with the stage.
+     * The dispatched path unwraps; the fused one used to hand the wrapper over,
+     * so a mono.timeout() reached recover() as a CompletionException while an
+     * identical stage timeout reached it as a TimeoutException.
+     */
+    @Test
+    void aFusedRecoverySeesTheCauseNotItsCompletionExceptionWrapper() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        var seen = new AtomicReference<Throwable>();
+        flow.handle("boom", value -> {
+                    throw new CompletionException(new IOException("connection reset"));
+                })                                     // no timeout: fuses with the recovery
+                .recover("net", error -> {
+                    seen.set(error);
+                    return -1;
+                });
+
+        assertEquals(-1, flow.just(1).execute());
+        assertInstanceOf(IOException.class, seen.get());
+    }
+
+    @Test
+    void aDispatchedRecoverySeesTheSameCause() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        var seen = new AtomicReference<Throwable>();
+        flow.handle("boom", value -> {
+                    throw new CompletionException(new IOException("connection reset"));
+                }, Duration.ofSeconds(2))              // timeout stage: dispatched alone, recovery unfused
+                .recover("net", error -> {
+                    seen.set(error);
+                    return -1;
+                });
+
+        assertEquals(-1, flow.just(1).execute());
+        assertInstanceOf(IOException.class, seen.get());
+    }
+
+    /**
+     * Exhausting the retries rewraps the last failure, so a wrapped cause would
+     * come out doubly wrapped: unwrapping only one layer still left recover()
+     * holding a CompletionException.
+     */
+    @Test
+    void aRetriedStageUnwrapsTheCauseItRewrapped() {
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        var seen = new AtomicReference<Throwable>();
+        flow.handle("boom", value -> {
+                    throw new CompletionException(new IOException("connection reset"));
+                }, Retry.of(2, Duration.ofMillis(5)))
+                .recover("net", error -> {
+                    seen.set(error);
+                    return -1;
+                });
+
+        assertEquals(-1, flow.just(1).execute());
+        assertInstanceOf(IOException.class, seen.get());
+    }
+
+    /**
      * Recoveries are positional INSIDE a fused run too: when the first one
      * throws while handling the failure, the scan continues forward through
      * the run and the next recovery picks the new failure up.
@@ -122,5 +189,25 @@ class DefaultNioEngineRecoveryTest extends EngineTestSupport {
                 .recover("net", error -> -1);
 
         assertEquals(-1, flow.just(1).execute());
+    }
+
+    @Test
+    void aRecoveryAfterExhaustedRetriesSeesTheStagesOwnException() {
+        // No Reactor anywhere: a plain retried stage that runs out of attempts.
+        // applyStage rethrows the last failure inside a CompletionException, so a
+        // FUSED recovery used to get the wrapper instead of the IllegalStateException.
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        var seen = new AtomicReference<Throwable>();
+        flow.handle("flaky", value -> {
+                    throw new IllegalStateException("downstream is down");
+                }, Retry.of(2, Duration.ofMillis(5)))
+                .recover("net", error -> {
+                    seen.set(error);
+                    return -1;
+                });
+
+        assertEquals(-1, flow.just(1).execute());
+        assertInstanceOf(IllegalStateException.class, seen.get());
+        assertEquals("downstream is down", seen.get().getMessage());
     }
 }

@@ -594,8 +594,19 @@ public class DefaultNioEngine implements NioEngine {
         return max;
     }
 
+    /**
+     * The failure a Recovery (and the caller's future) must see: the cause, not
+     * the CompletableFuture plumbing around it. Loops, because the wrappers
+     * nest — a retried stage rethrows its last failure in a CompletionException,
+     * and that failure may already be one (the reactive facade wraps a Mono's
+     * checked failure that way).
+     */
     private static Throwable unwrap(Throwable error) {
-        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+        Throwable cause = error;
+        while (cause instanceof CompletionException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return cause;
     }
 
     /**
@@ -1265,7 +1276,11 @@ public class DefaultNioEngine implements NioEngine {
                     // next Recovery; a throwing recovery keeps scanning with the
                     // new failure; with none left, escape the run (the boss then
                     // scans the rest of the chain from the run's end).
-                    Throwable pending = error;
+                    //
+                    // Unwrapped, exactly as the dispatched path does before it
+                    // calls recover(): what a recovery sees must not depend on
+                    // whether it happened to fuse with the stage that failed.
+                    Throwable pending = unwrap(error);
                     int next = i + 1;
                     boolean recovered = false;
                     while (next < run.length) {
@@ -1278,7 +1293,7 @@ public class DefaultNioEngine implements NioEngine {
                                 recovered = true;
                                 break;
                             } catch (Throwable failure) {
-                                pending = failure;
+                                pending = unwrap(failure);
                             }
                         }
                         next++;
