@@ -1,6 +1,7 @@
 package dev.nioflow.infrastructure.reactive;
 
 import reactor.core.Exceptions;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -64,6 +65,35 @@ final class Blocking {
                 throw runtime;
             }
             throw new CompletionException(cause);
+        }
+    }
+
+    /**
+     * Collects a Flux into a List that CANNOT be bigger than the cap.
+     *
+     * <p>{@code take(maxItems + 1)} cancels the source the moment the bound is
+     * exceeded, so an overrun costs one extra element — not the rest of a stream
+     * that may have ten million of them. The overflow is thrown here, on the
+     * virtual worker, as a plain Java exception: it travels the recovery path as
+     * itself, exactly like any other stage failure.
+     */
+    static <R> List<R> awaitBounded(Flux<R> flux, int maxItems, Duration budget) {
+        List<R> items = await(budgeted(flux.take(maxItems + 1L).collectList(), budget));
+        if (items.size() > maxItems) {
+            throw new FlowOverflowException(
+                    "adaptFlux(" + maxItems + ") — the stream produced more than " + maxItems + " items");
+        }
+        return items;
+    }
+
+    /**
+     * A cap of zero (or less) is not a bound, it is a mistake: rejected at BUILD
+     * time, where the caller's line number still exists.
+     */
+    static void checkMaxItems(int maxItems) {
+        if (maxItems < 1) {
+            throw new IllegalArgumentException("adaptFlux maxItems must be at least 1, was " + maxItems
+                    + ": it is the largest List the chain agrees to carry");
         }
     }
 

@@ -64,9 +64,11 @@ Subinterfaces of the three above (in `dev.nioflow.infrastructure.reactive`; `rea
 |---|---|
 | `handleMono(name, call[, budget \| retry])` | Stage whose work is a `Mono`; the budget goes on the Mono (it **cancels** the call) |
 | `adaptMono(call[, budget])` | Re-types through a `Mono`: `T → Mono<R> → R` |
-| `adaptFlux(call)` | Collects a `Flux` into a `List` — buffers it all, bounded results only |
+| `adaptFlux(call)` | Collects a `Flux` into a `List` — **no cap**: buffers it all, known-small results only |
+| `adaptFlux(call, maxItems)` | The same collect, bounded: over the cap it fails with `FlowOverflowException` and cancels the source |
 | `fanOutMono(name, branches, join)` | Split-join over reactive branches |
 | `executeMono()` | Terminal. Lazy: one execution per subscription; a filter cut is an empty `Mono` |
+| `executeFlux(tail)` | Streaming terminal: the engine's one value, then the tail's `Flux` — nothing is buffered |
 | `pipe(concurrency, …)` / `pipeOrdered(…)` | A `Flux` through the flow; concurrency **is** the backpressure |
 | `Reactive.flow(nioFlow)` / `Reactive.lane(lane)` | Entry point, and the one unwrap needed inside a branch lane |
 

@@ -1,6 +1,6 @@
 # RFC 0004 — Streaming out: `executeFlux` and a bounded `adaptFlux`
 
-- **Status**: Proposed
+- **Status**: Implemented (`ReactiveStreamingTest`)
 - **Target**: `infrastructure.reactive` only (no `core` change, no new link)
 - **Depends on**: RFC 0002
 - **Independent of**: every other proposed RFC (0003, 0005, 0006, 0007)

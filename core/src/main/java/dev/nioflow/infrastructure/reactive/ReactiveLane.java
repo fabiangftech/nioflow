@@ -55,7 +55,16 @@ public interface ReactiveLane<T> extends Lane<T> {
      */
     <R> ReactiveLane<R> adaptMono(Function<T, Mono<R>> call, Duration budget);
 
+    /**
+     * Collects a Flux into the List the lane carries, WITH NO CAP: see
+     * {@link ReactiveStep#adaptFlux(Function)}. Prefer the bounded overload — a
+     * branch or a fork body is no safer a place to buffer an unbounded stream
+     * than the main line is.
+     */
     <R> ReactiveLane<List<R>> adaptFlux(Function<T, Flux<R>> call);
+
+    /** The same collect, bounded — see {@link ReactiveStep#adaptFlux(Function, int)}. */
+    <R> ReactiveLane<List<R>> adaptFlux(Function<T, Flux<R>> call, int maxItems);
 
     <R, C> ReactiveLane<C> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                       Function<List<R>, C> join);

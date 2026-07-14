@@ -83,6 +83,12 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
     }
 
     @Override
+    public <R> ReactiveLane<List<R>> adaptFlux(Function<T, Flux<R>> call, int maxItems) {
+        Blocking.checkMaxItems(maxItems);
+        return retyped(delegate.adapt(value -> Blocking.awaitBounded(call.apply(value), maxItems, budget)));
+    }
+
+    @Override
     public <R, C> ReactiveLane<C> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                              Function<List<R>, C> join) {
         return retyped(delegate.fanOut(name, Blocking.branches(branches, budget), join));

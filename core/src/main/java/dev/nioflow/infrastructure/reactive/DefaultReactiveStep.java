@@ -85,6 +85,12 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     }
 
     @Override
+    public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call, int maxItems) {
+        Blocking.checkMaxItems(maxItems);
+        return retyped(delegate.adapt(value -> Blocking.awaitBounded(call.apply(value), maxItems, budget)));
+    }
+
+    @Override
     public <R, C> ReactiveStep<C, O> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                                 Function<List<R>, C> join) {
         return retyped(delegate.fanOut(name, Blocking.branches(branches, budget), join));
@@ -100,6 +106,17 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     @Override
     public Mono<T> executeMono() {
         return Mono.fromFuture(delegate::executeAsync);
+    }
+
+    /**
+     * The engine's one value, then Reactor's many: flatMapMany subscribes the
+     * tail only once the pipeline has produced a value, so a failure is onError
+     * before the tail runs and a filter() cut is an empty Flux. Laziness comes
+     * from executeMono() — assembling this subscribes nothing.
+     */
+    @Override
+    public <R> Flux<R> executeFlux(Function<T, Flux<R>> tail) {
+        return executeMono().flatMapMany(tail);
     }
 
     // ── everything else ──

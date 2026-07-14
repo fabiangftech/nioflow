@@ -68,8 +68,8 @@ class ReactiveMirrorTest {
                 + String.join("\n  ", missing));
     }
 
-    // executeMono is the terminal (a lane has no terminal — it is not an execution).
-    private static final Set<String> STEP_ONLY = Set.of("executeMono");
+    // The terminals (a lane has no terminal — it is not an execution).
+    private static final Set<String> STEP_ONLY = Set.of("executeMono", "executeFlux");
 
     /** A step core does not have: the ones this facade adds, and must add everywhere. */
     private static boolean isReactiveOnly(Method method) {

@@ -44,9 +44,11 @@ public ReactiveFlow<String, Receipt> orders() {
 | `handleMono(name, call, budget)` | With a budget **on the Mono** — see below, this is not the same as a stage timeout. |
 | `handleMono(name, call, retry)` | Each attempt re-subscribes the Mono. |
 | `adaptMono(call)` | Re-types **through** a Mono: `T → Mono<R> →` the chain continues at `R`. |
-| `adaptFlux(call)` | Collects a `Flux` into the `List` the chain carries. **Buffers it all** — bounded results only. |
+| `adaptFlux(call)` | Collects a `Flux` into the `List` the chain carries. **Buffers it all, with no cap.** |
+| `adaptFlux(call, maxItems)` | The same collect, bounded: over the cap, `FlowOverflowException` and the source is cancelled. |
 | `fanOutMono(name, branches, join)` | Parallel split-join over reactive branches, each on its own worker. |
 | `executeMono()` | The terminal. Lazy, one execution per subscription. |
+| `executeFlux(tail)` | The **streaming** terminal: one value out of the engine, then the tail's `Flux`. |
 
 A reactive stage is **not a new kind of link**: `handleMono` appends the same `Stage` every other step appends, whose function parks a virtual worker on the Mono. So it fuses, retries, rate-limits, lands in a lane and reports its metrics *because it is an ordinary stage*.
 
@@ -101,6 +103,28 @@ incoming.transform(orders.pipe(256, (order, step) -> step
 ```
 
 Do **not** reach for `inject`/`await` + `OverflowPolicy` here: its `BLOCK` policy parks the calling thread, which on an event loop is the one thing you must never do.
+
+## A `Flux` out of the flow
+
+The opposite direction of `pipe` (which is many inputs *through* one pipeline): **one** input, and a streaming tail. `executeFlux` runs the pipeline for one value and hands that value to the tail — the engine's part is one object, the stream's part is Reactor's, and nothing in between is buffered.
+
+```java
+@GetMapping(value = "/orders/{id}/events", produces = TEXT_EVENT_STREAM_VALUE)
+Flux<Event> events(@PathVariable String id) {
+    return orders.just(id)
+            .handle("load", repo::findById)                   // engine: policy, recovery,
+            .filter(order -> order.visibleTo(caller()))       // metrics, key, retry — one value
+            .executeFlux(order -> events.stream(order.id())); // Reactor: the unbounded part
+}
+```
+
+It inherits `executeMono()`'s semantics exactly: lazy (nothing runs until the `Flux` is subscribed), one execution per subscription (`.retry()` re-runs the pipeline), a `filter()` cut is an empty `Flux` (so `switchIfEmpty` is still your 404) and a pipeline failure is `onError` — before the tail is ever subscribed.
+
+**The rule: a nioflow value is one object. If you cannot name a bound, do not collect it.** `adaptFlux(call)` has no cap of any kind — a stream of ten million rows becomes a `List` of ten million rows, and the failure mode is an `OutOfMemoryError` that takes the JVM with it. So:
+
+- the size is known small (a fixed lookup, a handful of rows) → `adaptFlux(call)`;
+- you can name a bound → `adaptFlux(call, maxItems)`: over the cap the stage fails with `FlowOverflowException` (an ordinary stage failure, so `recover()` catches it) and the source is **cancelled** at `maxItems + 1`, so the overrun costs one element, not the rest of the stream;
+- you cannot name one → do not collect it: `executeFlux`.
 
 ## Tracing: Reactor context → nioflow context
 

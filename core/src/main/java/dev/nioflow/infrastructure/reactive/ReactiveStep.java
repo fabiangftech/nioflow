@@ -55,11 +55,25 @@ public interface ReactiveStep<T, O> extends NioStep<T, O> {
     <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call, Duration budget);
 
     /**
-     * Collects a Flux into the List the chain carries. BUFFERS THE WHOLE
-     * STREAM: for bounded results only — a nioflow value is one object, and a
-     * large export belongs in a Flux, not in a pipeline.
+     * Collects a Flux into the List the chain carries, WITH NO CAP OF ANY KIND:
+     * a stream of ten million rows is a List of ten million rows, and the
+     * failure mode is an OutOfMemoryError that takes the JVM with it.
+     *
+     * <p>Prefer {@link #adaptFlux(Function, int)} — a bound you can name — or
+     * {@link #executeFlux(Function)} — a stream you never collect. This overload
+     * is for the case where the size is known small (a fixed lookup, a handful of
+     * rows); if you cannot name a bound, do not collect it.
      */
     <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call);
+
+    /**
+     * The same collect, bounded: over {@code maxItems} the stage fails with a
+     * {@link FlowOverflowException} — an ordinary stage failure, so
+     * {@code recover()} catches it like any other — and the source is CANCELLED
+     * at {@code maxItems + 1}, so the overrun costs one element, not the rest of
+     * the stream.
+     */
+    <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call, int maxItems);
 
     /** Parallel split-join over reactive branches, each on its own worker. */
     <R, C> ReactiveStep<C, O> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
@@ -72,6 +86,23 @@ public interface ReactiveStep<T, O> extends NioStep<T, O> {
      * Mono (switchIfEmpty is your 404); a terminal failure as onError.
      */
     Mono<T> executeMono();
+
+    /**
+     * The STREAMING terminal: the engine runs the pipeline for one value, and
+     * the tail turns that value into the stream the caller gets. Nothing is
+     * buffered — the engine's part is one object (policy, recovery, metrics,
+     * key, retry), the stream's part is Reactor's.
+     *
+     * <p>It inherits {@link #executeMono()}'s semantics: lazy (nothing runs until
+     * the Flux is subscribed), one execution per subscription (so .retry() on the
+     * Flux re-runs the pipeline), a filter() cut is an empty Flux (switchIfEmpty
+     * is your 404) and a pipeline failure is onError — before the tail is ever
+     * subscribed.
+     *
+     * <p>The opposite direction of {@link ReactiveFlow#pipe}: pipe is many inputs
+     * through one pipeline; executeFlux is one input with a streaming tail.
+     */
+    <R> Flux<R> executeFlux(Function<T, Flux<R>> tail);
 
     // ── every NioStep step, re-declared covariantly ──────────────────────
 
