@@ -161,7 +161,7 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
     @Override
     public <R, C> ReactiveLane<C> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                              Function<List<R>, C> join) {
-        return retyped(delegate.fanOut(name, Blocking.branches(branches, budget), join));
+        return retyped(delegate.fanOutAsync(name, Blocking.asyncBranches(branches, budget), join));
     }
 
     // ── everything else ──

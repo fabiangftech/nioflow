@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Function;
 
 /**
@@ -97,12 +98,22 @@ final class Blocking {
         }
     }
 
-    /** Fan-out branches: each Mono awaits on its own worker, concurrently. */
-    static <T, R> List<Function<T, R>> branches(List<Function<T, Mono<R>>> reactive, Duration budget) {
-        List<Function<T, R>> blocking = new ArrayList<>(reactive.size());
+    /**
+     * Async fan-out branches: each Mono becomes a {@link CompletionStage}
+     * ({@code mono.timeout(budget).toFuture()}), so core's {@code fanOutAsync}
+     * runs them concurrently while PARKING NOTHING — a worker only invokes each
+     * branch and is released, where the blocking form parked one worker per
+     * branch for the duration of the slowest call (RFC 0016). The budget rides on
+     * the Mono, so a hung branch is cancelled (subscription disposed) and reaches
+     * {@code recover()} as a {@link java.util.concurrent.TimeoutException},
+     * exactly as on the async main line.
+     */
+    static <T, R> List<Function<T, CompletionStage<R>>> asyncBranches(
+            List<Function<T, Mono<R>>> reactive, Duration budget) {
+        List<Function<T, CompletionStage<R>>> async = new ArrayList<>(reactive.size());
         for (Function<T, Mono<R>> branch : reactive) {
-            blocking.add(value -> await(budgeted(branch.apply(value), budget)));
+            async.add(value -> budgeted(branch.apply(value), budget).toFuture());
         }
-        return blocking;
+        return async;
     }
 }

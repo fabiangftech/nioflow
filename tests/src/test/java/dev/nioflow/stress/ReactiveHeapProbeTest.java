@@ -109,6 +109,69 @@ class ReactiveHeapProbeTest {
                         + pipeBytes + " B");
     }
 
+    /**
+     * The RFC 0016 gate: {@code fanOutMono} decorates {@code fanOutAsync}, so N
+     * concurrent remote branches hold N futures, not N parked workers. Each
+     * execution fans out to {@code branchCount} branches that never complete; a
+     * blocking fan-out would retain {@code branchCount} parked worker stacks per
+     * execution, the async one holds that many futures.
+     */
+    @Test
+    void anAsyncFanOutMonoHoldsFuturesNotNParkedWorkers() throws Exception {
+        int branchCount = 4;
+        long parkingBytes = measureNioflow((flow, sink) ->
+                flow.handleMono("remote", value -> sink.get()));
+        long fanOutBytes = measureFanOutMono(branchCount);
+
+        System.out.printf("retained heap per in-flight execution (%d-branch fanOutMono):%n", branchCount);
+        System.out.printf("  one parked worker              : %,d B%n", parkingBytes);
+        System.out.printf("  %d-branch async fanOutMono      : %,d B%n", branchCount, fanOutBytes);
+
+        assertTrue(fanOutBytes > 0, "an in-flight fan-out must retain something");
+        // N blocking branches would retain ~N parked worker stacks; the async
+        // fan-out holds N futures, so it must stay well under that.
+        assertTrue(fanOutBytes < 0.6 * branchCount * parkingBytes,
+                "a " + branchCount + "-branch async fanOutMono must retain far less than " + branchCount
+                        + " parked workers — fanOut: " + fanOutBytes + " B, one parked: " + parkingBytes + " B");
+    }
+
+    /** FANOUT_EXECUTIONS executions, each fanning out to branchCount never-completing branches. */
+    private long measureFanOutMono(int branchCount) throws Exception {
+        int executions = IN_FLIGHT / branchCount;   // ~IN_FLIGHT branch futures total
+        var engine = new DefaultNioEngine();
+        try {
+            ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+            Sinks.One<Integer> never = Sinks.one();
+            var reached = new CountDownLatch(executions * branchCount);
+            List<Function<Integer, Mono<Integer>>> branches = new ArrayList<>(branchCount);
+            for (int b = 0; b < branchCount; b++) {
+                branches.add(value -> {
+                    reached.countDown();
+                    return never.asMono();
+                });
+            }
+            ReactiveFlow<Integer, Integer> fannedFlow = flow;
+
+            long before = usedHeap();
+            List<CompletableFuture<Integer>> pending = new ArrayList<>(executions);
+            for (int i = 0; i < executions; i++) {
+                pending.add(fannedFlow.just(i)
+                        .fanOutMono("enrich", branches, results -> results.get(0))
+                        .executeMono()
+                        .toFuture());
+            }
+            assertTrue(reached.await(30, TimeUnit.SECONDS), "every branch must reach the remote call");
+            Thread.sleep(500);
+            long perExecution = (usedHeap() - before) / executions;
+
+            never.tryEmitValue(0);
+            Thread.sleep(500);
+            return perExecution;
+        } finally {
+            engine.shutdown(Duration.ofSeconds(10));
+        }
+    }
+
     /** IN_FLIGHT elements through a pipe, each awaiting the same never-completing Mono. */
     private long measureAsyncPipe() throws Exception {
         var engine = new DefaultNioEngine();
