@@ -102,9 +102,10 @@ Three shared cachelines touched on `call()` of a JVM-wide engine, gated by the s
 
 ## Testing
 
-- **`BossLoop` unit tests**: FIFO under many concurrent producers; a task submitted while parked runs; a task submitted while spinning runs **without** an `unpark` (assert via a counter); `shutdown` rejects and drains.
-- **Counters**: `bossFor` spread over clustered keys hits >1 boss; `awaitDrain` still returns 0 after a clean drain (`KeyedExecutionStressTest`, `ForkStormStressTest`).
-- The full existing suite is the regression net; no assertion may change.
+- **`BossLoopTest`**: FIFO from one producer (10k) and under 8 concurrent producers (160k, none lost); a task submitted while parked runs (the wake fires); reentrant submission from inside a task (the engine's hop-to-same-boss pattern); `execute` after `shutdown` is rejected; `shutdown` drains what is queued then terminates; a throwing task does not kill the loop.
+- **`BossLoopIdleCpuTest`**: an idle boss consumes ≈ 0 CPU (it parks), and a lightly-loaded one stays near-parked — the mechanical proof the spin reaches the park, and a regression guard against a spins-forever edit.
+- **Counters**: `DefaultNioEngineDedicatedPoolTest` — caller-thread affinity pins one producer to one boss, distinct keys spread deterministically across the pool, affinity holds across the worker hop; `awaitDrain` still returns 0 after a clean drain (`KeyedExecutionStressTest`, `ForkStormStressTest`).
+- The full existing suite is the regression net; no assertion changed except the dedicated-pool test, which asserted round-robin spread (now caller-thread affinity).
 
 ## Gate — met
 
@@ -114,10 +115,12 @@ Three shared cachelines touched on `call()` of a JVM-wide engine, gated by the s
 | `engineCallContended` | improve | +4–8% ✓ |
 | single-thread synchronous (`fluentExecute`, `perRequestBuilder`) | improve | +30–60% ✓ |
 | `-prof gc` | must not rise | fell ~10% ✓ |
+| idle CPU (`BossLoopIdleCpuTest`) | ≈ 0, must park | **0.0000 cores** ✓ |
+| lightly-loaded CPU (5 ms drip) | ≈ real work only | **0.0112 cores** across 2 bosses ✓ |
 
-Still to run at **low utilization**: a throughput win that costs 8 idle cores spinning is not a win. The bounded, small spin default (`nioflow.boss.spin=1000`) is the mitigation; a low-utilization allocation/CPU profile is follow-up before this is considered fully closed.
+**Low utilization is measured, not assumed.** `BossLoopIdleCpuTest` reads the dedicated engine's boss threads via `ThreadMXBean.getThreadCpuTime` (so GC/JIT/the shared pool never pollute it): a fully idle boss consumes **0.0000 cores** over a 2 s window — it parks after one ~µs spin burst and stays there — and a 5 ms drip of ~400 executions costs **0.0112 cores** across both bosses, which is the executions' own work, not spinning. The RFC's worry ("a workload that trickles just faster than the budget keeps a core hot") cannot happen: the spin budget is ~µs, so any inter-arrival slower than high-load parks between tasks. The bounded default (`nioflow.boss.spin=1000`) needs no change.
 
 ## Risks
 
-- **Spin burns CPU on an idle server.** Bounded, small default, tunable; the low-utilization benchmark is mandatory.
-- **A hand-written MPSC queue is subtle.** It is the one piece of genuinely concurrent code added; it gets its own tests and a `jcstress`-style hammer if we can afford one.
+- **Spin burns CPU on an idle server.** ~~Bounded, small default, tunable; the low-utilization benchmark is mandatory.~~ **Measured and closed**: idle bosses consume 0.0000 cores, a 5 ms drip 0.0112 cores (`BossLoopIdleCpuTest`). The spin reaches the park; the default needs no change.
+- **A hand-written MPSC queue is subtle.** It is the one piece of genuinely concurrent code added; `BossLoopTest` hammers it with 8 producers × 20k tasks and asserts none is lost. A `jcstress`-style harness would strengthen this further and is worthwhile follow-up.
