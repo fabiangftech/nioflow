@@ -232,4 +232,18 @@ public interface NioFlow<I, O> {
     Condition<I, O> when(Predicate<I> predicate);
 
     Cases<I, O> match();
+
+    /**
+     * Declares a per-request pipeline whose structure is fixed, once: the
+     * segment is recorded onto a snapshot of the shared chain, validated and
+     * compiled, and the returned {@link Pipeline} dispatches every request off
+     * that plan — no per-request chain copy, no rescan, validation moved from
+     * never to here.
+     *
+     * <p>Use it when the pipeline is the same every request (the lambdas do not
+     * close over the input); keep {@code just(...)...execute()} for pipelines
+     * that genuinely vary per request. A {@code Pipeline} snapshots the shared
+     * definition at build time, so a later {@code splice} does not reach it.
+     */
+    <R> Pipeline<I, R> pipeline(Segment<I, R> segment);
 }

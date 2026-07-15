@@ -1,10 +1,16 @@
 # RFC 0011 — A dispatch plan for per-request pipelines
 
-- **Status**: Proposed
+- **Status**: ✅ Implemented
 - **Target**: `core/` (`core.facade`, `application.facade`), `tests/`
 - **Depends on**: nothing new; reuses `RecordingChain` and `CompiledChain`
 - **Enables**: RFC 0014 (`pipe` over prebuilt pipelines)
 - **Part of**: the throughput series (0009–0017)
+- **Realized by**: `Pipeline` / `PipelineRun` / `PreparedChain` (`core.facade`);
+  `DefaultPipeline`, `DefaultPipelineRun`, `Requests` and the snapshot cache on
+  `ExecutionNioFlow.State` (`application.facade`); `NioEngine.prepare` /
+  `planFor` / `call(…, PreparedChain, …)` on `DefaultNioEngine`;
+  `NioFlow.pipeline(Segment)`. Tests: `PipelineTest`, `PerRequestSnapshotTest`.
+  Benchmark: `PipelineBenchmark`.
 
 ## Summary
 
@@ -94,12 +100,30 @@ flowchart LR
 
 ## Gate
 
-| Benchmark | Must |
-| --- | --- |
-| `perRequestBuilder` @32 | close the gap to `engineCall` (Part A) |
-| `perRequestBuilder` @1, @8 | improve; allocation/op down (Part B) |
-| new `PipelineBenchmark` | prebuilt beats `just()`-build on the same chain |
-| `-prof gc` | allocation strictly down on the `just()` path |
+| Benchmark | Must | Measured |
+| --- | --- | --- |
+| `perRequestBuilder` @32 | close the gap to `engineCall` | throughput 34 → 74 ops/ms (Part B cached), 72 ops/ms (Part A prebuilt) |
+| `perRequestBuilder` @1, @8 | improve; allocation/op down | allocation 968 → 616 B/op @1, 1552 → 616 B/op @8 |
+| `PipelineBenchmark` | prebuilt beats `just()`-build | @32: 4768 → 656 B/op, 2.25× throughput |
+| `-prof gc` | allocation strictly down on the `just()` path | **flat ~620 B/op at every chain length** vs `dynamicBuild`'s 968/1552/4768 |
+
+### The measured result (`PipelineBenchmark`, JDK 25)
+
+The headline is allocation, and it is deterministic (`gc.alloc.rate.norm`, B/op):
+
+| stages | `dynamicBuild` (`just().handle().execute()`) | `dynamicCached` (Part B) | `prebuilt` (Part A) |
+| --- | --- | --- | --- |
+| 1  |  968 | 616 | 656 |
+| 8  | 1552 | 616 | 656 |
+| 32 | 4768 | 616 | 656 |
+
+`dynamicBuild` grows with chain length — it copies the shared chain twice per
+request; both cached and prebuilt are **flat**, because the copy, the decision
+rescan and the per-dispatch fusion scan happen once, not per request. At 32
+stages that is **7.7× less garbage per request** and ~2.25× the throughput; at 1
+stage the copy is small, so the win is small (36% less garbage) but never
+negative. Throughput at short chains sits inside the noise floor, exactly where
+the allocation curve says the copy cost is smallest.
 
 ## Risks
 

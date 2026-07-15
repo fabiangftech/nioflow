@@ -40,6 +40,34 @@ public interface NioEngine {
     Cancellable<Object> callCancellable(Object input, Map<String, Object> context,
                                         List<Link> chain, Object key);
 
+    /**
+     * Validates a chain and compiles it into a reusable {@link PreparedChain}.
+     * Throws {@link ChainValidationException} on a broken definition — the same
+     * check {@code seal()} runs — so a {@link Pipeline}'s problems surface at
+     * build time, not at the first request. For the fixed per-request pipeline.
+     */
+    PreparedChain prepare(List<Link> chain);
+
+    /**
+     * Compiles a per-request chain into a {@link PreparedChain} WITHOUT
+     * validating it: a per-request pipeline mints anonymous names from a
+     * counter of its own, so its names may legitimately duplicate the shared
+     * chain's — which validation forbids. For the cached dynamic snapshot.
+     */
+    PreparedChain planFor(List<Link> chain);
+
+    /**
+     * Runs an execution off a prebuilt plan: no defensive copy, no decision
+     * rescan, dispatch straight off the compiled fusion windows. Same result as
+     * the {@link #call(Object, Map, List, Object)} form — the plan is an
+     * optimization, never a semantic.
+     */
+    CompletableFuture<Object> call(Object input, Map<String, Object> context, PreparedChain prepared, Object key);
+
+    /** The prepared-plan call, plus the handle to stop it — see the List form. */
+    Cancellable<Object> callCancellable(Object input, Map<String, Object> context,
+                                        PreparedChain prepared, Object key);
+
     List<Link> chain();
 
     void append(Link link);

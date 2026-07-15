@@ -5,6 +5,7 @@ import dev.nioflow.core.facade.Condition;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.NioStep;
+import dev.nioflow.core.facade.Pipeline;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
@@ -192,5 +193,10 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     @Override
     public Cases<I, O> match() {
         return flow().match();
+    }
+
+    @Override
+    public <R> Pipeline<I, R> pipeline(Segment<I, R> segment) {
+        return flow().pipeline(segment);
     }
 }

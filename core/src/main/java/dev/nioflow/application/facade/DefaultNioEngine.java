@@ -5,6 +5,7 @@ import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
+import dev.nioflow.core.facade.PreparedChain;
 import dev.nioflow.core.model.AsyncStage;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Batch;
@@ -312,6 +313,47 @@ public class DefaultNioEngine implements NioEngine {
         return new ExecutionHandle(submit(input, context, chain, key));
     }
 
+    @Override
+    public CompletableFuture<Object> call(Object input, Map<String, Object> context,
+                                          PreparedChain prepared, Object key) {
+        if (closed) {
+            return CompletableFuture.failedFuture(rejection());
+        }
+        return submit(input, context, ((Prepared) prepared).plan(), key).result;
+    }
+
+    @Override
+    public Cancellable<Object> callCancellable(Object input, Map<String, Object> context,
+                                               PreparedChain prepared, Object key) {
+        if (closed) {
+            return new RejectedCall(CompletableFuture.failedFuture(rejection()));
+        }
+        return new ExecutionHandle(submit(input, context, ((Prepared) prepared).plan(), key));
+    }
+
+    @Override
+    public PreparedChain prepare(List<Link> chain) {
+        List<Link> links = List.copyOf(chain);
+        List<String> problems = ChainValidator.validate(links);
+        if (!problems.isEmpty()) {
+            throw new ChainValidationException(problems);
+        }
+        return new Prepared(CompiledChain.compile(links));
+    }
+
+    @Override
+    public PreparedChain planFor(List<Link> chain) {
+        // No validation on purpose: a per-request chain's anonymous names may
+        // duplicate the shared chain's (both counters start at 0), which is
+        // fine to run but the validator would reject. Same behaviour the
+        // interpreted per-request path always had, now with a plan.
+        return new Prepared(CompiledChain.compile(List.copyOf(chain)));
+    }
+
+    /** The opaque handle prepare()/planFor() hand out: a compiled plan and nothing else. */
+    private record Prepared(CompiledChain plan) implements PreparedChain {
+    }
+
     private RejectedExecutionException rejection() {
         RejectedExecutionException rejection =
                 new RejectedExecutionException("Engine is shut down; call rejected");
@@ -327,6 +369,24 @@ public class DefaultNioEngine implements NioEngine {
         CompiledChain plan = current.links() == chain ? current.plan() : null;
         Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
                 plan != null ? chain : List.copyOf(chain), context, plan, input, key, null);
+        activeExecutions.increment();
+        try {
+            execution.boss.execute(execution);
+        } catch (RejectedExecutionException rejected) {
+            execution.fail(rejected);
+        }
+        return execution;
+    }
+
+    /**
+     * The same submission off a prebuilt plan: no defensive copy and no
+     * decision rescan (the plan carries both the links it was compiled for and
+     * their highest decision id). The chain the Execution walks IS the plan's
+     * own list, so positions line up.
+     */
+    private Execution submit(Object input, Map<String, Object> context, CompiledChain plan, Object key) {
+        Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
+                plan.links(), context, plan, input, key, null);
         activeExecutions.increment();
         try {
             execution.boss.execute(execution);

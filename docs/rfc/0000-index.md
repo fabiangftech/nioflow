@@ -1,8 +1,10 @@
 # RFC index
 
 The design record for nio-flow. RFCs 0001–0008 are **implemented** and describe
-the engine as it stands; 0009–0017 are **proposed** and form the throughput
-series (split from two earlier monolithic drafts so each idea stands on its own).
+the engine as it stands; 0009–0017 form the throughput series (split from two
+earlier monolithic drafts so each idea stands on its own) — of which **0009 and
+0011 are implemented**, **0010 is rejected** (measured regression), and the rest
+are proposed.
 
 ## Catalogue
 
@@ -18,7 +20,7 @@ series (split from two earlier monolithic drafts so each idea stands on its own)
 | [0008](0008-reactive-module.md) | `nioflow-reactive` as its own artifact | ✅ Implemented | reactive | 0002, 0005, 0006, 0007 |
 | [0009](0009-boss-event-loop.md) | Boss event loop (MPSC + spin-park) + uncontended counters | ✅ Implemented | core | — |
 | [0010](0010-terminal-on-the-worker.md) | The last hop: complete on the worker | ❌ Rejected (measured regression) | core | 0007 |
-| [0011](0011-per-request-plan.md) | A dispatch plan for per-request pipelines | 📝 Proposed | core | — |
+| [0011](0011-per-request-plan.md) | A dispatch plan for per-request pipelines | ✅ Implemented | core | — |
 | [0012](0012-lock-free-fanout.md) | Lock-free fan-out + `fanOutAsync` | 📝 Proposed | core | — |
 | [0013](0013-async-stage-fusion.md) | Async-stage fusion (the 2.8× 0006 accepted) | 📝 Proposed | core | 0006, 0007 |
 | [0014](0014-pipe-prebuilt-pipeline.md) | `pipe` over a prebuilt `Pipeline` | 📝 Proposed | reactive | 0011 |
@@ -55,7 +57,7 @@ flowchart TD
     %% ── proposed core (0009–0013) ──
     R0009["0009 Boss event loop"]:::done
     R0010["0010 Terminal on worker ✗"]:::rej
-    R0011["0011 Per-request plan"]:::prop
+    R0011["0011 Per-request plan"]:::done
     R0012["0012 Lock-free fan-out"]:::prop
     R0013["0013 Async-stage fusion"]:::prop
     R0007 --> R0010
@@ -75,7 +77,8 @@ flowchart TD
 
 Legend: green = implemented, blue = proposed, thick edge = hard dependency.
 Nodes with no incoming proposed edge (**0009**, **0011**, **0012**, **0017**)
-land on the working tree today; the rest wait on their parent.
+land on the working tree today — **0009** and **0011** already have; the rest
+wait on their parent.
 
 ## The throughput series, read as one argument
 

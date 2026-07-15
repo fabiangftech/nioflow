@@ -2,6 +2,7 @@ package dev.nioflow.infrastructure.reactive;
 
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.Pipeline;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
@@ -334,6 +335,15 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     @Override
     public ReactiveCondition<I, O> when(Predicate<I> predicate) {
         return new DefaultReactiveCondition<>(delegate.when(predicate), config);
+    }
+
+    // A prebuilt pipeline is core's, but its segment gets the reactive config's
+    // default budget woven in — same as use()/fork() — so a handleMono inside it
+    // is still bounded. The returned Pipeline is core's: a reactive mirror with
+    // executeMono is a later step (RFC 0014).
+    @Override
+    public <R> Pipeline<I, R> pipeline(Segment<I, R> segment) {
+        return delegate.pipeline(Lanes.budgeted(segment, config.budget()));
     }
 
     @Override

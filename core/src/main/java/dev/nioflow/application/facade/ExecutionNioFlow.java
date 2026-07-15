@@ -5,6 +5,7 @@ import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioStep;
+import dev.nioflow.core.facade.PreparedChain;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.facade.StepCases;
 import dev.nioflow.core.facade.StepCondition;
@@ -19,10 +20,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.CompletionException;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -264,17 +263,17 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
 
     @Override
     public T execute() {
-        return typed(rawFuture().join());
+        return Requests.typed(rawFuture().join());
     }
 
     @Override
     public CompletableFuture<T> executeAsync() {
-        return rawFuture().thenApply(this::typed);
+        return rawFuture().thenApply(Requests::typed);
     }
 
     @Override
     public CompletableFuture<T> executeAsync(Map<String, Object> context) {
-        return rawFuture(context).thenApply(this::typed);
+        return rawFuture(context).thenApply(Requests::typed);
     }
 
     @Override
@@ -296,107 +295,31 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public Cancellable<T> executeCancellable(Map<String, Object> runContext) {
-        Cancellable<Object> raw = state.nioEngine.callCancellable(
-                state.seed, contextFor(runContext), chain(), state.key);
-        // Built by hand rather than with thenApply: the caller must observe a
-        // CancellationException, not a CompletionException wrapping one — this
-        // is the future a Mono and an HTTP handler hang their cancellation on,
-        // and the exception type is the contract.
-        CompletableFuture<T> typed = new CompletableFuture<>();
-        decorate(raw.future()).whenComplete((value, error) -> {
-            if (error != null) {
-                typed.completeExceptionally(unwrap(error));
-            } else if (value == FlowSignal.CANCELLED) {
-                typed.completeExceptionally(new CancellationException("Execution was cancelled"));
-            } else {
-                typed.complete(value == FlowSignal.FILTERED ? null : (T) value);
-            }
-        });
-        return new StepCancellable<>(typed, raw);
-    }
-
-    /**
-     * The engine's sentinels in the caller's terms. A cancelled execution
-     * THROWS rather than yielding null: a null here would be indistinguishable
-     * from a Filter cut, and "the client hung up" is not "the value was cut".
-     */
-    @SuppressWarnings("unchecked")
-    private T typed(Object value) {
-        if (value == FlowSignal.CANCELLED) {
-            throw new CancellationException("Execution was cancelled");
-        }
-        return value == FlowSignal.FILTERED ? null : (T) value;
-    }
-
-    private List<Link> chain() {
-        return state.links != null ? state.links : state.nioEngine.chain();
+        Map<String, Object> context = Requests.mergeContext(state.context, runContext);
+        Cancellable<Object> raw = state.links == null
+                ? state.nioEngine.callCancellable(state.seed, context, state.nioEngine.chain(), state.key)
+                : state.nioEngine.callCancellable(state.seed, context, state.prepared(), state.key);
+        return Requests.cancellable(raw, state.onComplete, state.onError);
     }
 
     private CompletableFuture<Object> rawFuture() {
         return rawFuture(null);
     }
 
-    private CompletableFuture<Object> rawFuture(Map<String, Object> runContext) {
-        return decorate(state.nioEngine.call(state.seed, contextFor(runContext), chain(), state.key));
-    }
-
-    /** Hangs the execution-scoped onComplete/onError off the raw future, if any. */
-    private CompletableFuture<Object> decorate(CompletableFuture<Object> raw) {
-        if (state.onComplete == null && state.onError == null) {
-            // Pay for what you use: no callbacks, no dependent future.
-            return raw;
-        }
-        // execute()/executeAsync() join/compose on the DEPENDENT future, so
-        // execution-scoped callbacks are guaranteed done before the caller
-        // observes the result — same ordering the engine handlers give.
-        return raw.whenComplete((value, error) -> {
-            if (error != null) {
-                if (state.onError != null) {
-                    state.onError.accept(unwrap(error));
-                }
-            } else if (state.onComplete != null && value != FlowSignal.CANCELLED) {
-                // Same rule the engine's complete handlers follow: a cancelled
-                // execution has no value to hand anyone.
-                state.onComplete.accept(value == FlowSignal.FILTERED ? null : value);
-            }
-        });
-    }
-
-    /** The typed handle: the caller's future, the engine's cancel. */
-    private record StepCancellable<T>(CompletableFuture<T> future, Cancellable<Object> raw)
-            implements Cancellable<T> {
-
-        @Override
-        public void cancel() {
-            raw.cancel();
-        }
-    }
-
     /**
-     * The context ONE run starts from: a fresh map every time, because
-     * executeAsync() may be called more than once (a Mono re-subscribing, a
-     * retry) and each run must start from what was seeded rather than inherit
-     * what the previous run wrote.
-     *
-     * <p>The run's own entries go in first and with()'s over them: the pipeline
-     * declared those, the run merely carries them. Neither one present means no
-     * map at all — a pipeline that seeds nothing allocates nothing for it.
+     * The raw result future, decorated with any execution-scoped callbacks.
+     * When local links were added this dispatches off a cached snapshot plan
+     * (built and compiled once, reused by a re-subscribing Mono); with none, it
+     * hands the engine its own live chain, which matches the compiled plan by
+     * identity when the shared definition is sealed.
      */
-    private Map<String, Object> contextFor(Map<String, Object> runContext) {
-        if (runContext == null || runContext.isEmpty()) {
-            return state.context == null ? null : new HashMap<>(state.context);
-        }
-        Map<String, Object> context = new HashMap<>(runContext);
-        if (state.context != null) {
-            context.putAll(state.context);
-        }
-        return context;
-    }
-
-    private static Throwable unwrap(Throwable error) {
-        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+    private CompletableFuture<Object> rawFuture(Map<String, Object> runContext) {
+        Map<String, Object> context = Requests.mergeContext(state.context, runContext);
+        CompletableFuture<Object> raw = state.links == null
+                ? state.nioEngine.call(state.seed, context, state.nioEngine.chain(), state.key)
+                : state.nioEngine.call(state.seed, context, state.prepared(), state.key);
+        return Requests.decorate(raw, state.onComplete, state.onError);
     }
 
     @Override
@@ -439,6 +362,11 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
         private final NioEngine nioEngine;
         // null = the shared definition as it is; copied only when local links appear
         private List<Link> links;
+        // Compiled snapshot of the local chain, built once on the first
+        // terminal call and reused by every later run (a re-subscribing Mono, a
+        // retry): the double copy and the per-dispatch fusion rescan are paid
+        // once, not per request. null until the first terminal with local links.
+        private PreparedChain prepared;
         private final Object seed;
         // Context seeded by with(): null until the first one, so a pipeline
         // that never seeds anything allocates nothing for it.
@@ -460,6 +388,14 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
                 links = new ArrayList<>(nioEngine.chain());
             }
             return links;
+        }
+
+        /** The compiled snapshot of the local chain, built once and cached. */
+        private PreparedChain prepared() {
+            if (prepared == null) {
+                prepared = nioEngine.planFor(List.copyOf(links));
+            }
+            return prepared;
         }
 
         private void putContext(String name, Object value) {
