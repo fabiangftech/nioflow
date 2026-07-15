@@ -146,7 +146,9 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
         return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
+    /** @deprecated see {@link ReactiveLane#adaptFlux(Function)} — prefer the bounded overload. */
     @Override
+    @Deprecated(forRemoval = false)
     public <R> ReactiveLane<List<R>> adaptFlux(Function<T, Flux<R>> call) {
         return retyped(delegate.adapt(
                 value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), budget))));

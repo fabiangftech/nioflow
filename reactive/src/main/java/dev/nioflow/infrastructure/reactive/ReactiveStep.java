@@ -78,7 +78,14 @@ public interface ReactiveStep<T, O> extends NioStep<T, O> {
      * {@link #executeFlux(Function)} — a stream you never collect. This overload
      * is for the case where the size is known small (a fixed lookup, a handful of
      * rows); if you cannot name a bound, do not collect it.
+     *
+     * @deprecated Collecting an unbounded Flux is an OOM waiting to happen. Use
+     *         {@link #adaptFlux(Function, int)} to name a cap, or
+     *         {@link #executeFlux(Function)} to stream without collecting.
+     *         Not for removal — this stays so existing call sites compile — but
+     *         every use is one the next OOM would have named.
      */
+    @Deprecated(forRemoval = false)
     <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call);
 
     /**

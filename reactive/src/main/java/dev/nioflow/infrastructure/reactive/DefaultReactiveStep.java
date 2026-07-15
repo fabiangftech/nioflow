@@ -137,7 +137,9 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
         return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
+    /** @deprecated see {@link ReactiveStep#adaptFlux(Function)} — prefer the bounded overload. */
     @Override
+    @Deprecated(forRemoval = false)
     public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call) {
         return retyped(delegate.adapt(
                 value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), config.budget()))));

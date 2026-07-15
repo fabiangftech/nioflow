@@ -4,7 +4,8 @@ The design record for nio-flow. RFCs 0001–0008 are **implemented** and describ
 the engine as it stands; 0009–0017 form the throughput series (split from two
 earlier monolithic drafts so each idea stands on its own) — of which **0009 and
 0011–0016 are implemented**, **0010 is rejected** (measured regression), and
-**0017** is proposed.
+**0017 is half-shipped** (its streaming deprecation landed; its blocking
+fast-path measured neutral and was dropped).
 
 ## Catalogue
 
@@ -26,7 +27,7 @@ earlier monolithic drafts so each idea stands on its own) — of which **0009 an
 | [0014](0014-pipe-prebuilt-pipeline.md) | `pipe` over a prebuilt `Pipeline` | ✅ Implemented | reactive | 0011 |
 | [0015](0015-async-routed-pipe.md) | Async-routed `pipe` (the heap win) | ✅ Implemented | reactive | **0013**, 0014 |
 | [0016](0016-fanoutmono-no-parked-workers.md) | `fanOutMono` without parked workers | ✅ Implemented | reactive | **0012** |
-| [0017](0017-reactive-streaming-hygiene.md) | Reactive streaming & blocking hygiene | 📝 Proposed | reactive | — |
+| [0017](0017-reactive-streaming-hygiene.md) | Reactive streaming & blocking hygiene | ◐ Part 1 shipped (Part 2 neutral) | reactive | — |
 
 **Bold** = hard dependency: the RFC cannot ship until its parent does. A plain
 number means the RFC builds on the parent's design but could be sequenced with
@@ -68,7 +69,7 @@ flowchart TD
     R0014["0014 pipe over Pipeline"]:::done
     R0015["0015 Async-routed pipe"]:::done
     R0016["0016 fanOutMono no-park"]:::done
-    R0017["0017 Streaming hygiene"]:::prop
+    R0017["0017 Streaming hygiene (½)"]:::done
     R0011 --> R0014
     R0014 --> R0015
     R0013 == hard ==> R0015
