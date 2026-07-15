@@ -78,4 +78,28 @@ flowchart LR
 | A `Mono` for WebFlux | `handleMono` / `executeMono` — blocking code stays safe inside |
 | Visibility | `onComplete`/`onError` taps, metrics SPI, OpenTelemetry adapter |
 
+## Install
+
+Two artifacts. Take `nioflow-core` alone unless your app is reactive (WebFlux) — then add `nioflow-reactive` on the same version.
+
+```groovy
+implementation 'dev.nioflow:nioflow-core:2.1.0'
+implementation 'dev.nioflow:nioflow-reactive:2.1.0'
+```
+
+```xml
+<dependency>
+    <groupId>dev.nioflow</groupId>
+    <artifactId>nioflow-core</artifactId>
+    <version>2.1.0</version>
+</dependency>
+<dependency>
+    <groupId>dev.nioflow</groupId>
+    <artifactId>nioflow-reactive</artifactId>
+    <version>2.1.0</version>
+</dependency>
+```
+
+Java 21+ (virtual threads, sealed types), no other runtime dependencies. Full setup, including why the two coordinates move in lockstep, is in the [Quickstart](quickstart.md).
+
 Ready? Head to the [Quickstart](quickstart.md).

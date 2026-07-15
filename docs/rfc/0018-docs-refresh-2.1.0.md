@@ -1,9 +1,14 @@
 # RFC 0018 — Documentation refresh for the 2.1.0 release
 
-- **Status**: 📝 Proposed
+- **Status**: ✅ Implemented
 - **Target**: `docs/` (the docsify site and its `README.md`), `core/` and `reactive/` build versions
 - **Depends on**: RFC 0009, 0011–0017 (the throughput series) — the features this refresh documents
 - **Part of**: release hygiene, not the throughput series — but it is what ships the series to readers
+- **Realized by**: the version bump (`core/build.gradle`, `reactive/build.gradle`,
+  `_coverpage.md`, `quickstart.md`, `webflux.md`); the content updates to
+  `README.md`, `api-reference.md`, `pipeline-api.md`, `webflux.md`,
+  `architecture.md`, `observability.md`; and the release-blocker fix in the
+  `springwebflux` example (see Testing).
 
 ## Summary
 
@@ -76,7 +81,8 @@ reworded and reordered for clarity; nothing is rewritten for its own sake.
 ### Everywhere
 
 - **Versions: `2.0.0 → 2.1.0`** in `core/build.gradle`, `reactive/build.gradle`,
-  and the coordinate snippets in `_coverpage.md`, `quickstart.md`, `webflux.md`.
+  and the coordinate snippets in `_coverpage.md`, `quickstart.md`, `webflux.md`
+  and `README.md` (which gains its own compact install block).
 - **`observability.md`** — add `executionCancelled` to the classified outcomes
   (0007), and note per-stage timing covers async runs.
 
@@ -92,13 +98,27 @@ reworded and reordered for clarity; nothing is rewritten for its own sake.
 Docs have no unit tests; the guardrail is that every code snippet compiles
 against the 2.1.0 API and every number cited traces to a series RFC's gate
 table. The examples (`examples/springboot-with-nioflow`,
-`examples/springwebflux-with-nioflow`) keep compiling against the working tree.
+`examples/springwebflux-with-nioflow`) must keep compiling **and their tests must
+pass** against the working tree — a release does not ship on red examples.
+
+**Release blocker found and fixed here.** Running the `springwebflux` example's
+suite (which had only been compile-checked since RFC 0009, not run) surfaced a
+hang: RFC 0009 replaced the boss `ThreadPoolExecutor` with a custom `BossLoop`
+that waits for work by spinning (`Thread.onSpinWait`) then parking
+(`LockSupport.park`) inside `BossLoop.runLoop`. BlockHound flags both on the boss
+(a non-blocking thread), but the example's `NioFlowBlockHoundIntegration` still
+allowlisted the old `ThreadPoolExecutor.getTask` — so an idle boss threw an
+uncaught `BlockingOperationError`, the boss thread died, and every execution
+pinned to it hung forever. The fix moves the allowance to `BossLoop.runLoop` and
+disallows `BossLoop.run` (the boss's user-code dispatch), so the loop's own idle
+wait is allowed while a `handleSync` stage that blocks still trips — the guarantee
+`aBlockingCallPlantedOnABossTripsIt` exists to make. Example suite green: 13/13.
 
 ## Risks
 
 - **Doc drift is silent.** The mitigation is this RFC's scope list: each stale
   claim and each new-surface item is named, so the refresh is a checklist, not a
   vibe. A future feature that skips its doc update reopens exactly this gap.
-- **Version snippets are duplicated across pages.** `2.0.0` appears in four doc
-  files plus two build files; all six move together here, and the README badges
-  read the live Maven Central version so they never go stale.
+- **Version snippets are duplicated across pages.** `2.1.0` appears in five doc
+  files plus two build files; all seven move together here, and the README's
+  version badges read the live Maven Central version so they never go stale.
