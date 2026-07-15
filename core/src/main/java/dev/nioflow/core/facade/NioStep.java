@@ -119,6 +119,12 @@ public interface NioStep<T, O> {
 
     <R, C> NioStep<C, O> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
+    /** Async split-join: each branch returns a CompletionStage; no worker parks per branch. See NioFlow#fanOutAsync. */
+    <R, C> NioStep<C, O> fanOutAsync(List<Function<T, CompletionStage<R>>> branches, Function<List<R>, C> join);
+
+    <R, C> NioStep<C, O> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                     Function<List<R>, C> join);
+
     /** Coalescing point; see NioFlow#batch. Per-request batches may re-type. */
     <R> NioStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk);
 

@@ -175,6 +175,19 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
     }
 
     @Override
+    public <R, C> NioStep<C, O> fanOutAsync(List<Function<T, CompletionStage<R>>> branches,
+                                            Function<List<R>, C> join) {
+        return fanOutAsync(anonymousName("fanout"), branches, join);
+    }
+
+    @Override
+    public <R, C> NioStep<C, O> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                            Function<List<R>, C> join) {
+        fanOutAsyncBranches(name, branches, join);
+        return retyped();
+    }
+
+    @Override
     public <R> NioStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
         return batch(anonymousName("batch"), size, window, bulk);
     }

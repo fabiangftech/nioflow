@@ -151,6 +151,13 @@ public interface ReactiveLane<T> extends Lane<T> {
     <R, C> ReactiveLane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
     @Override
+    <R, C> ReactiveLane<C> fanOutAsync(List<Function<T, CompletionStage<R>>> branches, Function<List<R>, C> join);
+
+    @Override
+    <R, C> ReactiveLane<C> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                       Function<List<R>, C> join);
+
+    @Override
     <R> ReactiveLane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk);
 
     @Override

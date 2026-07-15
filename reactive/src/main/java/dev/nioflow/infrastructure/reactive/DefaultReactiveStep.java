@@ -296,6 +296,18 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     }
 
     @Override
+    public <R, C> ReactiveStep<C, O> fanOutAsync(List<Function<T, CompletionStage<R>>> branches,
+                                                 Function<List<R>, C> join) {
+        return retyped(delegate.fanOutAsync(branches, join));
+    }
+
+    @Override
+    public <R, C> ReactiveStep<C, O> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                                 Function<List<R>, C> join) {
+        return retyped(delegate.fanOutAsync(name, branches, join));
+    }
+
+    @Override
     public <R> ReactiveStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
         return retyped(delegate.batch(size, window, bulk));
     }

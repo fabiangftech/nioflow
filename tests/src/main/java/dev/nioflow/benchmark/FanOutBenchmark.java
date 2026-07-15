@@ -14,6 +14,8 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.infra.Blackhole;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
@@ -23,9 +25,12 @@ import java.util.function.Function;
  * - sequentialWork / fanOutWork:  three independent computations of ~50µs
  *   each, chained vs fanned out — the parallel version should approach 3x.
  * - sequentialTrivial / fanOutTrivial: the same shape with trivial branches —
- *   measures the fan-out overhead (N worker dispatches + allOf + join hop)
- *   when there is no work to parallelize. Use fanOut for real work, not for
- *   cheap transformations.
+ *   measures the fan-out overhead (N worker dispatches + the join hop) when
+ *   there is no work to parallelize. Since RFC 0012 the join is a countdown, not
+ *   an allOf tree, so this drops ~3N allocations and one virtual thread.
+ * - fanOutAsyncTrivial: the async split-join — each branch returns a resolved
+ *   CompletionStage, so a worker only invokes it and is released. Measures the
+ *   async fan-out's dispatch overhead against the sync one.
  */
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -38,6 +43,7 @@ public class FanOutBenchmark {
     NioFlow<Integer, Integer> fanOutWork;
     NioFlow<Integer, Integer> sequentialTrivial;
     NioFlow<Integer, Integer> fanOutTrivial;
+    NioFlow<Integer, Integer> fanOutAsyncTrivial;
 
     @Setup
     public void setUp() {
@@ -45,6 +51,7 @@ public class FanOutBenchmark {
         fanOutWork = fanned(true);
         sequentialTrivial = sequential(false);
         fanOutTrivial = fanned(false);
+        fanOutAsyncTrivial = fannedAsync();
     }
 
     private static int compute(int value, boolean heavy) {
@@ -95,5 +102,23 @@ public class FanOutBenchmark {
     @Benchmark
     public Object fanOutTrivial() {
         return fanOutTrivial.just(1).execute();
+    }
+
+    private static NioFlow<Integer, Integer> fannedAsync() {
+        List<Function<Integer, CompletionStage<Integer>>> branches = List.of(
+                value -> CompletableFuture.completedFuture(compute(value, false)),
+                value -> CompletableFuture.completedFuture(compute(value, false)),
+                value -> CompletableFuture.completedFuture(compute(value, false)));
+        NioEngine engine = new DefaultNioEngine();
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.fanOutAsync("split", branches,
+                results -> results.get(0) + results.get(1) + results.get(2));
+        engine.seal();
+        return flow;
+    }
+
+    @Benchmark
+    public Object fanOutAsyncTrivial() {
+        return fanOutAsyncTrivial.just(1).execute();
     }
 }

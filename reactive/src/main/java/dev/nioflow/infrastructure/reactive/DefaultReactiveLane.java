@@ -225,6 +225,18 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
     }
 
     @Override
+    public <R, C> ReactiveLane<C> fanOutAsync(List<Function<T, CompletionStage<R>>> branches,
+                                              Function<List<R>, C> join) {
+        return retyped(delegate.fanOutAsync(branches, join));
+    }
+
+    @Override
+    public <R, C> ReactiveLane<C> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                              Function<List<R>, C> join) {
+        return retyped(delegate.fanOutAsync(name, branches, join));
+    }
+
+    @Override
     public <R> ReactiveLane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
         return retyped(delegate.batch(size, window, bulk));
     }

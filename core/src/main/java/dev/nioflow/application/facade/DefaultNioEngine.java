@@ -1526,34 +1526,161 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         /**
-         * Parallel split-join: every branch gets the same value and its own
-         * worker; the join runs on a worker once all branches finish (user code
-         * never touches the boss) and the combined value resumes on the boss.
-         * A failing branch fails the whole fan-out through the recovery path.
+         * Parallel split-join, as a countdown instead of a CompletableFuture
+         * tree: one result slot per branch (written only by that branch — no
+         * sharing), an {@link AtomicInteger} the branches count down, and a
+         * first-failure {@link AtomicReference} the branches CAS. The branch
+         * that decrements the counter to zero runs {@code join} and hops to the
+         * boss once — no {@code allOf} tree, no dependent futures, and no
+         * dedicated virtual thread for the join.
+         *
+         * <p>The counter's read-modify-write is the memory barrier: each branch
+         * writes its slot (and, on failure, CASes the throwable) BEFORE it
+         * decrements, so the thread that observes zero sees every slot and the
+         * winning failure. A failing branch skips the join and takes the
+         * recovery path.
          */
         private void dispatchFanOut(FanOut fanOut, int resume, Object value) {
-            List<Function<Object, Object>> branches = fanOut.branches();
-            @SuppressWarnings("unchecked")
-            CompletableFuture<Object>[] tasks = new CompletableFuture[branches.size()];
-            for (int i = 0; i < branches.size(); i++) {
-                var branch = branches.get(i);
-                tasks[i] = CompletableFuture.supplyAsync(() -> branch.apply(value), workersExecutorService);
+            new FanOutJoin(fanOut, resume, value).dispatch();
+        }
+
+        /**
+         * The shared state of one in-flight fan-out: a result slot per branch
+         * (each written only by its branch), the countdown, and the first-failure
+         * winner. The counter's read-modify-write is the memory barrier — every
+         * branch fills its slot (or CASes the throwable) BEFORE it counts down, so
+         * the branch that reads zero sees every slot and the winning failure.
+         */
+        private final class FanOutJoin {
+
+            private final FanOut fanOut;
+            private final List<Function<Object, Object>> branches;
+            private final int resume;
+            private final Object value;
+            private final Object[] results;
+            private final AtomicInteger remaining;
+            private final AtomicReference<Throwable> failure = new AtomicReference<>();
+
+            private FanOutJoin(FanOut fanOut, int resume, Object value) {
+                this.fanOut = fanOut;
+                this.branches = fanOut.branches();
+                this.resume = resume;
+                this.value = value;
+                this.results = new Object[branches.size()];
+                this.remaining = new AtomicInteger(branches.size());
             }
-            CompletableFuture.allOf(tasks)
-                    .thenApplyAsync(ignored -> {
-                        List<Object> results = new ArrayList<>(tasks.length);
-                        for (CompletableFuture<Object> task : tasks) {
-                            results.add(task.join());
-                        }
-                        return fanOut.join().apply(results);
-                    }, workersExecutorService)
-                    .whenCompleteAsync((nextValue, error) -> {
-                        if (error != null) {
-                            recover(resume, unwrap(error));
-                        } else {
-                            advance(resume, nextValue);
-                        }
-                    }, boss);
+
+            /** Submit every branch to a worker; a rejected submission counts down exceptionally. */
+            private void dispatch() {
+                boolean async = fanOut.async();
+                for (int i = 0; i < branches.size(); i++) {
+                    int slot = i;
+                    Runnable task = async ? () -> invokeAsyncBranch(slot) : () -> runBranch(slot);
+                    try {
+                        workersExecutorService.execute(task);
+                    } catch (RejectedExecutionException rejected) {
+                        // Workers gone mid-shutdown: this branch cannot run, but
+                        // the fan-out must still end. Record the failure and count
+                        // down so the last branch out finishes (exceptionally).
+                        fail(rejected);
+                        branchDone();
+                    }
+                }
+            }
+
+            /** One sync branch on its worker: fill the slot (or CAS the failure), then count down. */
+            private void runBranch(int slot) {
+                try {
+                    succeed(slot, branches.get(slot).apply(value));
+                } catch (Throwable error) {
+                    fail(error);
+                }
+                branchDone();
+            }
+
+            /**
+             * One async branch: the worker INVOKES the branch (building the stage
+             * is user code) and is released; the countdown fires when the stage
+             * completes, on whatever thread completes it — no parked worker.
+             */
+            @SuppressWarnings("unchecked")
+            private void invokeAsyncBranch(int slot) {
+                CompletionStage<Object> stage;
+                try {
+                    stage = (CompletionStage<Object>) branches.get(slot).apply(value);
+                    if (stage == null) {
+                        throw new IllegalStateException("Async fan-out '" + fanOut.name()
+                                + "' branch returned a null CompletionStage");
+                    }
+                } catch (Throwable error) {
+                    fail(error);
+                    branchDoneAsync();
+                    return;
+                }
+                stage.whenComplete((outcome, error) -> {
+                    if (error != null) {
+                        fail(error);
+                    } else {
+                        succeed(slot, outcome);
+                    }
+                    branchDoneAsync();
+                });
+            }
+
+            private void succeed(int slot, Object outcome) {
+                results[slot] = outcome;
+            }
+
+            private void fail(Throwable error) {
+                failure.compareAndSet(null, unwrap(error));
+            }
+
+            /** Sync branch done, on its worker: the last one runs the join here. */
+            private void branchDone() {
+                if (remaining.decrementAndGet() == 0) {
+                    finish();
+                }
+            }
+
+            /**
+             * Async branch done, on the completion thread: the last one dispatches
+             * the join to a worker so it never runs on a foreign loop; if the
+             * workers are gone, it finishes inline (exceptionally) rather than
+             * leaving the execution hung.
+             */
+            private void branchDoneAsync() {
+                if (remaining.decrementAndGet() != 0) {
+                    return;
+                }
+                try {
+                    workersExecutorService.execute(this::finish);
+                } catch (RejectedExecutionException rejected) {
+                    fail(rejected);
+                    finish();
+                }
+            }
+
+            /**
+             * The terminal, on the last branch's worker: a failure skips the join
+             * and takes the recovery path; otherwise the join combines the slots
+             * in declaration order and the value resumes on the boss. Either way,
+             * exactly one hop to the boss.
+             */
+            private void finish() {
+                Throwable error = failure.get();
+                if (error != null) {
+                    resumeOnBoss(() -> recover(resume, error));
+                    return;
+                }
+                Object combined;
+                try {
+                    combined = fanOut.join().apply(Arrays.asList(results));
+                } catch (Throwable joinError) {
+                    resumeOnBoss(() -> recover(resume, unwrap(joinError)));
+                    return;
+                }
+                resumeOnBoss(() -> advance(resume, combined));
+            }
         }
 
         private void dispatchWithTimeout(Stage stage, int resume, Object value) {

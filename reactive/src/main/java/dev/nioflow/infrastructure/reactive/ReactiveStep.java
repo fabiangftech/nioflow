@@ -189,6 +189,13 @@ public interface ReactiveStep<T, O> extends NioStep<T, O> {
     <R, C> ReactiveStep<C, O> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
     @Override
+    <R, C> ReactiveStep<C, O> fanOutAsync(List<Function<T, CompletionStage<R>>> branches, Function<List<R>, C> join);
+
+    @Override
+    <R, C> ReactiveStep<C, O> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                          Function<List<R>, C> join);
+
+    @Override
     <R> ReactiveStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk);
 
     @Override

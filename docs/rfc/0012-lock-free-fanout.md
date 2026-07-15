@@ -1,10 +1,16 @@
 # RFC 0012 — Fan-out without the `CompletableFuture` ceremony (and `fanOutAsync`)
 
-- **Status**: Proposed
+- **Status**: ✅ Implemented
 - **Target**: `core/` (`core.model`, `core.facade`, `application.facade`), `tests/`
 - **Depends on**: nothing new
 - **Enables**: RFC 0016 (`fanOutMono` without parked workers)
 - **Part of**: the throughput series (0009–0017)
+- **Realized by**: `FanOut.async` (`core.model`); the countdown rewrite of
+  `dispatchFanOut` + `runBranch`/`runAsyncBranch`/`finishFanOut`
+  (`DefaultNioEngine`); `fanOutAsync` on `NioFlow`/`NioStep`/`Lane` and their
+  reactive mirrors; `AbstractChain.fanOutAsyncBranches`. Tests:
+  `DefaultNioFlowFanOutTest` (unchanged), `DefaultNioFlowFanOutAsyncTest`.
+  Benchmark: `FanOutBenchmark.fanOutAsyncTrivial`.
 
 ## Summary
 
@@ -78,12 +84,18 @@ The countdown does not care whether a slot was filled by a worker **returning** 
 
 ## Gate
 
-| Benchmark | Must |
-| --- | --- |
-| `fanOutTrivial` | improve (removes ~3N allocs + 1 thread) |
-| `fanOutWork` | unchanged (real work dominates) |
-| new `fanOutAsync` bench | no parked workers; concurrent |
-| `-prof gc` | allocation/op down on fan-out |
+| Benchmark | Must | Measured (3 branches, JDK 25) |
+| --- | --- | --- |
+| `fanOutTrivial` | improve (removes ~3N allocs + 1 thread) | **2347 → 1584 B/op (−33%)**, 29.8 → 35.8 ops/ms |
+| `fanOutWork` | unchanged (real work dominates) | 2329 → 1513 B/op; throughput within noise (~5 ops/ms) |
+| new `fanOutAsync` bench | no parked workers; concurrent | `fanOutAsyncTrivial` 27.7 ops/ms; a worker invokes and is released (test-proven) |
+| `-prof gc` | allocation/op down on fan-out | **~800 B/op less per fan-out** (the allOf tree, the N dependent futures and the dedicated join thread's future are gone) |
+
+The allocation win is deterministic (`gc.alloc.rate.norm`): the countdown
+replaces the `CompletableFuture` tree (`N` supplyAsync tasks + a `~2N`-node
+`allOf` + a `thenApplyAsync` for the join + a `whenCompleteAsync` to the boss)
+with four fields and one array, and the join runs on the last branch's own
+worker instead of a dedicated virtual thread.
 
 ## Risks
 

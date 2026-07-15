@@ -283,6 +283,18 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     }
 
     @Override
+    public <R> ReactiveFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches,
+                                              Function<List<R>, I> join) {
+        return wrap(delegate.fanOutAsync(branches, join));
+    }
+
+    @Override
+    public <R> ReactiveFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                              Function<List<R>, I> join) {
+        return wrap(delegate.fanOutAsync(name, branches, join));
+    }
+
+    @Override
     public ReactiveFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return wrap(delegate.batch(size, window, bulk));
     }

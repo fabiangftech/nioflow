@@ -121,7 +121,7 @@ class DefaultNioEngineValidationTest extends EngineTestSupport {
     /** FanOut and Batch can fail a value, so a recovery after them is alive; Background cannot. */
     @Test
     void aChainOfEveryLinkKindSealsClean() {
-        engine.append(new FanOut("fan", List.of(value -> value), parts -> parts.get(0), List.of()));
+        engine.append(new FanOut("fan", List.of(value -> value), parts -> parts.get(0), false, List.of()));
         engine.append(new Batch("bulk", 1, Duration.ofMillis(50), values -> values, List.of()));
         engine.append(new Background("effect", value -> {
         }, List.of()));

@@ -220,6 +220,18 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     }
 
     @Override
+    public <R> NioFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join) {
+        return fanOutAsync(anonymousName("fanout"), branches, join);
+    }
+
+    @Override
+    public <R> NioFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                         Function<List<R>, I> join) {
+        fanOutAsyncBranches(name, branches, join);
+        return this;
+    }
+
+    @Override
     public NioFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return batch(anonymousName("batch"), size, window, bulk);
     }

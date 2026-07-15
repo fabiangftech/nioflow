@@ -171,6 +171,19 @@ public interface NioFlow<I, O> {
     <R> NioFlow<I, O> fanOut(String name, List<Function<I, R>> branches, Function<List<R>, I> join);
 
     /**
+     * The async fan-out: each branch returns a {@link CompletionStage}, so a
+     * worker only invokes it and is released — a fan-out over N remote calls
+     * parks no worker, where {@link #fanOut} parks one per branch. The join
+     * still receives the resolved values in declaration order and gives them
+     * back as an {@code I} (the shared chain preserves the type). A failing
+     * branch fails the whole fan-out, recoverable downstream — unchanged.
+     */
+    <R> NioFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join);
+
+    <R> NioFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                  Function<List<R>, I> join);
+
+    /**
      * Coalescing point for bulk work: executions park here until `size` of them
      * accumulated or `window` elapsed, then ONE bulk call receives all their
      * values and must return one result per value, positionally. Each caller

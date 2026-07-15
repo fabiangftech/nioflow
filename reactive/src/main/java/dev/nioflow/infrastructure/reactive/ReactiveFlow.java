@@ -284,6 +284,13 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
     <R> ReactiveFlow<I, O> fanOut(String name, List<Function<I, R>> branches, Function<List<R>, I> join);
 
     @Override
+    <R> ReactiveFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join);
+
+    @Override
+    <R> ReactiveFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                       Function<List<R>, I> join);
+
+    @Override
     ReactiveFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk);
 
     @Override

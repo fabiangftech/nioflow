@@ -136,6 +136,17 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     }
 
     @Override
+    public <R> NioFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join) {
+        return flow().fanOutAsync(branches, join);
+    }
+
+    @Override
+    public <R> NioFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                         Function<List<R>, I> join) {
+        return flow().fanOutAsync(name, branches, join);
+    }
+
+    @Override
     public NioFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return flow().batch(size, window, bulk);
     }
