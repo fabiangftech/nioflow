@@ -176,6 +176,63 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
                 }), concurrency);
     }
 
+    // ── pipe over a PREBUILT pipeline (RFC 0014): assemble once, execute per element ──
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipe(int concurrency, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        return flux -> flux.flatMap(input -> elementMono(pipeline, input), concurrency);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipe(int concurrency, int prefetch, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        checkPrefetch(prefetch);
+        return flux -> flux.flatMap(input -> elementMono(pipeline, input), concurrency, prefetch);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        return flux -> flux.flatMapSequential(input -> elementMono(pipeline, input), concurrency);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency, int prefetch, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        checkPrefetch(prefetch);
+        return flux -> flux.flatMapSequential(input -> elementMono(pipeline, input), concurrency, prefetch);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipeResilient(int concurrency, Pipeline<I, R> pipeline,
+                                                        BiConsumer<I, Throwable> onElementError) {
+        checkConcurrency(concurrency);
+        if (onElementError == null) {
+            throw new IllegalArgumentException("pipeResilient needs an element-error handler:"
+                    + " dropping an element silently is exactly what it exists to prevent");
+        }
+        return flux -> flux.flatMap(input -> elementMono(pipeline, input)
+                .onErrorResume(error -> {
+                    onElementError.accept(input, error);
+                    return Mono.empty();
+                }), concurrency);
+    }
+
+    /**
+     * One element through the prebuilt pipeline, as a Mono: dispatched off the
+     * plan compiled once (no per-element assembly), lazy and per-subscription
+     * like {@code executeMono}, with the flow's propagated keys seeded from the
+     * subscriber context.
+     */
+    private <R> Mono<R> elementMono(Pipeline<I, R> pipeline, I input) {
+        if (config.keys().isEmpty()) {
+            return Mono.defer(() -> Monos.fromCancellable(pipeline.just(input).executeCancellable()));
+        }
+        return Mono.deferContextual(view -> Monos.fromCancellable(
+                pipeline.just(input).executeCancellable(Monos.seed(view, config.keys()))));
+    }
+
     /**
      * Rejected here, not at the first element: Reactor validates concurrency on
      * SUBSCRIBE, so a pipe(0, ...) built at startup would blow up later, inside

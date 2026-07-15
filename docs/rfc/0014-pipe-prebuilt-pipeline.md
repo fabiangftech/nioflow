@@ -1,9 +1,13 @@
 # RFC 0014 — `pipe` should not rebuild the pipeline per element
 
-- **Status**: Proposed
+- **Status**: ✅ Implemented
 - **Target**: `reactive/` (`infrastructure.reactive`)
 - **Depends on**: RFC 0011 (per-request plan / `Pipeline`)
 - **Part of**: the throughput series (0009–0017); the first reactive item and the one that stands alone soonest
+- **Realized by**: the `Pipeline` overloads of `pipe`/`pipeOrdered`/`pipeResilient`
+  on `ReactiveFlow` + `DefaultReactiveFlow.elementMono`; the shared `Monos`
+  helper (`fromCancellable`/`seed`, factored out of `DefaultReactiveStep`).
+  Tests: `ReactivePipePrebuiltTest`. Benchmark: `PipeBenchmark`.
 
 ## Summary
 
@@ -65,10 +69,18 @@ flowchart LR
 
 ## Gate
 
-| Benchmark | Must |
-| --- | --- |
-| new `PipeBenchmark` (prebuilt vs `BiFunction` per element) | prebuilt faster; allocation/element down |
-| `-prof gc` | allocation per element strictly down |
+| Benchmark | Must | Measured (Flux of 200 elements, JDK 25) |
+| --- | --- | --- |
+| new `PipeBenchmark` (prebuilt vs `BiFunction` per element) | prebuilt faster; allocation/element down | throughput at parity; allocation **588k → 228k B/op @8 stages (−61%)** |
+| `-prof gc` | allocation per element strictly down | **prebuilt is FLAT (~226k) while dynamic grows with pipeline length (307k @1 → 588k @8)** |
+
+The allocation win is the deterministic one and it is the point: `dynamicPipe`
+re-assembles the pipeline per element, so its garbage grows with the number of
+stages (307k B/op at 1 stage, 588k at 8); `prebuiltPipe` compiles once and
+dispatches off the plan, so it is flat at ~226k regardless — RFC 0011's
+per-request story applied to the per-element path. Throughput is at parity
+(the per-element cost is dominated by engine dispatch, not assembly), so the win
+is GC pressure — which is exactly what bites an ingestion loop at volume.
 
 ## Risks
 

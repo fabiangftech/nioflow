@@ -9,10 +9,8 @@ import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.util.context.ContextView;
 
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -172,33 +170,13 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     @Override
     public Mono<T> executeMono() {
         if (config.keys().isEmpty()) {
-            return Mono.defer(() -> cancellable(delegate.executeCancellable()));
+            return Mono.defer(() -> Monos.fromCancellable(delegate.executeCancellable()));
         }
-        return Mono.deferContextual(view -> cancellable(delegate.executeCancellable(seed(view))));
-    }
-
-    /**
-     * The one place the Reactor side and the engine side of cancellation meet:
-     * doOnCancel fires on dispose (and on a downstream take(1), a timeout, a
-     * disconnected client) and hands it to the execution.
-     */
-    private Mono<T> cancellable(Cancellable<T> handle) {
-        return Mono.fromFuture(handle.future()).doOnCancel(handle::cancel);
-    }
-
-    /**
-     * The declared keys, and only them — the bridge is a WHITELIST. A key the
-     * subscriber context does not carry is not seeded at all: no null entry, and
-     * a stage reading it gets back null exactly as it would for a key nobody ever
-     * wrote. The entries travel as the run's context, not as a write into the
-     * pipeline (with() would leak this subscription's values into the next one).
-     */
-    private Map<String, Object> seed(ContextView view) {
-        Map<String, Object> seeded = HashMap.newHashMap(config.keys().size());
-        for (Context.Key<?> key : config.keys()) {
-            view.getOrEmpty(key.name()).ifPresent(value -> seeded.put(key.name(), value));
-        }
-        return seeded;
+        // The entries travel as the run's context, not as a write into the
+        // pipeline (with() would leak this subscription's values into the next
+        // one), and they are read per subscription inside the defer.
+        return Mono.deferContextual(view ->
+                Monos.fromCancellable(delegate.executeCancellable(Monos.seed(view, config.keys()))));
     }
 
     /**
