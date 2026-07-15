@@ -75,7 +75,11 @@ public interface ReactiveLane<T> extends Lane<T> {
      * {@link ReactiveStep#adaptFlux(Function)}. Prefer the bounded overload — a
      * branch or a fork body is no safer a place to buffer an unbounded stream
      * than the main line is.
+     *
+     * @deprecated Collecting an unbounded Flux is an OOM waiting to happen. Use
+     *         {@link #adaptFlux(Function, int)} to name a cap. Not for removal.
      */
+    @Deprecated(forRemoval = false)
     <R> ReactiveLane<List<R>> adaptFlux(Function<T, Flux<R>> call);
 
     /** The same collect, bounded — see {@link ReactiveStep#adaptFlux(Function, int)}. */
@@ -149,6 +153,13 @@ public interface ReactiveLane<T> extends Lane<T> {
 
     @Override
     <R, C> ReactiveLane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
+
+    @Override
+    <R, C> ReactiveLane<C> fanOutAsync(List<Function<T, CompletionStage<R>>> branches, Function<List<R>, C> join);
+
+    @Override
+    <R, C> ReactiveLane<C> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                       Function<List<R>, C> join);
 
     @Override
     <R> ReactiveLane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk);

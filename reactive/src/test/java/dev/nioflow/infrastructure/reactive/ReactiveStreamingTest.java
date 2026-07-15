@@ -125,6 +125,7 @@ class ReactiveStreamingTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")   // the whole point of this test is the uncapped overload
     void theUnCappedOverloadStillBehavesExactlyAsBefore() {
         // It has to survive — removing it breaks every existing call site.
         List<Integer> rows = flow.just(4)

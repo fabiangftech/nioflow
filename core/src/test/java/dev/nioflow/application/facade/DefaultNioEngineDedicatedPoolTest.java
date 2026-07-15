@@ -61,13 +61,24 @@ class DefaultNioEngineDedicatedPoolTest {
             engine.call(i, new ConcurrentHashMap<>()).join();
         }
 
-        // The pool never exceeds bossCount...
-        assertEquals(2, Set.copyOf(firstLink).size());
+        // Caller-thread affinity: unkeyed calls from THIS one thread all pin to
+        // the same boss (cache locality), never exceeding bossCount...
+        assertEquals(1, Set.copyOf(firstLink).size(), "one producer thread pins to one boss");
+        assertTrue(Set.copyOf(firstLink).size() <= 2, "the pool never exceeds bossCount");
         // ...and each execution stays pinned to ITS boss across the worker hop.
         for (int i = 0; i < firstLink.size(); i++) {
             assertEquals(firstLink.get(i), secondLink.get(i),
                     "execution " + i + " changed boss across a dispatch");
         }
+
+        // Distinct keys spread deterministically across the whole pool (key
+        // affinity, not round-robin), proving bossCount bosses are really there.
+        firstLink.clear();
+        for (int k = 0; k < 8; k++) {
+            engine.call(k, new ConcurrentHashMap<>(), engine.chain(), k).join();
+        }
+        assertEquals(2, Set.copyOf(firstLink).size(), "distinct keys reach both bosses");
+
         engine.shutdown(Duration.ofMillis(200));
     }
 

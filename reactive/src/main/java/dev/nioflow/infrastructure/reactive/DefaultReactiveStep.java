@@ -9,10 +9,8 @@ import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.util.context.ContextView;
 
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -55,6 +53,9 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget) {
+        if (config.preferAsync()) {
+            return handleMonoAsync(name, call, budget);
+        }
         return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
@@ -65,6 +66,9 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry) {
+        if (config.preferAsync()) {
+            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget, retry));
+        }
         return wrap(delegate.handle(name,
                 value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
     }
@@ -127,10 +131,15 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call, Duration budget) {
+        if (config.preferAsync()) {
+            return adaptMonoAsync(call, budget);
+        }
         return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
+    /** @deprecated see {@link ReactiveStep#adaptFlux(Function)} — prefer the bounded overload. */
     @Override
+    @Deprecated(forRemoval = false)
     public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call) {
         return retyped(delegate.adapt(
                 value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), config.budget()))));
@@ -145,7 +154,7 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     @Override
     public <R, C> ReactiveStep<C, O> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                                 Function<List<R>, C> join) {
-        return retyped(delegate.fanOut(name, Blocking.branches(branches, config.budget()), join));
+        return retyped(delegate.fanOutAsync(name, Blocking.asyncBranches(branches, config.budget()), join));
     }
 
     /**
@@ -172,33 +181,13 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     @Override
     public Mono<T> executeMono() {
         if (config.keys().isEmpty()) {
-            return Mono.defer(() -> cancellable(delegate.executeCancellable()));
+            return Mono.defer(() -> Monos.fromCancellable(delegate.executeCancellable()));
         }
-        return Mono.deferContextual(view -> cancellable(delegate.executeCancellable(seed(view))));
-    }
-
-    /**
-     * The one place the Reactor side and the engine side of cancellation meet:
-     * doOnCancel fires on dispose (and on a downstream take(1), a timeout, a
-     * disconnected client) and hands it to the execution.
-     */
-    private Mono<T> cancellable(Cancellable<T> handle) {
-        return Mono.fromFuture(handle.future()).doOnCancel(handle::cancel);
-    }
-
-    /**
-     * The declared keys, and only them — the bridge is a WHITELIST. A key the
-     * subscriber context does not carry is not seeded at all: no null entry, and
-     * a stage reading it gets back null exactly as it would for a key nobody ever
-     * wrote. The entries travel as the run's context, not as a write into the
-     * pipeline (with() would leak this subscription's values into the next one).
-     */
-    private Map<String, Object> seed(ContextView view) {
-        Map<String, Object> seeded = HashMap.newHashMap(config.keys().size());
-        for (Context.Key<?> key : config.keys()) {
-            view.getOrEmpty(key.name()).ifPresent(value -> seeded.put(key.name(), value));
-        }
-        return seeded;
+        // The entries travel as the run's context, not as a write into the
+        // pipeline (with() would leak this subscription's values into the next
+        // one), and they are read per subscription inside the defer.
+        return Mono.deferContextual(view ->
+                Monos.fromCancellable(delegate.executeCancellable(Monos.seed(view, config.keys()))));
     }
 
     /**
@@ -296,6 +285,18 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     }
 
     @Override
+    public <R, C> ReactiveStep<C, O> fanOutAsync(List<Function<T, CompletionStage<R>>> branches,
+                                                 Function<List<R>, C> join) {
+        return retyped(delegate.fanOutAsync(branches, join));
+    }
+
+    @Override
+    public <R, C> ReactiveStep<C, O> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                                 Function<List<R>, C> join) {
+        return retyped(delegate.fanOutAsync(name, branches, join));
+    }
+
+    @Override
     public <R> ReactiveStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
         return retyped(delegate.batch(size, window, bulk));
     }
@@ -308,17 +309,17 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<T, O> fork(Segment<T, R> sub) {
-        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget())));
+        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget(), config.preferAsync())));
     }
 
     @Override
     public <R> ReactiveStep<T, O> fork(String name, Segment<T, R> sub) {
-        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget())));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget(), config.preferAsync())));
     }
 
     @Override
     public <R> ReactiveStep<R, O> use(Segment<T, R> segment) {
-        return retyped(delegate.use(Lanes.budgeted(segment, config.budget())));
+        return retyped(delegate.use(Lanes.budgeted(segment, config.budget(), config.preferAsync())));
     }
 
     @Override

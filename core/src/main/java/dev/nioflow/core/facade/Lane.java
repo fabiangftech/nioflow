@@ -76,6 +76,12 @@ public interface Lane<T> {
 
     <R, C> Lane<C> fanOut(String name, List<Function<T, R>> branches, Function<List<R>, C> join);
 
+    /** Async split-join; see NioFlow#fanOutAsync. Lane-scoped like every other lane step. */
+    <R, C> Lane<C> fanOutAsync(List<Function<T, CompletionStage<R>>> branches, Function<List<R>, C> join);
+
+    <R, C> Lane<C> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                               Function<List<R>, C> join);
+
     /**
      * Coalescing point; see NioFlow#batch. Lane-scoped: only values routed
      * through this branch pool together.

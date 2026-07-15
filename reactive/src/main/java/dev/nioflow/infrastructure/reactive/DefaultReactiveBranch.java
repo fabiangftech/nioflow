@@ -16,6 +16,6 @@ class DefaultReactiveBranch<I, O> extends DefaultReactiveFlow<I, O> implements R
 
     @Override
     public ReactiveFlow<I, O> otherwise(UnaryOperator<Lane<I>> lane) {
-        return new DefaultReactiveFlow<>(branch.otherwise(Lanes.budgeted(lane, config.budget())), config);
+        return new DefaultReactiveFlow<>(branch.otherwise(Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
     }
 }

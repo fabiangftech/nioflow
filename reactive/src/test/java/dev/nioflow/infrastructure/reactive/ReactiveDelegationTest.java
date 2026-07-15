@@ -135,6 +135,7 @@ class ReactiveDelegationTest {
 
     /** Every step of the PER-REQUEST pipeline, including the ones that re-type. */
     @Test
+    @SuppressWarnings("deprecation")   // exercises the uncapped adaptFlux on purpose
     void everyStepDelegatesAndStaysReactive() {
         ConcurrentLinkedQueue<Object> seen = new ConcurrentLinkedQueue<>();
         Segment<Integer, Integer> segment = lane -> lane.handle("segment", value -> value + 1);
@@ -240,6 +241,7 @@ class ReactiveDelegationTest {
 
     /** when()/match() INSIDE a lane: ReactiveLaneCondition / Branch / Cases. */
     @Test
+    @SuppressWarnings("deprecation")   // exercises the uncapped adaptFlux on purpose
     void branchingInsideALaneKeepsTheLaneReactive() {
         Function<Integer, Integer> route = input -> flow.just(input)
                 .when(value -> value > 0)
@@ -263,6 +265,7 @@ class ReactiveDelegationTest {
 
     /** Lane steps reached through a fork sub-flow (the ReactiveLane mirror). */
     @Test
+    @SuppressWarnings("deprecation")   // exercises the uncapped adaptFlux on purpose
     void everyLaneStepDelegates() throws InterruptedException {
         CountDownLatch done = new CountDownLatch(1);
         ConcurrentLinkedQueue<Object> seen = new ConcurrentLinkedQueue<>();

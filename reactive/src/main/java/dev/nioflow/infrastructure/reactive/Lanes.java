@@ -25,11 +25,15 @@ final class Lanes {
     private Lanes() {
     }
 
-    static <T> UnaryOperator<Lane<T>> budgeted(UnaryOperator<Lane<T>> lane, Duration budget) {
-        return budget == null ? lane : core -> lane.apply(new DefaultReactiveLane<>(core, budget));
+    static <T> UnaryOperator<Lane<T>> budgeted(UnaryOperator<Lane<T>> lane, Duration budget, boolean preferAsync) {
+        return budget == null && !preferAsync
+                ? lane
+                : core -> lane.apply(new DefaultReactiveLane<>(core, budget, preferAsync));
     }
 
-    static <T, R> Segment<T, R> budgeted(Segment<T, R> segment, Duration budget) {
-        return budget == null ? segment : core -> segment.define(new DefaultReactiveLane<>(core, budget));
+    static <T, R> Segment<T, R> budgeted(Segment<T, R> segment, Duration budget, boolean preferAsync) {
+        return budget == null && !preferAsync
+                ? segment
+                : core -> segment.define(new DefaultReactiveLane<>(core, budget, preferAsync));
     }
 }

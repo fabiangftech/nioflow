@@ -141,6 +141,18 @@ abstract class NioStepDelegate<T, O> implements NioStep<T, O> {
     }
 
     @Override
+    public <R, C> NioStep<C, O> fanOutAsync(List<Function<T, CompletionStage<R>>> branches,
+                                            Function<List<R>, C> join) {
+        return step().fanOutAsync(branches, join);
+    }
+
+    @Override
+    public <R, C> NioStep<C, O> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                            Function<List<R>, C> join) {
+        return step().fanOutAsync(name, branches, join);
+    }
+
+    @Override
     public <R> NioStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
         return step().batch(size, window, bulk);
     }

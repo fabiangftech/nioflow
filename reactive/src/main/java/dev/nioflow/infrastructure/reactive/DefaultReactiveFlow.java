@@ -2,6 +2,7 @@ package dev.nioflow.infrastructure.reactive;
 
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.Pipeline;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
@@ -62,6 +63,18 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
         return new DefaultReactiveFlow<>(delegate, config.withKeys(keys));
     }
 
+    @Override
+    public ReactiveFlow<I, O> preferAsync() {
+        return new DefaultReactiveFlow<>(delegate, config.withPreferAsync());
+    }
+
+    // The step a pipe hands each element: the flow's config plus preferAsync, so a
+    // handleMono in the pipeline holds a future instead of parking a worker — the
+    // ingestion-loop default (RFC 0015). Nothing else about the step changes.
+    private ReactiveStep<I, O> pipeStep(I input) {
+        return new DefaultReactiveStep<>(delegate.just(input), config.withPreferAsync());
+    }
+
     // ── the reactive steps: ordinary stages whose function parks on a Mono ──
 
     @Override
@@ -71,6 +84,9 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget) {
+        if (config.preferAsync()) {
+            return handleMonoAsync(name, call, budget);
+        }
         return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
@@ -81,6 +97,9 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget, Retry retry) {
+        if (config.preferAsync()) {
+            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget, retry));
+        }
         return wrap(delegate.handle(name,
                 value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
     }
@@ -121,7 +140,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     @Override
     public <R> ReactiveFlow<I, O> fanOutMono(String name, List<Function<I, Mono<R>>> branches,
                                              Function<List<R>, I> join) {
-        return wrap(delegate.fanOut(name, Blocking.branches(branches, config.budget()), join));
+        return wrap(delegate.fanOutAsync(name, Blocking.asyncBranches(branches, config.budget()), join));
     }
 
     // ── a Flux through the flow: Reactor's operators do the backpressure ──
@@ -130,7 +149,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     public <R> Function<Flux<I>, Flux<R>> pipe(
             int concurrency, BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline) {
         checkConcurrency(concurrency);
-        return flux -> flux.flatMap(input -> pipeline.apply(input, just(input)).executeMono(), concurrency);
+        return flux -> flux.flatMap(input -> pipeline.apply(input, pipeStep(input)).executeMono(), concurrency);
     }
 
     @Override
@@ -139,7 +158,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
         checkConcurrency(concurrency);
         checkPrefetch(prefetch);
         return flux -> flux.flatMap(
-                input -> pipeline.apply(input, just(input)).executeMono(), concurrency, prefetch);
+                input -> pipeline.apply(input, pipeStep(input)).executeMono(), concurrency, prefetch);
     }
 
     @Override
@@ -147,7 +166,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
             int concurrency, BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline) {
         checkConcurrency(concurrency);
         return flux -> flux.flatMapSequential(
-                input -> pipeline.apply(input, just(input)).executeMono(), concurrency);
+                input -> pipeline.apply(input, pipeStep(input)).executeMono(), concurrency);
     }
 
     @Override
@@ -156,7 +175,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
         checkConcurrency(concurrency);
         checkPrefetch(prefetch);
         return flux -> flux.flatMapSequential(
-                input -> pipeline.apply(input, just(input)).executeMono(), concurrency, prefetch);
+                input -> pipeline.apply(input, pipeStep(input)).executeMono(), concurrency, prefetch);
     }
 
     @Override
@@ -168,11 +187,68 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
             throw new IllegalArgumentException("pipeResilient needs an element-error handler:"
                     + " dropping an element silently is exactly what it exists to prevent");
         }
-        return flux -> flux.flatMap(input -> pipeline.apply(input, just(input)).executeMono()
+        return flux -> flux.flatMap(input -> pipeline.apply(input, pipeStep(input)).executeMono()
                 .onErrorResume(error -> {
                     onElementError.accept(input, error);
                     return Mono.empty();
                 }), concurrency);
+    }
+
+    // ── pipe over a PREBUILT pipeline (RFC 0014): assemble once, execute per element ──
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipe(int concurrency, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        return flux -> flux.flatMap(input -> elementMono(pipeline, input), concurrency);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipe(int concurrency, int prefetch, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        checkPrefetch(prefetch);
+        return flux -> flux.flatMap(input -> elementMono(pipeline, input), concurrency, prefetch);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        return flux -> flux.flatMapSequential(input -> elementMono(pipeline, input), concurrency);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency, int prefetch, Pipeline<I, R> pipeline) {
+        checkConcurrency(concurrency);
+        checkPrefetch(prefetch);
+        return flux -> flux.flatMapSequential(input -> elementMono(pipeline, input), concurrency, prefetch);
+    }
+
+    @Override
+    public <R> Function<Flux<I>, Flux<R>> pipeResilient(int concurrency, Pipeline<I, R> pipeline,
+                                                        BiConsumer<I, Throwable> onElementError) {
+        checkConcurrency(concurrency);
+        if (onElementError == null) {
+            throw new IllegalArgumentException("pipeResilient needs an element-error handler:"
+                    + " dropping an element silently is exactly what it exists to prevent");
+        }
+        return flux -> flux.flatMap(input -> elementMono(pipeline, input)
+                .onErrorResume(error -> {
+                    onElementError.accept(input, error);
+                    return Mono.empty();
+                }), concurrency);
+    }
+
+    /**
+     * One element through the prebuilt pipeline, as a Mono: dispatched off the
+     * plan compiled once (no per-element assembly), lazy and per-subscription
+     * like {@code executeMono}, with the flow's propagated keys seeded from the
+     * subscriber context.
+     */
+    private <R> Mono<R> elementMono(Pipeline<I, R> pipeline, I input) {
+        if (config.keys().isEmpty()) {
+            return Mono.defer(() -> Monos.fromCancellable(pipeline.just(input).executeCancellable()));
+        }
+        return Mono.deferContextual(view -> Monos.fromCancellable(
+                pipeline.just(input).executeCancellable(Monos.seed(view, config.keys()))));
     }
 
     /**
@@ -282,6 +358,18 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     }
 
     @Override
+    public <R> ReactiveFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches,
+                                              Function<List<R>, I> join) {
+        return wrap(delegate.fanOutAsync(branches, join));
+    }
+
+    @Override
+    public <R> ReactiveFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                              Function<List<R>, I> join) {
+        return wrap(delegate.fanOutAsync(name, branches, join));
+    }
+
+    @Override
     public ReactiveFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return wrap(delegate.batch(size, window, bulk));
     }
@@ -293,22 +381,22 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public <R> ReactiveFlow<I, O> fork(Segment<I, R> sub) {
-        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget())));
+        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget(), config.preferAsync())));
     }
 
     @Override
     public <R> ReactiveFlow<I, O> fork(String name, Segment<I, R> sub) {
-        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget())));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget(), config.preferAsync())));
     }
 
     @Override
     public ReactiveFlow<I, O> use(Segment<I, I> segment) {
-        return wrap(delegate.use(Lanes.budgeted(segment, config.budget())));
+        return wrap(delegate.use(Lanes.budgeted(segment, config.budget(), config.preferAsync())));
     }
 
     @Override
     public ReactiveFlow<I, O> use(String region, Segment<I, I> segment) {
-        return wrap(delegate.use(region, Lanes.budgeted(segment, config.budget())));
+        return wrap(delegate.use(region, Lanes.budgeted(segment, config.budget(), config.preferAsync())));
     }
 
     @Override
@@ -334,6 +422,15 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     @Override
     public ReactiveCondition<I, O> when(Predicate<I> predicate) {
         return new DefaultReactiveCondition<>(delegate.when(predicate), config);
+    }
+
+    // A prebuilt pipeline is core's, but its segment gets the reactive config's
+    // default budget woven in — same as use()/fork() — so a handleMono inside it
+    // is still bounded. The returned Pipeline is core's: a reactive mirror with
+    // executeMono is a later step (RFC 0014).
+    @Override
+    public <R> Pipeline<I, R> pipeline(Segment<I, R> segment) {
+        return delegate.pipeline(Lanes.budgeted(segment, config.budget(), config.preferAsync()));
     }
 
     @Override

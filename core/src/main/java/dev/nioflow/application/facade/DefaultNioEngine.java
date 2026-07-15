@@ -5,6 +5,7 @@ import dev.nioflow.core.facade.ChainValidationException;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
+import dev.nioflow.core.facade.PreparedChain;
 import dev.nioflow.core.model.AsyncStage;
 import dev.nioflow.core.model.Background;
 import dev.nioflow.core.model.Batch;
@@ -46,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -54,6 +56,7 @@ import java.util.function.Function;
 public class DefaultNioEngine implements NioEngine {
 
     private static final String NIO_FLOW_BOSS = "nio-flow-boss-";
+    private static final String ASYNC_STAGE = "Async stage '";
 
     // Public sentinel carried by raw call() futures when a Filter cut the
     // execution. Engine exits (await, complete handlers) and the flow-level
@@ -92,7 +95,10 @@ public class DefaultNioEngine implements NioEngine {
         ThreadFactory factory = Thread.ofPlatform().name(namePrefix, 0).daemon(true).factory();
         ExecutorService[] bosses = new ExecutorService[count];
         for (int i = 0; i < bosses.length; i++) {
-            bosses[i] = Executors.newSingleThreadExecutor(factory);
+            // A purpose-built single-consumer event loop, not a ThreadPoolExecutor:
+            // handoffs to a busy boss cost an atomic swap, not a lock plus an
+            // unpark syscall. See BossLoop.
+            bosses[i] = new BossLoop(factory);
         }
         return bosses;
     }
@@ -100,7 +106,6 @@ public class DefaultNioEngine implements NioEngine {
     private final ExecutorService[] bossExecutorServices;
     private final ExecutorService workersExecutorService;
     private final boolean ownsExecutors;
-    private final AtomicInteger bossCursor = new AtomicInteger();
 
     // Backpressure for inject/await: permits are acquired BEFORE the execution
     // starts and released when await() collects the result — the bounded
@@ -116,14 +121,17 @@ public class DefaultNioEngine implements NioEngine {
     private final AtomicReference<NioFlowMetrics> metrics = new AtomicReference<>();
 
     // Graceful drain: closed rejects new work; activeExecutions tracks
-    // in-flight ones so shutdown() can wait for them to finish.
+    // in-flight ones so shutdown() can wait for them to finish. A LongAdder,
+    // not an AtomicInteger: it is bumped for every execution and every fork on
+    // one JVM-wide cacheline, and striping it removes that contention from the
+    // hot path. The cost is that the zero transition is no longer atomically
+    // observable, so awaitDrain polls sum() (a cold path — shutdown only).
     private volatile boolean closed;
-    private final AtomicInteger activeExecutions = new AtomicInteger();
+    private final LongAdder activeExecutions = new LongAdder();
     // Detached sub-flows currently running. They are counted in
     // activeExecutions too (the drain must wait for them); this one only feeds
     // the forksInFlight gauge.
     private final AtomicInteger activeForks = new AtomicInteger();
-    private final Object drainLock = new Object();
 
     /**
      * The chain and the plan compiled for it are ONE value, swapped atomically:
@@ -306,6 +314,47 @@ public class DefaultNioEngine implements NioEngine {
         return new ExecutionHandle(submit(input, context, chain, key));
     }
 
+    @Override
+    public CompletableFuture<Object> call(Object input, Map<String, Object> context,
+                                          PreparedChain prepared, Object key) {
+        if (closed) {
+            return CompletableFuture.failedFuture(rejection());
+        }
+        return submit(input, context, ((Prepared) prepared).plan(), key).result;
+    }
+
+    @Override
+    public Cancellable<Object> callCancellable(Object input, Map<String, Object> context,
+                                               PreparedChain prepared, Object key) {
+        if (closed) {
+            return new RejectedCall(CompletableFuture.failedFuture(rejection()));
+        }
+        return new ExecutionHandle(submit(input, context, ((Prepared) prepared).plan(), key));
+    }
+
+    @Override
+    public PreparedChain prepare(List<Link> chain) {
+        List<Link> links = List.copyOf(chain);
+        List<String> problems = ChainValidator.validate(links);
+        if (!problems.isEmpty()) {
+            throw new ChainValidationException(problems);
+        }
+        return new Prepared(CompiledChain.compile(links));
+    }
+
+    @Override
+    public PreparedChain planFor(List<Link> chain) {
+        // No validation on purpose: a per-request chain's anonymous names may
+        // duplicate the shared chain's (both counters start at 0), which is
+        // fine to run but the validator would reject. Same behaviour the
+        // interpreted per-request path always had, now with a plan.
+        return new Prepared(CompiledChain.compile(List.copyOf(chain)));
+    }
+
+    /** The opaque handle prepare()/planFor() hand out: a compiled plan and nothing else. */
+    private record Prepared(CompiledChain plan) implements PreparedChain {
+    }
+
     private RejectedExecutionException rejection() {
         RejectedExecutionException rejection =
                 new RejectedExecutionException("Engine is shut down; call rejected");
@@ -321,7 +370,25 @@ public class DefaultNioEngine implements NioEngine {
         CompiledChain plan = current.links() == chain ? current.plan() : null;
         Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
                 plan != null ? chain : List.copyOf(chain), context, plan, input, key, null);
-        activeExecutions.incrementAndGet();
+        activeExecutions.increment();
+        try {
+            execution.boss.execute(execution);
+        } catch (RejectedExecutionException rejected) {
+            execution.fail(rejected);
+        }
+        return execution;
+    }
+
+    /**
+     * The same submission off a prebuilt plan: no defensive copy and no
+     * decision rescan (the plan carries both the links it was compiled for and
+     * their highest decision id). The chain the Execution walks IS the plan's
+     * own list, so positions line up.
+     */
+    private Execution submit(Object input, Map<String, Object> context, CompiledChain plan, Object key) {
+        Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
+                plan.links(), context, plan, input, key, null);
+        activeExecutions.increment();
         try {
             execution.boss.execute(execution);
         } catch (RejectedExecutionException rejected) {
@@ -570,21 +637,19 @@ public class DefaultNioEngine implements NioEngine {
 
     private int awaitDrain(Duration gracePeriod) {
         long deadline = System.nanoTime() + gracePeriod.toNanos();
-        synchronized (drainLock) {
-            while (activeExecutions.get() > 0) {
-                long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-                if (remainingMillis <= 0) {
-                    break;
-                }
-                try {
-                    drainLock.wait(remainingMillis);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
+        // Poll instead of wait/notify: a LongAdder cannot signal its zero
+        // transition, and this is the shutdown path — millisecond latency here
+        // is invisible. The contract is unchanged: 0 returned means every
+        // execution has fully reported.
+        while (activeExecutions.sum() > 0 && System.nanoTime() < deadline) {
+            try {
+                TimeUnit.MILLISECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             }
         }
-        return activeExecutions.get();
+        return Math.toIntExact(Math.max(0, activeExecutions.sum()));
     }
 
     // Error handlers never break the engine or each other: one throwing
@@ -604,17 +669,26 @@ public class DefaultNioEngine implements NioEngine {
         return keyLanes.size();
     }
 
+    // Caller-thread affinity instead of a shared round-robin cursor: no atomic
+    // on the call() path, and a request thread keeps landing on the same boss
+    // (cache locality). Sequential thread ids spread across the pool at least
+    // as evenly as a counter would; execute() is synchronous per thread, so
+    // one producer never floods one boss with concurrent work.
     private ExecutorService nextBoss() {
         if (bossExecutorServices.length == 1) {
             return bossExecutorServices[0];
         }
-        return bossExecutorServices[Math.floorMod(bossCursor.getAndIncrement(), bossExecutorServices.length)];
+        return bossExecutorServices[Math.floorMod(Thread.currentThread().threadId(), bossExecutorServices.length)];
     }
 
     // Deterministic affinity: the same key always lands on the same boss, so
-    // its lane state is only ever touched by one thread — no locks.
+    // its lane state is only ever touched by one thread — no locks. The hash is
+    // spread (as HashMap does) so keys with clustered low bits — a Long id, a
+    // sequential order number — do not all serialize onto one boss.
     private ExecutorService bossFor(Object key) {
-        return bossExecutorServices[Math.floorMod(key.hashCode(), bossExecutorServices.length)];
+        int h = key.hashCode();
+        h ^= (h >>> 16);
+        return bossExecutorServices[Math.floorMod(h, bossExecutorServices.length)];
     }
 
     private static int anchorIndex(List<Link> links, String anchor) {
@@ -676,8 +750,8 @@ public class DefaultNioEngine implements NioEngine {
      * records the chain's highest Decision id so executions size their
      * decision bitset without rescanning.
      */
-    record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, int maxDecisionId,
-                         Map<Fork, CompiledChain> forkPlans) {
+    record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, AsyncStage[][] asyncRuns,
+                         int maxDecisionId, Map<Fork, CompiledChain> forkPlans) {
 
         static CompiledChain compile(List<Link> links) {
             int size = links.size();
@@ -700,8 +774,43 @@ public class DefaultNioEngine implements NioEngine {
                     runs[i] = links.subList(i, end).toArray(Link[]::new);
                 }
             }
-            return new CompiledChain(links, runs, runEnds, DefaultNioEngine.maxDecisionId(links),
-                    compileForks(links));
+            return new CompiledChain(links, runs, runEnds, asyncRuns(links),
+                    DefaultNioEngine.maxDecisionId(links), compileForks(links));
+        }
+
+        /**
+         * The async fusion windows (RFC 0013): a run of consecutive UNGUARDED
+         * AsyncStages is driven from the worker side, touching the boss once for
+         * the whole run instead of twice per stage. Only unguarded runs of
+         * length >= 2 are precollected — a guarded async stage (in a lane) and a
+         * lone one fall back to single dispatch, identically. asyncRuns[i] is set
+         * only at the START of a maximal run, which is the only index the boss
+         * ever reaches (it drives the whole run and resumes past it).
+         */
+        private static AsyncStage[][] asyncRuns(List<Link> links) {
+            int size = links.size();
+            AsyncStage[][] asyncRuns = new AsyncStage[size][];
+            for (int i = 0; i < size; i++) {
+                // The START of a maximal run of unguarded async stages — the only
+                // index the boss ever reaches (it drives the whole run past it).
+                boolean runStart = isUnguardedAsync(links.get(i))
+                        && !(i > 0 && isUnguardedAsync(links.get(i - 1)));
+                if (runStart) {
+                    int end = i + 1;
+                    while (end < size && isUnguardedAsync(links.get(end))) {
+                        end++;
+                    }
+                    if (end - i >= 2) {
+                        asyncRuns[i] = links.subList(i, end).toArray(AsyncStage[]::new);
+                    }
+                }
+            }
+            return asyncRuns;
+        }
+
+        private static boolean isUnguardedAsync(Link link) {
+            List<Guard> guards = link.guards();
+            return link instanceof AsyncStage && (guards == null || guards.isEmpty());
         }
 
         /**
@@ -731,11 +840,12 @@ public class DefaultNioEngine implements NioEngine {
         public boolean equals(Object other) {
             return this == other
                     || other instanceof CompiledChain(var otherLinks, var otherRuns, var otherRunEnds,
-                    var otherMaxId, var otherForkPlans)
+                    var otherAsyncRuns, var otherMaxId, var otherForkPlans)
                     && maxDecisionId == otherMaxId
                     && links.equals(otherLinks)
                     && Arrays.deepEquals(runs, otherRuns)
                     && Arrays.equals(runEnds, otherRunEnds)
+                    && Arrays.deepEquals(asyncRuns, otherAsyncRuns)
                     && forkPlans.equals(otherForkPlans);
         }
 
@@ -744,6 +854,7 @@ public class DefaultNioEngine implements NioEngine {
             int result = links.hashCode();
             result = 31 * result + Arrays.deepHashCode(runs);
             result = 31 * result + Arrays.hashCode(runEnds);
+            result = 31 * result + Arrays.deepHashCode(asyncRuns);
             result = 31 * result + maxDecisionId;
             return 31 * result + forkPlans.size();
         }
@@ -753,6 +864,7 @@ public class DefaultNioEngine implements NioEngine {
             return "CompiledChain[links=" + links
                     + ", runs=" + Arrays.deepToString(runs)
                     + ", runEnds=" + Arrays.toString(runEnds)
+                    + ", asyncRuns=" + Arrays.deepToString(asyncRuns)
                     + ", maxDecisionId=" + maxDecisionId
                     + ", forkPlans=" + forkPlans.size() + "]";
         }
@@ -1084,11 +1196,10 @@ public class DefaultNioEngine implements NioEngine {
                     reportExecution(value, error);
                 }
             } finally {
-                if (activeExecutions.decrementAndGet() == 0) {
-                    synchronized (drainLock) {
-                        drainLock.notifyAll();
-                    }
-                }
+                // Released last: "in flight" means "not fully reported yet", so
+                // a clean drain guarantees every metric and handler already ran.
+                // awaitDrain observes the decrement by polling sum().
+                activeExecutions.decrement();
             }
         }
 
@@ -1171,7 +1282,7 @@ public class DefaultNioEngine implements NioEngine {
                     plan == null ? null : plan.forkPlans().get(fork), value, null, fork);
             // Both counters BEFORE the submission: a fork is in-flight work, so
             // shutdown(grace) must wait for it even if it is still queued.
-            activeExecutions.incrementAndGet();
+            activeExecutions.increment();
             int running = activeForks.incrementAndGet();
             if (child.metrics != null) {
                 child.metrics.forkStarted(fork.name());
@@ -1245,8 +1356,15 @@ public class DefaultNioEngine implements NioEngine {
                 }
                 case AsyncStage async -> {
                     // A worker INVOKES the call and is released; the boss resumes
-                    // when the CompletionStage completes. Nothing parks.
-                    attemptAsync(async, index + 1, current, 1);
+                    // when the CompletionStage completes. Nothing parks. A run of
+                    // consecutive unguarded async stages is driven from the worker
+                    // side (RFC 0013): the boss is touched once, not per stage.
+                    AsyncStage[] run = plan != null ? plan.asyncRuns()[index] : null;
+                    if (run != null) {
+                        new AsyncRun(run, index).begin(current);
+                    } else {
+                        attemptAsync(async, index + 1, current, 1);
+                    }
                     return HANDED_OFF;
                 }
                 case Decision decision -> recordDecision(decision.id(), decision.predicate().test(current));
@@ -1454,34 +1572,161 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         /**
-         * Parallel split-join: every branch gets the same value and its own
-         * worker; the join runs on a worker once all branches finish (user code
-         * never touches the boss) and the combined value resumes on the boss.
-         * A failing branch fails the whole fan-out through the recovery path.
+         * Parallel split-join, as a countdown instead of a CompletableFuture
+         * tree: one result slot per branch (written only by that branch — no
+         * sharing), an {@link AtomicInteger} the branches count down, and a
+         * first-failure {@link AtomicReference} the branches CAS. The branch
+         * that decrements the counter to zero runs {@code join} and hops to the
+         * boss once — no {@code allOf} tree, no dependent futures, and no
+         * dedicated virtual thread for the join.
+         *
+         * <p>The counter's read-modify-write is the memory barrier: each branch
+         * writes its slot (and, on failure, CASes the throwable) BEFORE it
+         * decrements, so the thread that observes zero sees every slot and the
+         * winning failure. A failing branch skips the join and takes the
+         * recovery path.
          */
         private void dispatchFanOut(FanOut fanOut, int resume, Object value) {
-            List<Function<Object, Object>> branches = fanOut.branches();
-            @SuppressWarnings("unchecked")
-            CompletableFuture<Object>[] tasks = new CompletableFuture[branches.size()];
-            for (int i = 0; i < branches.size(); i++) {
-                var branch = branches.get(i);
-                tasks[i] = CompletableFuture.supplyAsync(() -> branch.apply(value), workersExecutorService);
+            new FanOutJoin(fanOut, resume, value).dispatch();
+        }
+
+        /**
+         * The shared state of one in-flight fan-out: a result slot per branch
+         * (each written only by its branch), the countdown, and the first-failure
+         * winner. The counter's read-modify-write is the memory barrier — every
+         * branch fills its slot (or CASes the throwable) BEFORE it counts down, so
+         * the branch that reads zero sees every slot and the winning failure.
+         */
+        private final class FanOutJoin {
+
+            private final FanOut fanOut;
+            private final List<Function<Object, Object>> branches;
+            private final int resume;
+            private final Object value;
+            private final Object[] results;
+            private final AtomicInteger remaining;
+            private final AtomicReference<Throwable> failure = new AtomicReference<>();
+
+            private FanOutJoin(FanOut fanOut, int resume, Object value) {
+                this.fanOut = fanOut;
+                this.branches = fanOut.branches();
+                this.resume = resume;
+                this.value = value;
+                this.results = new Object[branches.size()];
+                this.remaining = new AtomicInteger(branches.size());
             }
-            CompletableFuture.allOf(tasks)
-                    .thenApplyAsync(ignored -> {
-                        List<Object> results = new ArrayList<>(tasks.length);
-                        for (CompletableFuture<Object> task : tasks) {
-                            results.add(task.join());
-                        }
-                        return fanOut.join().apply(results);
-                    }, workersExecutorService)
-                    .whenCompleteAsync((nextValue, error) -> {
-                        if (error != null) {
-                            recover(resume, unwrap(error));
-                        } else {
-                            advance(resume, nextValue);
-                        }
-                    }, boss);
+
+            /** Submit every branch to a worker; a rejected submission counts down exceptionally. */
+            private void dispatch() {
+                boolean async = fanOut.async();
+                for (int i = 0; i < branches.size(); i++) {
+                    int slot = i;
+                    Runnable task = async ? () -> invokeAsyncBranch(slot) : () -> runBranch(slot);
+                    try {
+                        workersExecutorService.execute(task);
+                    } catch (RejectedExecutionException rejected) {
+                        // Workers gone mid-shutdown: this branch cannot run, but
+                        // the fan-out must still end. Record the failure and count
+                        // down so the last branch out finishes (exceptionally).
+                        fail(rejected);
+                        branchDone();
+                    }
+                }
+            }
+
+            /** One sync branch on its worker: fill the slot (or CAS the failure), then count down. */
+            private void runBranch(int slot) {
+                try {
+                    succeed(slot, branches.get(slot).apply(value));
+                } catch (Throwable error) {
+                    fail(error);
+                }
+                branchDone();
+            }
+
+            /**
+             * One async branch: the worker INVOKES the branch (building the stage
+             * is user code) and is released; the countdown fires when the stage
+             * completes, on whatever thread completes it — no parked worker.
+             */
+            @SuppressWarnings("unchecked")
+            private void invokeAsyncBranch(int slot) {
+                CompletionStage<Object> stage;
+                try {
+                    stage = (CompletionStage<Object>) branches.get(slot).apply(value);
+                    if (stage == null) {
+                        throw new IllegalStateException("Async fan-out '" + fanOut.name()
+                                + "' branch returned a null CompletionStage");
+                    }
+                } catch (Throwable error) {
+                    fail(error);
+                    branchDoneAsync();
+                    return;
+                }
+                stage.whenComplete((outcome, error) -> {
+                    if (error != null) {
+                        fail(error);
+                    } else {
+                        succeed(slot, outcome);
+                    }
+                    branchDoneAsync();
+                });
+            }
+
+            private void succeed(int slot, Object outcome) {
+                results[slot] = outcome;
+            }
+
+            private void fail(Throwable error) {
+                failure.compareAndSet(null, unwrap(error));
+            }
+
+            /** Sync branch done, on its worker: the last one runs the join here. */
+            private void branchDone() {
+                if (remaining.decrementAndGet() == 0) {
+                    finish();
+                }
+            }
+
+            /**
+             * Async branch done, on the completion thread: the last one dispatches
+             * the join to a worker so it never runs on a foreign loop; if the
+             * workers are gone, it finishes inline (exceptionally) rather than
+             * leaving the execution hung.
+             */
+            private void branchDoneAsync() {
+                if (remaining.decrementAndGet() != 0) {
+                    return;
+                }
+                try {
+                    workersExecutorService.execute(this::finish);
+                } catch (RejectedExecutionException rejected) {
+                    fail(rejected);
+                    finish();
+                }
+            }
+
+            /**
+             * The terminal, on the last branch's worker: a failure skips the join
+             * and takes the recovery path; otherwise the join combines the slots
+             * in declaration order and the value resumes on the boss. Either way,
+             * exactly one hop to the boss.
+             */
+            private void finish() {
+                Throwable error = failure.get();
+                if (error != null) {
+                    resumeOnBoss(() -> recover(resume, error));
+                    return;
+                }
+                Object combined;
+                try {
+                    combined = fanOut.join().apply(Arrays.asList(results));
+                } catch (Throwable joinError) {
+                    resumeOnBoss(() -> recover(resume, unwrap(joinError)));
+                    return;
+                }
+                resumeOnBoss(() -> advance(resume, combined));
+            }
         }
 
         private void dispatchWithTimeout(Stage stage, int resume, Object value) {
@@ -1548,6 +1793,29 @@ public class DefaultNioEngine implements NioEngine {
          * the inline LockSupport loop that Stage uses has nothing to loop on.
          */
         private void attemptAsync(AsyncStage stage, int resume, Object value, int attempt) {
+            // Single async stage: the completion settles on the BOSS, which then
+            // advances/recovers the rest of the chain.
+            attemptAsyncCall(stage, value, boss,
+                    (invokedAt, nextValue, error) ->
+                            settleAsync(stage, resume, value, attempt, invokedAt, nextValue, error));
+        }
+
+        /** What a settled async attempt does with its outcome; the invocation time rides along for the metric. */
+        @FunctionalInterface
+        private interface AsyncSettle {
+            void settle(long invokedAt, Object nextValue, Throwable error);
+        }
+
+        /**
+         * One async attempt, shared by the single-stage path and the fused
+         * async-run driver: a worker invokes the call and is released, a
+         * TimerWheel budget arms the per-attempt timeout (cancelling the call on
+         * expiry), and the completion settles on the given executor — the BOSS
+         * for a lone stage, a WORKER for a run (so the next stage's invocation
+         * never runs on the completing thread and never on the boss).
+         */
+        private void attemptAsyncCall(AsyncStage stage, Object value, java.util.concurrent.Executor settleOn,
+                                      AsyncSettle onSettled) {
             CompletableFuture<Object> attemptResult = new CompletableFuture<>();
             long invokedAt = metrics != null ? System.nanoTime() : 0;
 
@@ -1565,7 +1833,7 @@ public class DefaultNioEngine implements NioEngine {
             TimerWheel.Timeout budget = stage.timeout() == null ? null
                     : TimerWheel.shared().schedule(stage.timeout().toNanos(), () -> {
                         boolean expired = attemptResult.completeExceptionally(new TimeoutException(
-                                "Async stage '" + stage.name() + "' exceeded " + stage.timeout()));
+                                ASYNC_STAGE + stage.name() + "' exceeded " + stage.timeout()));
                         if (expired) {
                             cancel(pendingCall);
                         }
@@ -1575,8 +1843,8 @@ public class DefaultNioEngine implements NioEngine {
                 if (budget != null) {
                     budget.cancel();
                 }
-                settleAsync(stage, resume, value, attempt, invokedAt, nextValue, error);
-            }, boss);
+                onSettled.settle(invokedAt, nextValue, error);
+            }, settleOn);
         }
 
         /** On the boss: continue, retry, or give the failure to the recovery path. */
@@ -1609,6 +1877,185 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         /**
+         * The worker-side driver for a fused run of consecutive AsyncStages
+         * (RFC 0013): it runs beside the boss rather than on it, invoking each
+         * stage on a worker and continuing on a worker when the stage completes —
+         * so the run costs one worker hop per stage instead of two boss hops, and
+         * reaches the boss only once (to advance past the run, recover a failure,
+         * or complete a cancellation).
+         *
+         * <p>It is a SECOND execution driver, so it holds the same invariants the
+         * boss loop does: {@code cancelled} is read between stages (exactly as
+         * {@code applyRun} reads it between fused blocking stages — a fused async
+         * run is several links with no boss boundary between them), user code runs
+         * only on workers (never the boss, never the completing thread), and its
+         * per-stage timeout/retry/metric ride the shared {@link #attemptAsyncCall}.
+         * A failing stage recovers from the chain index right after it, exactly as
+         * the single-stage path does — the run is an optimization, never a
+         * semantic.
+         */
+        private final class AsyncRun {
+
+            private final AsyncStage[] stages;
+            // Chain index of stages[0]; stage at run position p is at start + p,
+            // and the link after the whole run is start + stages.length.
+            private final int start;
+
+            private AsyncRun(AsyncStage[] stages, int start) {
+                this.stages = stages;
+                this.start = start;
+            }
+
+            /** Started on the boss: hop to a worker once, then drive the whole run there. */
+            private void begin(Object value) {
+                try {
+                    workersExecutorService.execute(() -> drive(0, value));
+                } catch (RejectedExecutionException rejected) {
+                    fail(rejected);
+                }
+            }
+
+            /**
+             * The trampoline, on a worker: invoke each stage inline and — when its
+             * CompletionStage is ALREADY resolved (a {@code Mono.just}, a completed
+             * future) — loop straight to the next without a thread hop, so a run of
+             * resolved stages costs one worker run like a fused blocking run does.
+             * A stage still pending registers a callback and stops the loop; that
+             * callback hops back to a worker to resume (never the completing
+             * thread, never the boss). Cancellation is read between stages, exactly
+             * as {@code applyRun} reads it between fused blocking stages.
+             */
+            private void drive(int pos, Object value) {
+                Object current = value;
+                int i = pos;
+                while (i < stages.length) {
+                    if (cancelled) {
+                        resumeOnBoss(() -> complete(CANCELLED));
+                        return;
+                    }
+                    AsyncStage stage = stages[i];
+                    if (stage.timeout() != null || stage.retry() != null) {
+                        // Needs the per-attempt timer/backoff machinery — it cannot
+                        // run inline. It settles on a worker and resumes the run.
+                        attempt(i, current, 1);
+                        return;
+                    }
+                    Object next = inlineStage(stage, i, current);
+                    if (next == HANDED_OFF) {
+                        // Pending (a callback will resume) or terminal (recover /
+                        // cancel already hopped to the boss): the loop is done.
+                        return;
+                    }
+                    current = next;
+                    i++;
+                }
+                Object finalValue = current;
+                resumeOnBoss(() -> advance(start + stages.length, finalValue));
+            }
+
+            /**
+             * Invoke one no-budget stage on this worker. Returns the next value if
+             * its CompletionStage resolved synchronously (loop on), or
+             * {@code HANDED_OFF} if it is still pending (a callback will resume the
+             * run) or the execution already ended (a recover/cancel hop to the boss).
+             */
+            private Object inlineStage(AsyncStage stage, int pos, Object value) {
+                long invokedAt = metrics != null ? System.nanoTime() : 0;
+                CompletionStage<Object> call;
+                try {
+                    call = stage.call().apply(value);
+                    if (call == null) {
+                        throw new IllegalStateException(ASYNC_STAGE + stage.name() + "' returned a null CompletionStage");
+                    }
+                } catch (Throwable error) {
+                    resumeOnBoss(() -> recover(start + pos + 1, unwrap(error)));
+                    return HANDED_OFF;
+                }
+                // Same Dekker handshake as invokeAsync: publish, then re-read
+                // cancelled, so an in-flight call is never left running.
+                pendingCall = call;
+                if (cancelled) {
+                    cancel(call);
+                    resumeOnBoss(() -> complete(CANCELLED));
+                    return HANDED_OFF;
+                }
+                CompletableFuture<Object> future = call.toCompletableFuture();
+                if (!future.isDone()) {
+                    // Genuinely async: resume on a worker when it completes.
+                    call.whenComplete((outcome, error) -> onPending(stage, pos, invokedAt, outcome, error));
+                    return HANDED_OFF;
+                }
+                Object outcome;
+                try {
+                    outcome = future.join();
+                } catch (Throwable error) {
+                    resumeOnBoss(() -> recover(start + pos + 1, unwrap(error)));
+                    return HANDED_OFF;
+                }
+                if (metrics != null) {
+                    metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                }
+                return outcome;
+            }
+
+            /** A pending stage completed on a foreign thread: settle off it, resume the run on a worker. */
+            private void onPending(AsyncStage stage, int pos, long invokedAt, Object outcome, Throwable error) {
+                if (cancelled) {
+                    resumeOnBoss(() -> complete(CANCELLED));
+                    return;
+                }
+                if (error != null) {
+                    resumeOnBoss(() -> recover(start + pos + 1, unwrap(error)));
+                    return;
+                }
+                if (metrics != null) {
+                    metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                }
+                try {
+                    workersExecutorService.execute(() -> drive(pos + 1, outcome));
+                } catch (RejectedExecutionException rejected) {
+                    fail(rejected);
+                }
+            }
+
+            /** A timeout/retry stage inside the run, on the shared per-attempt machinery. */
+            private void attempt(int pos, Object value, int attempt) {
+                attemptAsyncCall(stages[pos], value, workersExecutorService,
+                        (invokedAt, nextValue, error) -> settle(pos, value, attempt, invokedAt, nextValue, error));
+            }
+
+            /** A budgeted stage settled on a WORKER: resume the run inline, retry, or recover. */
+            private void settle(int pos, Object value, int attempt, long invokedAt, Object nextValue, Throwable error) {
+                if (cancelled) {
+                    resumeOnBoss(() -> complete(CANCELLED));
+                    return;
+                }
+                AsyncStage stage = stages[pos];
+                if (error == null) {
+                    if (metrics != null) {
+                        metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                    }
+                    drive(pos + 1, nextValue);   // already on a worker
+                    return;
+                }
+                Retry retry = stage.retry();
+                if (retry == null || attempt >= retry.attempts()) {
+                    resumeOnBoss(() -> recover(start + pos + 1, unwrap(error)));
+                    return;
+                }
+                if (metrics != null) {
+                    metrics.stageRetried(stage.name());
+                }
+                // Backoff on delayedExecutor (cold path), re-invoke on a worker:
+                // there is no parked worker to park a little longer, and the
+                // re-invocation is user code that must stay off the boss.
+                CompletableFuture.delayedExecutor(retry.delayNanos(attempt), TimeUnit.NANOSECONDS,
+                                workersExecutorService)
+                        .execute(() -> attempt(pos, value, attempt + 1));
+            }
+        }
+
+        /**
          * The worker's whole job: apply the function, publish the stage it
          * returned, hook the completion onto the attempt future — microseconds,
          * then the thread is free. The callback that arms it runs on whatever
@@ -1623,7 +2070,7 @@ public class DefaultNioEngine implements NioEngine {
                 call = stage.call().apply(value);
                 if (call == null) {
                     throw new IllegalStateException(
-                            "Async stage '" + stage.name() + "' returned a null CompletionStage");
+                            ASYNC_STAGE + stage.name() + "' returned a null CompletionStage");
                 }
             } catch (Throwable error) {
                 // A synchronous throw from the call is an ordinary stage failure.

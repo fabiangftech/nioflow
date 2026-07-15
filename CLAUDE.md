@@ -22,6 +22,12 @@ tools/sonarlint/run.sh tests     # the benchmarks/stress module
 
 Judge by the DIFF, not the total: the repo carries known findings it violates on purpose (`tools/sonarlint/README.md` lists them — do not "fix" those). To see only what you added, run the same script over a worktree of the previous commit (`git worktree add /tmp/base HEAD~1 && tools/sonarlint/run.sh /tmp/base/core`) and diff `tools/sonarlint/build/issues.json`. New issues in your files get fixed before the commit; if one is a deliberate design decision, it goes in that README with the reason.
 
+## Code style
+
+**No nested types.** Do not declare a class, record, or interface inside another class or interface. Every class, record, and interface is a top-level type in its own `.java` file — a helper record, a private inner state class, a functional interface: all of them live at the top level, never nested. A type that must stay package-private is fine as a top-level package-private type (`final class Foo` with no modifier). When you need a new type while editing a class, create a new file for it; do not add it inside the class.
+
+(Existing nested types — e.g. `DefaultNioEngine`'s `Execution`, `CompiledChain`, `AsyncRun`, and other inner classes/records — predate this rule. Extract a nested type to its own top-level file when you touch the code around it; do not add new nested ones.)
+
 ## Project
 
 nio-flow is a Java concurrency library: a fluent, typed pipeline API (`NioFlow<I, O>` for the shared definition, `NioStep<T, O>` for the per-request pipeline) over an event-loop engine (a pool of boss threads orchestrates — each execution pinned to one boss — while virtual-thread workers run user code). Zero required runtime dependencies (Resilience4j and OpenTelemetry are `compileOnly` integrations). Requires a modern JDK — uses virtual threads and pattern matching over sealed types; developed on JDK 25.

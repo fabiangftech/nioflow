@@ -64,7 +64,7 @@ class DefaultNioEngineChainEditTest extends EngineTestSupport {
         engine.append(new Background("effect", value -> {
         }, List.of()));
         engine.append(new Recovery("rescue", error -> "rescued", List.of()));
-        engine.append(new FanOut("fan", List.of(value -> value), parts -> parts.get(0), List.of()));
+        engine.append(new FanOut("fan", List.of(value -> value), parts -> parts.get(0), false, List.of()));
         engine.append(new Batch("bulk", 1, Duration.ofMillis(50), values -> values, List.of()));
 
         engine.splice("effect", Splice.AFTER, List.of(stage("afterBackground", value -> value + ":b")));

@@ -5,6 +5,8 @@ import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.infrastructure.reactive.Reactive;
 import dev.nioflow.infrastructure.reactive.ReactiveFlow;
 import org.junit.jupiter.api.Test;
+import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
@@ -15,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -75,6 +78,127 @@ class ReactiveHeapProbeTest {
         assertTrue(asyncBytes < 4 * Math.max(reactorBytes, 1),
                 "handleMonoAsync must land within a small factor of pure Reactor — async: "
                         + asyncBytes + " B, reactor: " + reactorBytes + " B");
+    }
+
+    /**
+     * The RFC 0015 gate: a {@code pipe} at high concurrency holds futures, not
+     * parked workers. Same never-completing remote call, but reached through
+     * {@code pipe} — whose {@code handleMono} routes to the async path by default,
+     * so every in-flight element retains an Execution and a CompletableFuture, not
+     * a parked virtual thread's stack.
+     */
+    @Test
+    void anAsyncRoutedPipeHoldsFuturesNotParkedThreads() throws Exception {
+        long parkingBytes = measureNioflow((flow, sink) ->
+                flow.handleMono("remote", value -> sink.get()));
+        long pipeBytes = measureAsyncPipe();
+
+        System.out.printf("retained heap per in-flight element (%d concurrent):%n", IN_FLIGHT);
+        System.out.printf("  nioflow + handleMono (parked) : %,d B%n", parkingBytes);
+        System.out.printf("  pipe (async-routed)           : %,d B%n", pipeBytes);
+
+        assertTrue(pipeBytes > 0, "an in-flight element must retain something");
+        assertTrue(pipeBytes < parkingBytes,
+                "an async-routed pipe must retain less than a parked worker per element — pipe: "
+                        + pipeBytes + " B, parking: " + parkingBytes + " B");
+        // The parked worker's stack chunk is ~2 KB+; the async element (Execution
+        // + a CompletableFuture + Reactor's flatMap inner) stays around 1 KB. An
+        // absolute bound, because the parked measurement is the noisy one.
+        assertTrue(pipeBytes < 2_000,
+                "an async-routed pipe element must not retain a parked thread's stack — pipe: "
+                        + pipeBytes + " B");
+    }
+
+    /**
+     * The RFC 0016 gate: {@code fanOutMono} decorates {@code fanOutAsync}, so N
+     * concurrent remote branches hold N futures, not N parked workers. Each
+     * execution fans out to {@code branchCount} branches that never complete; a
+     * blocking fan-out would retain {@code branchCount} parked worker stacks per
+     * execution, the async one holds that many futures.
+     */
+    @Test
+    void anAsyncFanOutMonoHoldsFuturesNotNParkedWorkers() throws Exception {
+        int branchCount = 4;
+        long parkingBytes = measureNioflow((flow, sink) ->
+                flow.handleMono("remote", value -> sink.get()));
+        long fanOutBytes = measureFanOutMono(branchCount);
+
+        System.out.printf("retained heap per in-flight execution (%d-branch fanOutMono):%n", branchCount);
+        System.out.printf("  one parked worker              : %,d B%n", parkingBytes);
+        System.out.printf("  %d-branch async fanOutMono      : %,d B%n", branchCount, fanOutBytes);
+
+        assertTrue(fanOutBytes > 0, "an in-flight fan-out must retain something");
+        // N blocking branches would retain ~N parked worker stacks; the async
+        // fan-out holds N futures, so it must stay well under that.
+        assertTrue(fanOutBytes < 0.6 * branchCount * parkingBytes,
+                "a " + branchCount + "-branch async fanOutMono must retain far less than " + branchCount
+                        + " parked workers — fanOut: " + fanOutBytes + " B, one parked: " + parkingBytes + " B");
+    }
+
+    /** FANOUT_EXECUTIONS executions, each fanning out to branchCount never-completing branches. */
+    private long measureFanOutMono(int branchCount) throws Exception {
+        int executions = IN_FLIGHT / branchCount;   // ~IN_FLIGHT branch futures total
+        var engine = new DefaultNioEngine();
+        try {
+            ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+            Sinks.One<Integer> never = Sinks.one();
+            var reached = new CountDownLatch(executions * branchCount);
+            List<Function<Integer, Mono<Integer>>> branches = new ArrayList<>(branchCount);
+            for (int b = 0; b < branchCount; b++) {
+                branches.add(value -> {
+                    reached.countDown();
+                    return never.asMono();
+                });
+            }
+            ReactiveFlow<Integer, Integer> fannedFlow = flow;
+
+            long before = usedHeap();
+            List<CompletableFuture<Integer>> pending = new ArrayList<>(executions);
+            for (int i = 0; i < executions; i++) {
+                pending.add(fannedFlow.just(i)
+                        .fanOutMono("enrich", branches, results -> results.get(0))
+                        .executeMono()
+                        .toFuture());
+            }
+            assertTrue(reached.await(30, TimeUnit.SECONDS), "every branch must reach the remote call");
+            Thread.sleep(500);
+            long perExecution = (usedHeap() - before) / executions;
+
+            never.tryEmitValue(0);
+            Thread.sleep(500);
+            return perExecution;
+        } finally {
+            engine.shutdown(Duration.ofSeconds(10));
+        }
+    }
+
+    /** IN_FLIGHT elements through a pipe, each awaiting the same never-completing Mono. */
+    private long measureAsyncPipe() throws Exception {
+        var engine = new DefaultNioEngine();
+        try {
+            ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+            Sinks.One<Integer> never = Sinks.one();
+            var reached = new CountDownLatch(IN_FLIGHT);
+            Function<Flux<Integer>, Flux<Integer>> pipe = flow.pipe(IN_FLIGHT, (input, step) -> step
+                    .handleMono("remote", value -> {
+                        reached.countDown();
+                        return never.asMono();
+                    }));
+            engine.seal();
+
+            long before = usedHeap();
+            Disposable subscription = pipe.apply(Flux.range(1, IN_FLIGHT)).subscribe();
+            assertTrue(reached.await(30, TimeUnit.SECONDS), "every element must reach the remote call");
+            Thread.sleep(500);
+            long perElement = (usedHeap() - before) / IN_FLIGHT;
+
+            never.tryEmitValue(0);   // release them all
+            Thread.sleep(500);
+            subscription.dispose();
+            return perElement;
+        } finally {
+            engine.shutdown(Duration.ofSeconds(10));
+        }
     }
 
     /**

@@ -171,6 +171,19 @@ public interface NioFlow<I, O> {
     <R> NioFlow<I, O> fanOut(String name, List<Function<I, R>> branches, Function<List<R>, I> join);
 
     /**
+     * The async fan-out: each branch returns a {@link CompletionStage}, so a
+     * worker only invokes it and is released — a fan-out over N remote calls
+     * parks no worker, where {@link #fanOut} parks one per branch. The join
+     * still receives the resolved values in declaration order and gives them
+     * back as an {@code I} (the shared chain preserves the type). A failing
+     * branch fails the whole fan-out, recoverable downstream — unchanged.
+     */
+    <R> NioFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join);
+
+    <R> NioFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                  Function<List<R>, I> join);
+
+    /**
      * Coalescing point for bulk work: executions park here until `size` of them
      * accumulated or `window` elapsed, then ONE bulk call receives all their
      * values and must return one result per value, positionally. Each caller
@@ -232,4 +245,18 @@ public interface NioFlow<I, O> {
     Condition<I, O> when(Predicate<I> predicate);
 
     Cases<I, O> match();
+
+    /**
+     * Declares a per-request pipeline whose structure is fixed, once: the
+     * segment is recorded onto a snapshot of the shared chain, validated and
+     * compiled, and the returned {@link Pipeline} dispatches every request off
+     * that plan — no per-request chain copy, no rescan, validation moved from
+     * never to here.
+     *
+     * <p>Use it when the pipeline is the same every request (the lambdas do not
+     * close over the input); keep {@code just(...)...execute()} for pipelines
+     * that genuinely vary per request. A {@code Pipeline} snapshots the shared
+     * definition at build time, so a later {@code splice} does not reach it.
+     */
+    <R> Pipeline<I, R> pipeline(Segment<I, R> segment);
 }

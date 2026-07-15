@@ -3,6 +3,7 @@ package dev.nioflow.infrastructure.reactive;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.NioStep;
+import dev.nioflow.core.facade.Pipeline;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
@@ -106,6 +107,25 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      *         is a mistake, and silence would never tell you)
      */
     ReactiveFlow<I, O> propagate(Context.Key<?>... keys);
+
+    /**
+     * Routes every {@code handleMono}/{@code adaptMono} on this flow — and on the
+     * pipelines it builds — to the async, future-holding path instead of parking
+     * a virtual worker on the Mono. This is what {@code pipe} does per element by
+     * default (the ingestion loop at high concurrency, where a parked worker per
+     * element is ~3 KB of stack each); declare it explicitly on a flow whose
+     * prebuilt {@link #pipeline(Segment) pipeline} you then run through
+     * {@code pipe}, so the prebuilt path holds futures too.
+     *
+     * <p>Since RFC 0013 an async run fuses like a blocking one, so there is no
+     * throughput reason left to park at volume. A single request/response can
+     * leave this off — one parked worker for one request is fine, and the block
+     * path is simpler. {@code RateLimit} steps are unaffected (they are plain
+     * {@code handle}s that park on {@code acquire()} by design, not
+     * {@code handleMono}). The budget on the async path <b>cancels</b> the
+     * subscription on expiry, where the block path only abandons the worker.
+     */
+    ReactiveFlow<I, O> preferAsync();
 
     // ── the reactive steps ───────────────────────────────────────────────
 
@@ -217,6 +237,41 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
                                                  BiFunction<I, ReactiveStep<I, O>, ReactiveStep<R, O>> pipeline,
                                                  BiConsumer<I, Throwable> onElementError);
 
+    // ── pipe over a PREBUILT pipeline (RFC 0014): build once, execute per element ──
+
+    /**
+     * The {@code pipe} an ingestion loop wants: the pipeline is declared ONCE
+     * with {@link #pipeline(Segment)} — recorded, validated and compiled a single
+     * time — and each element only executes it, off the plan. On the path built
+     * for millions of messages this removes the per-element assembly the
+     * {@link #pipe(int, BiFunction)} form pays (a fresh pipeline, every step
+     * re-wrapped, the chain copied and interpreted).
+     *
+     * <p>Use this when the pipeline is the same for every element (the usual
+     * case); keep the {@code BiFunction} form for a pipeline that genuinely varies
+     * element to element. Same semantics otherwise: unordered, {@code concurrency}
+     * in flight, one failing element fails the stream (see {@link #pipeResilient}).
+     */
+    <R> Function<Flux<I>, Flux<R>> pipe(int concurrency, Pipeline<I, R> pipeline);
+
+    /** Same, plus Reactor's prefetch — see {@link #pipe(int, int, BiFunction)}. */
+    <R> Function<Flux<I>, Flux<R>> pipe(int concurrency, int prefetch, Pipeline<I, R> pipeline);
+
+    /** Ordered (flatMapSequential) over a prebuilt pipeline. */
+    <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency, Pipeline<I, R> pipeline);
+
+    /** Ordered, with the prefetch, over a prebuilt pipeline. */
+    <R> Function<Flux<I>, Flux<R>> pipeOrdered(int concurrency, int prefetch, Pipeline<I, R> pipeline);
+
+    /**
+     * Resilient pipe over a prebuilt pipeline: a failing element is handed to
+     * {@code onElementError} and dropped, the stream carries on. The handler is
+     * mandatory for the same reason as in {@link #pipeResilient(int, BiFunction,
+     * BiConsumer)} — dropping an element must be a decision.
+     */
+    <R> Function<Flux<I>, Flux<R>> pipeResilient(int concurrency, Pipeline<I, R> pipeline,
+                                                 BiConsumer<I, Throwable> onElementError);
+
     // ── every NioFlow step, re-declared covariantly ──────────────────────
 
     @Override
@@ -282,6 +337,13 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
 
     @Override
     <R> ReactiveFlow<I, O> fanOut(String name, List<Function<I, R>> branches, Function<List<R>, I> join);
+
+    @Override
+    <R> ReactiveFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join);
+
+    @Override
+    <R> ReactiveFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                       Function<List<R>, I> join);
 
     @Override
     ReactiveFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk);

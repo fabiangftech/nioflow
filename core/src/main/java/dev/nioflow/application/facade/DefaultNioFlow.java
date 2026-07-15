@@ -6,6 +6,7 @@ import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.NioStep;
+import dev.nioflow.core.facade.Pipeline;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.Guard;
 import dev.nioflow.core.model.Link;
@@ -219,6 +220,18 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     }
 
     @Override
+    public <R> NioFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join) {
+        return fanOutAsync(anonymousName("fanout"), branches, join);
+    }
+
+    @Override
+    public <R> NioFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                         Function<List<R>, I> join) {
+        fanOutAsyncBranches(name, branches, join);
+        return this;
+    }
+
+    @Override
     public NioFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return batch(anonymousName("batch"), size, window, bulk);
     }
@@ -285,6 +298,24 @@ public class DefaultNioFlow<I, O> extends AbstractChain<I> implements NioFlow<I,
     @Override
     public Cases<I, O> match() {
         return new DefaultCases<>(this);
+    }
+
+    /**
+     * Records the segment onto a snapshot of the shared chain, validates and
+     * compiles it once, and hands back a {@link Pipeline} that dispatches every
+     * request off that plan. The segment records off-chain (like a fork's
+     * sub-chain) but draws decision ids and anonymous names from THIS flow, so
+     * its guards and anchors are consistent with the shared chain it follows.
+     */
+    @Override
+    public <R> Pipeline<I, R> pipeline(Segment<I, R> segment) {
+        List<Link> recorded = new ArrayList<>();
+        segment.define(new DefaultLane<>(new RecordingChain<>(nioEngine, recorded, anonymousLinks)));
+        List<Link> snapshot = new ArrayList<>(nioEngine.chain());
+        snapshot.addAll(recorded);
+        // prepare() validates (ChainValidationException on a broken definition)
+        // and compiles; a Pipeline's problems surface here, not at first request.
+        return new DefaultPipeline<>(nioEngine, inputType, nioEngine.prepare(snapshot));
     }
 
     /**

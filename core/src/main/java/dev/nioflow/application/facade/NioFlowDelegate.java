@@ -5,6 +5,7 @@ import dev.nioflow.core.facade.Condition;
 import dev.nioflow.core.facade.Context;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.NioStep;
+import dev.nioflow.core.facade.Pipeline;
 import dev.nioflow.core.facade.Segment;
 import dev.nioflow.core.model.RateLimit;
 import dev.nioflow.core.model.Retry;
@@ -135,6 +136,17 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     }
 
     @Override
+    public <R> NioFlow<I, O> fanOutAsync(List<Function<I, CompletionStage<R>>> branches, Function<List<R>, I> join) {
+        return flow().fanOutAsync(branches, join);
+    }
+
+    @Override
+    public <R> NioFlow<I, O> fanOutAsync(String name, List<Function<I, CompletionStage<R>>> branches,
+                                         Function<List<R>, I> join) {
+        return flow().fanOutAsync(name, branches, join);
+    }
+
+    @Override
     public NioFlow<I, O> batch(int size, Duration window, UnaryOperator<List<I>> bulk) {
         return flow().batch(size, window, bulk);
     }
@@ -192,5 +204,10 @@ abstract class NioFlowDelegate<I, O> implements NioFlow<I, O> {
     @Override
     public Cases<I, O> match() {
         return flow().match();
+    }
+
+    @Override
+    public <R> Pipeline<I, R> pipeline(Segment<I, R> segment) {
+        return flow().pipeline(segment);
     }
 }

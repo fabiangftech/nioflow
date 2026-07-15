@@ -17,6 +17,6 @@ class DefaultReactiveStepCondition<T, O> implements ReactiveStepCondition<T, O> 
 
     @Override
     public ReactiveStepBranch<T, O> then(UnaryOperator<Lane<T>> lane) {
-        return new DefaultReactiveStepBranch<>(delegate.then(Lanes.budgeted(lane, config.budget())), config);
+        return new DefaultReactiveStepBranch<>(delegate.then(Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
     }
 }

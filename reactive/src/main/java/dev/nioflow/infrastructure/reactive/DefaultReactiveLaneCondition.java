@@ -10,14 +10,17 @@ class DefaultReactiveLaneCondition<T> implements ReactiveLaneCondition<T> {
 
     private final LaneCondition<T> delegate;
     private final Duration budget;
+    private final boolean preferAsync;
 
-    DefaultReactiveLaneCondition(LaneCondition<T> delegate, Duration budget) {
+    DefaultReactiveLaneCondition(LaneCondition<T> delegate, Duration budget, boolean preferAsync) {
         this.delegate = delegate;
         this.budget = budget;
+        this.preferAsync = preferAsync;
     }
 
     @Override
     public ReactiveLaneBranch<T> then(UnaryOperator<Lane<T>> lane) {
-        return new DefaultReactiveLaneBranch<>(delegate.then(Lanes.budgeted(lane, budget)), budget);
+        return new DefaultReactiveLaneBranch<>(
+                delegate.then(Lanes.budgeted(lane, budget, preferAsync)), budget, preferAsync);
     }
 }

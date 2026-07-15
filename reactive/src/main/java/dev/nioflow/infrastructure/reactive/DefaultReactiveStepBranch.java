@@ -16,6 +16,6 @@ class DefaultReactiveStepBranch<T, O> extends DefaultReactiveStep<T, O> implemen
 
     @Override
     public ReactiveStep<T, O> otherwise(UnaryOperator<Lane<T>> lane) {
-        return new DefaultReactiveStep<>(branch.otherwise(Lanes.budgeted(lane, config.budget())), config);
+        return new DefaultReactiveStep<>(branch.otherwise(Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
     }
 }

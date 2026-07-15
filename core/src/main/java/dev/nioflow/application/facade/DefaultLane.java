@@ -156,6 +156,18 @@ class DefaultLane<T> implements Lane<T> {
     }
 
     @Override
+    public <R, C> Lane<C> fanOutAsync(List<Function<T, CompletionStage<R>>> branches, Function<List<R>, C> join) {
+        return fanOutAsync(view.anonymousName("fanout"), branches, join);
+    }
+
+    @Override
+    public <R, C> Lane<C> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
+                                      Function<List<R>, C> join) {
+        view.fanOutAsyncBranches(name, branches, join);
+        return retyped();
+    }
+
+    @Override
     public <R> Lane<R> batch(int size, Duration window, Function<List<T>, List<R>> bulk) {
         return batch(view.anonymousName("batch"), size, window, bulk);
     }

@@ -137,7 +137,23 @@ abstract class AbstractChain<X> {
         appendLink(new FanOut(name,
                 (List<Function<Object, Object>>) (List<?>) List.copyOf(branches),
                 (Function<List<Object>, Object>) (Function<?, ?>) join,
-                guards()));
+                false, guards()));
+    }
+
+    /**
+     * The async fan-out: each branch returns a {@link CompletionStage}, so a
+     * worker only invokes it and is released — no parked worker per branch. The
+     * stage-returning branches are erased to {@code Function<Object, Object>}
+     * exactly like the sync ones (the record stores the erased shape); the
+     * engine reads {@code FanOut.async()} to know each result is a stage.
+     */
+    @SuppressWarnings("unchecked")
+    <R, C> void fanOutAsyncBranches(String name, List<Function<X, CompletionStage<R>>> branches,
+                                    Function<List<R>, C> join) {
+        appendLink(new FanOut(name,
+                (List<Function<Object, Object>>) (List<?>) List.copyOf(branches),
+                (Function<List<Object>, Object>) (Function<?, ?>) join,
+                true, guards()));
     }
 
     @SuppressWarnings("unchecked")
@@ -214,7 +230,7 @@ abstract class AbstractChain<X> {
             case Background background -> same ? background
                     : new Background(background.name(), background.effect(), guards);
             case FanOut fanOut -> same ? fanOut
-                    : new FanOut(fanOut.name(), fanOut.branches(), fanOut.join(), guards);
+                    : new FanOut(fanOut.name(), fanOut.branches(), fanOut.join(), fanOut.async(), guards);
             case Batch batch -> same ? batch
                     : new Batch(batch.name(), batch.size(), batch.window(), batch.bulk(), guards);
             // A nested fork's own chain was already compacted in ITS scope.
