@@ -11,18 +11,20 @@ class DefaultReactiveLaneCases<T> extends DefaultReactiveLane<T> implements Reac
 
     private final LaneCases<T> cases;
 
-    DefaultReactiveLaneCases(LaneCases<T> cases, Duration budget) {
-        super(cases, budget);
+    DefaultReactiveLaneCases(LaneCases<T> cases, Duration budget, boolean preferAsync) {
+        super(cases, budget, preferAsync);
         this.cases = cases;
     }
 
     @Override
     public ReactiveLaneCases<T> is(Predicate<T> predicate, UnaryOperator<Lane<T>> lane) {
-        return new DefaultReactiveLaneCases<>(cases.is(predicate, Lanes.budgeted(lane, budget)), budget);
+        return new DefaultReactiveLaneCases<>(
+                cases.is(predicate, Lanes.budgeted(lane, budget, preferAsync)), budget, preferAsync);
     }
 
     @Override
     public ReactiveLane<T> otherwise(UnaryOperator<Lane<T>> lane) {
-        return new DefaultReactiveLane<>(cases.otherwise(Lanes.budgeted(lane, budget)), budget);
+        return new DefaultReactiveLane<>(
+                cases.otherwise(Lanes.budgeted(lane, budget, preferAsync)), budget, preferAsync);
     }
 }

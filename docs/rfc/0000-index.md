@@ -2,9 +2,9 @@
 
 The design record for nio-flow. RFCs 0001–0008 are **implemented** and describe
 the engine as it stands; 0009–0017 form the throughput series (split from two
-earlier monolithic drafts so each idea stands on its own) — of which **0009,
-0011, 0012, 0013 and 0014 are implemented**, **0010 is rejected** (measured
-regression), and the rest are proposed.
+earlier monolithic drafts so each idea stands on its own) — of which **0009 and
+0011–0015 are implemented**, **0010 is rejected** (measured regression), and the
+rest (0016, 0017) are proposed.
 
 ## Catalogue
 
@@ -24,7 +24,7 @@ regression), and the rest are proposed.
 | [0012](0012-lock-free-fanout.md) | Lock-free fan-out + `fanOutAsync` | ✅ Implemented | core | — |
 | [0013](0013-async-stage-fusion.md) | Async-stage fusion (the 2.8× 0006 accepted) | ✅ Implemented | core | 0006, 0007 |
 | [0014](0014-pipe-prebuilt-pipeline.md) | `pipe` over a prebuilt `Pipeline` | ✅ Implemented | reactive | 0011 |
-| [0015](0015-async-routed-pipe.md) | Async-routed `pipe` (the heap win) | 📝 Proposed | reactive | **0013**, 0014 |
+| [0015](0015-async-routed-pipe.md) | Async-routed `pipe` (the heap win) | ✅ Implemented | reactive | **0013**, 0014 |
 | [0016](0016-fanoutmono-no-parked-workers.md) | `fanOutMono` without parked workers | 📝 Proposed | reactive | **0012** |
 | [0017](0017-reactive-streaming-hygiene.md) | Reactive streaming & blocking hygiene | 📝 Proposed | reactive | — |
 
@@ -66,7 +66,7 @@ flowchart TD
 
     %% ── proposed reactive (0014–0017) ──
     R0014["0014 pipe over Pipeline"]:::done
-    R0015["0015 Async-routed pipe"]:::prop
+    R0015["0015 Async-routed pipe"]:::done
     R0016["0016 fanOutMono no-park"]:::prop
     R0017["0017 Streaming hygiene"]:::prop
     R0011 --> R0014

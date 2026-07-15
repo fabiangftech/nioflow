@@ -53,6 +53,9 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget) {
+        if (config.preferAsync()) {
+            return handleMonoAsync(name, call, budget);
+        }
         return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
@@ -63,6 +66,9 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry) {
+        if (config.preferAsync()) {
+            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget, retry));
+        }
         return wrap(delegate.handle(name,
                 value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
     }
@@ -125,6 +131,9 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call, Duration budget) {
+        if (config.preferAsync()) {
+            return adaptMonoAsync(call, budget);
+        }
         return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
     }
 
@@ -298,17 +307,17 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<T, O> fork(Segment<T, R> sub) {
-        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget())));
+        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget(), config.preferAsync())));
     }
 
     @Override
     public <R> ReactiveStep<T, O> fork(String name, Segment<T, R> sub) {
-        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget())));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget(), config.preferAsync())));
     }
 
     @Override
     public <R> ReactiveStep<R, O> use(Segment<T, R> segment) {
-        return retyped(delegate.use(Lanes.budgeted(segment, config.budget())));
+        return retyped(delegate.use(Lanes.budgeted(segment, config.budget(), config.preferAsync())));
     }
 
     @Override

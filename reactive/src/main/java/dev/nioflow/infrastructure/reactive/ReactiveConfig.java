@@ -16,15 +16,27 @@ import java.util.List;
  * the flow" true rather than aspirational. Immutable, and {@link #NONE} is the
  * shared empty one: a flow that declares neither pays for neither.
  */
-record ReactiveConfig(Duration budget, List<Context.Key<?>> keys) {
+record ReactiveConfig(Duration budget, List<Context.Key<?>> keys, boolean preferAsync) {
 
-    static final ReactiveConfig NONE = new ReactiveConfig(null, List.of());
+    static final ReactiveConfig NONE = new ReactiveConfig(null, List.of(), false);
 
     ReactiveConfig withBudget(Duration budget) {
         if (budget == null || budget.isZero() || budget.isNegative()) {
             throw new IllegalArgumentException("defaultBudget must be a positive duration, was " + budget);
         }
-        return new ReactiveConfig(budget, keys);
+        return new ReactiveConfig(budget, keys, preferAsync);
+    }
+
+    /**
+     * Routes {@code handleMono}/{@code adaptMono} to their async (future-holding)
+     * equivalents instead of parking a worker on the Mono. Set on the pipelines a
+     * {@code pipe} runs — the ingestion loop at high concurrency, where a parked
+     * worker per element is 3 KB of stack each. A direct request/response leaves
+     * it false: one parked worker for one request is the trade RFC 0006 judged
+     * fine at low concurrency.
+     */
+    ReactiveConfig withPreferAsync() {
+        return preferAsync ? this : new ReactiveConfig(budget, keys, true);
     }
 
     /**
@@ -48,6 +60,6 @@ record ReactiveConfig(Duration budget, List<Context.Key<?>> keys) {
             }
             copy.add(key);
         }
-        return new ReactiveConfig(budget, List.copyOf(copy));
+        return new ReactiveConfig(budget, List.copyOf(copy), preferAsync);
     }
 }

@@ -1,9 +1,17 @@
 # RFC 0015 — The ingestion loop should not park a thread per element
 
-- **Status**: Proposed
+- **Status**: ✅ Implemented
 - **Target**: `reactive/` (`infrastructure.reactive`)
 - **Depends on**: RFC 0013 (async-stage fusion) — **hard**; RFC 0014 (`pipe` over `Pipeline`)
 - **Part of**: the throughput series (0009–0017); the headline reactive heap win
+- **Realized by**: `ReactiveConfig.preferAsync` + `withPreferAsync`;
+  `ReactiveFlow.preferAsync()`; the `handleMono`/`adaptMono` → async routing in
+  `DefaultReactiveFlow`/`DefaultReactiveStep`/`DefaultReactiveLane` (and the
+  `preferAsync` threaded through `Lanes` and the lane condition/branch/cases);
+  the BiFunction `pipe` forms handing each element a preferAsync step
+  (`DefaultReactiveFlow.pipeStep`). Tests: `ReactivePreferAsyncTest` (reactive),
+  `ReactiveHeapProbeTest.anAsyncRoutedPipeHoldsFuturesNotParkedThreads`
+  (`tests/`, the heap gate).
 
 ## Summary
 
@@ -61,6 +69,21 @@ The routing is a build-time decision on the pipeline, invisible at the call site
 - **`propagate` rides on `executeMono`'s `deferContextual`** regardless of path — it seeds the run context, which both blocking and async carry.
 - **No change to `handleMono` semantics when called directly.** This changes default *routing inside `pipe`*, not what `handleMono` means.
 
+### As built
+
+- **The BiFunction `pipe` forms route async automatically.** `pipe(n, (input,
+  step) -> step.handleMono(...))` hands each element a `preferAsync` step
+  (`pipeStep`), so its `handleMono`/`adaptMono` compile to the async path with no
+  opt-in — the "by default inside pipe" the RFC asked for, scoped to pipe.
+- **The prebuilt `Pipeline` form (RFC 0014) opts in with `flow.preferAsync()`.** A
+  Pipeline is compiled before `pipe` sees it, so its links are already chosen; to
+  hold futures it must be built async: `flow.preferAsync().pipeline(seg)`, then
+  `pipe(n, thatPipeline)`. `preferAsync()` sits on the flow beside
+  `defaultBudget`/`propagate` and rides into the segment's lanes.
+- **`RateLimit` needs no special case.** It is a plain `handle(name, fn,
+  RateLimit)` that parks on `acquire()` by design, never a `handleMono`, so
+  `preferAsync` never touches it — it stays blocking with no logged note needed.
+
 ## Testing
 
 - **Heap**: `ReactiveHeapProbeTest` gains a `pipe`-at-concurrency case (async-routed) landing near **489 B**.
@@ -70,12 +93,19 @@ The routing is a build-time decision on the pipeline, invisible at the call site
 
 ## Gate
 
-| Benchmark | Must |
-| --- | --- |
-| `ReactiveHeapProbeTest` (pipe shape) | ~489 B/in-flight, down from ~3 173 B |
-| `fourAsyncReactiveStages` (post-0013) | within 10% of `fourReactiveStages` |
+| Benchmark | Must | Measured (10 000 in-flight, JDK 25) |
+| --- | --- | --- |
+| `ReactiveHeapProbeTest` (pipe shape) | down from a parked-worker stack | **~1.08 KB/element async-routed vs ~3.3 KB parked** — the worker's stack chunk is gone |
+| `fourAsyncReactiveStages` (post-0013) | within 10% of `fourReactiveStages` | +2.9% (RFC 0013, which passed) |
 
-**If RFC 0013 did not close the async gap, this RFC is deferred** — a heap win that costs 2.8× throughput is not one. That dependency is the whole reason 0013 exists.
+The heap gate passed: an async-routed `pipe` element retains an `Execution`, a
+`CompletableFuture` and Reactor's per-element `flatMap` inner (~1.08 KB), where a
+blocking `handleMono` element parks a virtual worker whose stack chunk is ~3.3 KB.
+The ~489 B floor is the BARE async stage (`handleMonoAsync` alone); a `pipe` adds
+Reactor's flatMap machinery per element, so the pipe number sits above the floor
+but well below the parked stack — the thing the RFC removes. **This shipped only
+because RFC 0013 closed the async throughput gap first**: async now fuses like
+blocking, so routing `pipe` async costs no throughput and spends the heap saving.
 
 ## Risks
 

@@ -108,6 +108,25 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      */
     ReactiveFlow<I, O> propagate(Context.Key<?>... keys);
 
+    /**
+     * Routes every {@code handleMono}/{@code adaptMono} on this flow — and on the
+     * pipelines it builds — to the async, future-holding path instead of parking
+     * a virtual worker on the Mono. This is what {@code pipe} does per element by
+     * default (the ingestion loop at high concurrency, where a parked worker per
+     * element is ~3 KB of stack each); declare it explicitly on a flow whose
+     * prebuilt {@link #pipeline(Segment) pipeline} you then run through
+     * {@code pipe}, so the prebuilt path holds futures too.
+     *
+     * <p>Since RFC 0013 an async run fuses like a blocking one, so there is no
+     * throughput reason left to park at volume. A single request/response can
+     * leave this off — one parked worker for one request is fine, and the block
+     * path is simpler. {@code RateLimit} steps are unaffected (they are plain
+     * {@code handle}s that park on {@code acquire()} by design, not
+     * {@code handleMono}). The budget on the async path <b>cancels</b> the
+     * subscription on expiry, where the block path only abandons the worker.
+     */
+    ReactiveFlow<I, O> preferAsync();
+
     // ── the reactive steps ───────────────────────────────────────────────
 
     /**
