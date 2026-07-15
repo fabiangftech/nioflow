@@ -17,7 +17,7 @@ series (split from two earlier monolithic drafts so each idea stands on its own)
 | [0007](0007-cancellation.md) | Cooperative cancellation | ✅ Implemented | core | 0006 |
 | [0008](0008-reactive-module.md) | `nioflow-reactive` as its own artifact | ✅ Implemented | reactive | 0002, 0005, 0006, 0007 |
 | [0009](0009-boss-event-loop.md) | Boss event loop (MPSC + spin-park) + uncontended counters | ✅ Implemented | core | — |
-| [0010](0010-terminal-on-the-worker.md) | The last hop: complete on the worker | 📝 Proposed | core | 0007 |
+| [0010](0010-terminal-on-the-worker.md) | The last hop: complete on the worker | ❌ Rejected (measured regression) | core | 0007 |
 | [0011](0011-per-request-plan.md) | A dispatch plan for per-request pipelines | 📝 Proposed | core | — |
 | [0012](0012-lock-free-fanout.md) | Lock-free fan-out + `fanOutAsync` | 📝 Proposed | core | — |
 | [0013](0013-async-stage-fusion.md) | Async-stage fusion (the 2.8× 0006 accepted) | 📝 Proposed | core | 0006, 0007 |
@@ -36,6 +36,7 @@ care.
 flowchart TD
     classDef done fill:#1b3a1b,stroke:#3c9a3c,color:#e8ffe8
     classDef prop fill:#2a2a3a,stroke:#6a6ad0,color:#e8e8ff
+    classDef rej fill:#3a1b1b,stroke:#9a3c3c,color:#ffe8e8
     classDef hard stroke-width:3px
 
     %% ── implemented (0001–0008) ──
@@ -53,7 +54,7 @@ flowchart TD
 
     %% ── proposed core (0009–0013) ──
     R0009["0009 Boss event loop"]:::done
-    R0010["0010 Terminal on worker"]:::prop
+    R0010["0010 Terminal on worker ✗"]:::rej
     R0011["0011 Per-request plan"]:::prop
     R0012["0012 Lock-free fan-out"]:::prop
     R0013["0013 Async-stage fusion"]:::prop

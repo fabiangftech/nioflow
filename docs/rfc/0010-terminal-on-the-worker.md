@@ -1,9 +1,31 @@
 # RFC 0010 — The last hop: complete on the worker
 
-- **Status**: Proposed
+- **Status**: **Rejected — measured a throughput regression on the hot path** (implemented on a branch, benchmarked, reverted). See [Measured: why this backfires](#measured-why-this-backfires).
 - **Target**: `core/` (`application.facade`), `tests/`
 - **Depends on**: RFC 0007 (cancellation) — implemented; interacts with the `finished` guard
 - **Part of**: the throughput series (0009–0017)
+
+## Measured: why this backfires
+
+Implemented in full (worker-side terminal, `finished` as a CAS, keyed executions keep the boss hop) and benchmarked before/after **back-to-back in both orderings** to cancel machine drift. It is a **consistent regression** on the canonical synchronous request/response path:
+
+| Benchmark | boss-loop (0009 HEAD) | with 0010 | Δ |
+| --- | --- | --- | --- |
+| `engineCall` @1 | ~93 ops/ms | ~68 | **−27%** |
+| `fluentExecute` @1 | ~94 | ~75 | **−20%** |
+| `perRequestBuilder` @8 | ~88 | ~62 | **−30%** |
+| `perRequestBuilder` @32 | ~76 | ~57 | −25% |
+| `engineCall` @8 / @32 | ~84 / ~72 | ~75 / ~68 | −11% / −6% |
+
+For **−48 B/op** of allocation (−8%, the one thing that did improve). Not a trade worth making. The direction reproduced with 0010 running first *and* second, so it is the code, not thermal ordering.
+
+**Why the RFC's premise inverted: RFC 0009 changed the economics it assumed.** This RFC was written when the boss hop cost an `unpark` syscall (~5 µs) — removing it looked like a clear win. But 0009 turned the boss into a hot, spinning `BossLoop`: the hop back to it is now a CAS-enqueue that a spinning platform thread picks up in nanoseconds and immediately completes the future, waking the caller. Moving that terminal onto the **virtual worker** instead means the worker completes the future and then unmounts from its carrier — and on the synchronous path (caller blocked on `join()`), a virtual thread waking the caller and unwinding is *slower and noisier* than the hot boss doing it. So 0010 removes a hop that 0009 already made nearly free, and pays a virtual-thread completion cost that exceeds the saving.
+
+**The lesson is the point of measuring:** two throughput changes that each look additive on paper can be anti-synergistic. 0009 captured the win in this region; 0010, layered on top, gives it back. The non-throughput benefits (boss headroom under high async concurrency, `onComplete` isolation) are real but do not show up on these benchmarks and do not justify a 6–30% hit on the most common path. If they are ever wanted, they need a different design — e.g. gated on complete-handlers actually being installed — argued on its own merits, not as a throughput RFC.
+
+Everything below is the original proposal, kept for the record.
+
+---
 
 ## Summary
 
