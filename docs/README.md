@@ -84,6 +84,7 @@ Two artifacts. Take `nioflow-core` alone unless your app is reactive (WebFlux) â
 
 ```groovy
 implementation 'dev.nioflow:nioflow-core:2.1.0'
+// optional
 implementation 'dev.nioflow:nioflow-reactive:2.1.0'
 ```
 
@@ -93,6 +94,7 @@ implementation 'dev.nioflow:nioflow-reactive:2.1.0'
     <artifactId>nioflow-core</artifactId>
     <version>2.1.0</version>
 </dependency>
+<!-- optional -->
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-reactive</artifactId>
