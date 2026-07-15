@@ -76,10 +76,10 @@ flowchart TD
     R0012 == hard ==> R0016
 ```
 
-Legend: green = implemented, blue = proposed, thick edge = hard dependency.
-Nodes with no incoming proposed edge (**0009**, **0011**, **0012**, **0017**)
-land on the working tree today — **0009**, **0011** and **0012** already have;
-the rest wait on their parent.
+Legend: green = implemented, red = rejected, thick edge = hard dependency. The
+series is complete: every node is on the working tree except **0010** (rejected,
+measured regression) and **0017**'s blocking fast-path (measured neutral,
+dropped) — its streaming deprecation shipped, so the node is green.
 
 ## The throughput series, read as one argument
 
@@ -97,8 +97,9 @@ request.
 - **The reactive heap** — 0014 (`pipe` re-assembling per element), 0015 (parking
   a worker per element: 3 173 B → 489 B), 0016 (parking N workers per fan-out).
   These spend the savings 0013 unlocks.
-- **The loose ends** — 0017 (deprecate uncapped `adaptFlux`; skip the latch on a
-  resolved Mono).
+- **The loose ends** — 0017 (deprecate uncapped `adaptFlux`, shipped; the
+  proposed "skip the latch on a resolved Mono" was measured neutral — the JIT
+  already elides the latch — and dropped).
 
 **The load-bearing edge is `0013 → 0015`, and 0013 landed within the gate**
 (`fourAsyncReactiveStages` 74.4 vs `fourReactiveStages` 72.4 ops/ms, +2.9%), so
