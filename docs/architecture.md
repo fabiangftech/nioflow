@@ -29,12 +29,13 @@ A flow compiles to an immutable list of **links**:
 
 ```mermaid
 flowchart LR
-    S[Stage] --- D{Decision} --- F[Filter] --- BG[Background] --- R[Recovery] --- FO[FanOut] --- BA[Batch] --- FK[[Fork]]
+    S[Stage] --- AS[AsyncStage] --- D{Decision} --- F[Filter] --- BG[Background] --- R[Recovery] --- FO[FanOut] --- BA[Batch] --- FK[[Fork]]
 ```
 
 | Link | Role |
 |---|---|
 | `Stage` | Transform on a worker; optional timeout, retry, rate limit |
+| `AsyncStage` | The stage that holds no thread: its function returns a `CompletionStage`, a worker invokes it and leaves, the boss resumes on completion (`handleAsync` / `handleMonoAsync`) |
 | `Decision` | Records a boolean per value — the routing primitive behind `when`/`match` |
 | `Filter` | Short-circuits the execution deliberately |
 | `Background` | Fire-and-forget side effect |
@@ -51,13 +52,15 @@ A `Fork` is the one link that spawns: the boss submits a child `Execution` as a 
 
 Consecutive cheap links (plain stages, filters, recoveries) travel boss → worker → boss as **one composed function**: two thread hops per run instead of per link — about 5x on an 8-stage chain. Runs even extend across routing decisions that this execution's recorded values already ruled out. Stages with a timeout dispatch alone: the budget covers exactly that stage.
 
+**Async stages fuse too.** A run of consecutive `AsyncStage`s is driven by a worker-side trampoline: it invokes each call inline and, when the returned `CompletionStage` is already resolved, loops straight to the next without a thread hop — touching the boss once for the whole run. That is what lets `handleMonoAsync` hold no thread *and* keep the blocking path's throughput (the async run used to cost ~2.8× before it fused).
+
 ## Executions are share-nothing
 
 `just(input)` opens an execution over a **snapshot** of the chain, with its own routing state and result future. Per-request links lazily copy the chain — the shared definition is never mutated. This is the property that makes one flow bean safe under any concurrency, and the property that makes [runtime editing](runtime-editing.md) safe: edits swap the shared list; snapshots in flight are untouched.
 
 ## Threads
 
-- **Bosses**: a JVM-wide pool of daemon platform threads (size = CPU cores, floor 2; tune with `-Dnioflow.bosses=N`), shared by every default engine. `DefaultNioEngine.dedicated(n)` gives one engine a private pool.
+- **Bosses**: a JVM-wide pool of daemon platform threads (size = CPU cores, floor 2; tune with `-Dnioflow.bosses=N`), shared by every default engine. Each is a purpose-built event loop — a lock-free MPSC queue with a spin-then-park consumer, so handing work to a busy boss costs an atomic swap and a busy loop parks to zero CPU when idle. `DefaultNioEngine.dedicated(n)` gives one engine a private pool.
 - **Workers**: one shared virtual-thread-per-task executor. Blocking in a stage is fine — that's what virtual threads are for. Parking is how rate limits and retry backoffs wait without holding anything.
 - **Timer**: one lazy daemon runs a hashed timer wheel for stage timeouts and batch windows. It never runs user code.
 

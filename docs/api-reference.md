@@ -10,6 +10,7 @@ Compact reference for the public surface. Types live in `dev.nioflow.core.facade
 | `DefaultNioFlow.from(Class<I>, NioEngine)` | `DefaultNioFlow<I, O>` | Bring your own engine |
 | `DefaultNioFlow.create()` | `DefaultNioFlow<I, O>` | No Class token — for generic beans (`NioFlow<?, ?>`); no input check |
 | `flow.just(input)` | `NioStep<I, O>` | Opens an isolated per-request pipeline, **starting at the input type** |
+| `flow.pipeline(segment)` | `Pipeline<I, R>` | A **prebuilt** per-request pipeline: recorded, validated and compiled once — see below |
 | `flow.justAll(iterable)` | — | Fire-and-forget through the shared chain; collect with `engine.await()` |
 
 ## The two types
@@ -27,11 +28,13 @@ Compact reference for the public surface. Types live in `dev.nioflow.core.facade
 | `handle(name, fn, Retry)` | Stage with retry + backoff |
 | `handle(name, fn, Duration, Retry)` | Budget per attempt, retry over attempts |
 | `handle(name, fn, RateLimit)` | Token-bucket gated stage |
+| `handleAsync(name, call[, Duration][, Retry])` | **The stage that holds no thread**: the function returns a `CompletionStage`, a worker invokes it and leaves — for `HttpClient.sendAsync`, the AWS SDK, a reactive driver, in core with no Reactor. The timeout **cancels** the call |
 | `handleSync(fn)` / `handleSync(name, fn)` | Boss-inlined stage — pure CPU, sub-µs, never blocking |
 | `handleContextual((v, ctx) -> …)` | Stage with the typed per-execution `Context` |
 | `filter(predicate)` | Deliberate cut; `execute()` maps it to `null` |
 | `background(name, effect)` | Fire-and-forget side effect |
 | `fanOut(name, branches, join)` | Parallel split-join, declaration-order combine |
+| `fanOutAsync(name, branches, join)` | The same split-join with **`CompletionStage` branches**: N concurrent calls, zero parked workers |
 | `fork(name, segment)` | **Detached sub-flow**: a full pipeline the main line does not wait for |
 | `batch(name, size, window, bulk)` | Cross-execution coalescing; positional bulk mapping |
 | `use(segment)` / `use(name, segment)` | Embed a `Segment<I, I>`; naming it creates a swappable region |
@@ -47,14 +50,29 @@ Everything above (over `T` instead of `I`), plus the steps that re-type the valu
 | Method | Effect |
 |---|---|
 | `adapt(fn)` | Re-types the value — the step the compiler follows |
-| `fanOut(...)` / `batch(...)` / `use(segment)` | Also re-type (to `C` / `R` / `R`) |
+| `adaptAsync(call[, Duration])` | Re-types **through** a `CompletionStage` without holding a thread — `adaptAsync` to `handleAsync` what `adapt` is to `handle` |
+| `fanOut(...)` / `fanOutAsync(...)` / `batch(...)` / `use(segment)` | Also re-type (to `C` / `C` / `R` / `R`) |
 | `key(k)` | Per-key FIFO ordering |
 | `with(Context.Key, value)` | Seeds the per-execution `Context` **before** the pipeline runs (a trace id, a principal) |
 | `execute()` | Blocks; returns the value's **current** type; `null` on a filter cut |
-| `executeAsync()` | `CompletableFuture<T>` — non-blocking; fails exceptionally when unrecovered |
-| `executeResult()` | `FlowResult<T>` — `Completed(value)` vs `Filtered`, pattern-matchable |
+| `executeAsync()` / `executeAsync(map)` | `CompletableFuture<T>` — non-blocking; the overload seeds a per-run context |
+| `executeResult()` | `FlowResult<T>` — `Completed(value)` vs `Filtered` vs `Cancelled`, pattern-matchable |
+| `executeCancellable([map])` | `Cancellable<T>` — the future plus an idempotent `cancel()`; a cooperative stop that the reactive `executeMono()` is built on |
 
 `Lane<T>` (inside branch lanes, segments and fork sub-flows) exposes the same building methods, minus `just`/`execute`/lifecycle.
+
+## `Pipeline<I, R>` — a prebuilt per-request pipeline
+
+The `just(...)…execute()` path rebuilds and re-interprets the chain per request. When the pipeline is the same every time (its lambdas do not close over the input), declare it once: `flow.pipeline(segment)` records the segment, **validates** it and **compiles** it a single time, and each request only allocates its run.
+
+| Method | Effect |
+|---|---|
+| `flow.pipeline(segment)` | `Pipeline<I, R>` — recorded, validated, compiled once (throws `ChainValidationException` at build) |
+| `pipeline.just(input)` | `PipelineRun<R>` — carries only what varies per request, dispatches off the plan |
+| `run.key(k)` / `run.with(key, value)` / `run.onComplete/onError(cb)` | Per-request configuration, as on a `NioStep` |
+| `run.execute()` / `executeAsync([map])` / `executeResult()` / `executeCancellable([map])` | The same terminals as `NioStep` |
+
+A `Pipeline` snapshots the shared definition at build time, so a later runtime `splice` does not reach it — a prebuilt pipeline is stable by design. Keep `just(...)…execute()` for pipelines that genuinely vary per request.
 
 ## `ReactiveFlow` / `ReactiveStep` / `ReactiveLane` — WebFlux
 
@@ -62,14 +80,17 @@ Subinterfaces of the three above, so a reactive step is a step like any other. T
 
 | Method | Effect |
 |---|---|
-| `handleMono(name, call[, budget \| retry])` | Stage whose work is a `Mono`; the budget goes on the Mono (it **cancels** the call) |
-| `adaptMono(call[, budget])` | Re-types through a `Mono`: `T → Mono<R> → R` |
-| `adaptFlux(call)` | Collects a `Flux` into a `List` — **no cap**: buffers it all, known-small results only |
+| `handleMono(name, call[, budget \| retry])` | Stage whose work is a `Mono` (parks a worker on it); the budget goes on the Mono (it **cancels** the call) |
+| `handleMonoAsync(name, call[, budget])` | The same stage **holding no thread**: `mono.toFuture()` into an async stage. A run of them fuses (RFC 0013), so it costs no throughput; the budget cancels the call |
+| `adaptMono(call[, budget])` / `adaptMonoAsync(call[, budget])` | Re-type through a `Mono`: blocking, and the non-parking async form |
+| `adaptFlux(call)` | **Deprecated** (`forRemoval = false`): collects a `Flux` with **no cap** — an OOM waiting to happen. Prefer the bounded overload, or `executeFlux` |
 | `adaptFlux(call, maxItems)` | The same collect, bounded: over the cap it fails with `FlowOverflowException` and cancels the source |
-| `fanOutMono(name, branches, join)` | Split-join over reactive branches |
-| `executeMono()` | Terminal. Lazy: one execution per subscription; a filter cut is an empty `Mono` |
+| `fanOutMono(name, branches, join)` | Split-join over reactive branches — decorates `fanOutAsync`, so N remote calls hold N futures, **not N parked workers** (RFC 0016) |
+| `executeMono()` | Terminal. Lazy: one execution per subscription; a filter cut is an empty `Mono`; a dispose cancels the execution |
 | `executeFlux(tail)` | Streaming terminal: the engine's one value, then the tail's `Flux` — nothing is buffered |
-| `pipe(concurrency, …)` / `pipeOrdered(…)` | A `Flux` through the flow; concurrency **is** the backpressure |
+| `pipe(concurrency, …)` / `pipeOrdered(…)` / `pipeResilient(…, onError)` | A `Flux` through the flow; concurrency **is** the backpressure. Routes `handleMono` async by default (RFC 0015) |
+| `pipe(concurrency, Pipeline)` | The same, over a **prebuilt** pipeline: assembled once, dispatched off the plan per element (RFC 0014) |
+| `preferAsync()` | Config, like `defaultBudget`/`propagate`: route this flow's `handleMono`/`adaptMono` to the async, future-holding path |
 | `Reactive.flow(nioFlow)` / `Reactive.lane(lane)` | Entry point, and the one unwrap needed inside a branch lane |
 
 ## `NioEngine`
@@ -105,11 +126,12 @@ JVM flag: `-Dnioflow.bosses=N` sizes the shared boss pool (default: cores, floor
 | `Retry` | `Retry.of(attempts, backoff)` · `Retry.exponential(attempts, initial)` — multiplier ≥ 1 |
 | `RateLimit` | `RateLimit.of(permits, per)` · `RateLimit.perSecond(permits)` — one instance = one bucket |
 | `Context` / `Context.Key<V>` | `Key.of("name")`, `ctx.get(key)`, `ctx.put(key, value)`, `ctx.getOrDefault(key, fb)` |
-| `FlowResult<T>` | Sealed: `Completed(T value)` \| `Filtered` |
+| `FlowResult<T>` | Sealed: `Completed(T value)` \| `Filtered` \| `Cancelled` — pattern-matchable |
 | `Splice` | `BEFORE` · `AFTER` · `REPLACE` |
 | `Segment<T, R>` | `Lane<R> define(Lane<T> lane)` — reusable, composable, independently testable |
-| `FlowSignal.FILTERED` | Sentinel carried by raw engine futures on a filter cut |
-| `Link` (sealed) | `Stage`, `Decision`, `Filter`, `Background`, `Recovery`, `FanOut`, `Batch`, `Fork` |
+| `Pipeline<I, R>` / `PipelineRun<R>` | A prebuilt per-request pipeline: recorded, validated and compiled once by `flow.pipeline(segment)` — see below |
+| `FlowSignal` | `FILTERED` · `CANCELLED` — sentinels carried by raw engine futures |
+| `Link` (sealed) | `Stage`, `AsyncStage`, `Decision`, `Filter`, `Background`, `Recovery`, `FanOut`, `Batch`, `Fork` |
 
 > Adding link types is source-breaking for exhaustive `switch`es over `Link` — pin your minor versions if you pattern-match the chain.
 
@@ -117,6 +139,6 @@ JVM flag: `-Dnioflow.bosses=N` sizes the shared boss pool (default: cores, floor
 
 | Runs on | What |
 |---|---|
-| Virtual worker | `handle` functions, `recover`, `fanOut` branches and join, `batch` bulk, `background` |
+| Virtual worker | `handle` functions, `recover`, `fanOut` branches and join, `batch` bulk, `background`; and the **invocation** of `handleAsync`/`handleMono` stages and `fanOutAsync` branches (what waits after is a future, not the worker) |
 | Boss (keep it cheap, never block) | `when`/`match`/`filter` predicates, `handleSync` stages |
 | Engine threads (keep them fast, never throw) | `onComplete`/`onError`, metrics callbacks |

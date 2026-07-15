@@ -30,8 +30,8 @@ The reactive facade ships as its own artifact, **`dev.nioflow:nioflow-reactive`*
 **Gradle**
 
 ```groovy
-implementation 'dev.nioflow:nioflow-core:2.0.0'
-implementation 'dev.nioflow:nioflow-reactive:2.0.0'
+implementation 'dev.nioflow:nioflow-core:2.1.0'
+implementation 'dev.nioflow:nioflow-reactive:2.1.0'
 ```
 
 **Maven**
@@ -40,12 +40,12 @@ implementation 'dev.nioflow:nioflow-reactive:2.0.0'
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-core</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 </dependency>
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-reactive</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 </dependency>
 ```
 
@@ -68,14 +68,13 @@ public ReactiveFlow<String, Receipt> orders() {
 
 | | |
 | --- | --- |
-| `handleMono(name, call)` | A stage whose work is a `Mono`. Type-preserving. |
-| `handleMono(name, call, budget)` | With a budget **on the Mono** — see below, this is not the same as a stage timeout. |
-| `handleMono(name, call, retry)` | Each attempt re-subscribes the Mono. |
-| `adaptMono(call)` | Re-types **through** a Mono: `T → Mono<R> →` the chain continues at `R`. |
-| `adaptFlux(call)` | Collects a `Flux` into the `List` the chain carries. **Buffers it all, with no cap.** |
+| `handleMono(name, call[, budget \| retry])` | A stage whose work is a `Mono` — it parks a virtual worker on it. The budget goes **on the Mono** (below, not the same as a stage timeout). |
+| `handleMonoAsync(name, call[, budget])` | The same stage **holding no thread**: a worker invokes the call and leaves. A run of them fuses, so there is no throughput penalty — see [below](#the-stage-that-does-not-park-handlemonoasync). |
+| `adaptMono(call[, budget])` / `adaptMonoAsync(call[, budget])` | Re-type **through** a Mono: `T → Mono<R> →` the chain continues at `R`. Blocking, and the non-parking async form. |
+| `adaptFlux(call)` | **Deprecated** (`forRemoval = false`): collects a `Flux` with **no cap** — an OOM waiting to happen. Prefer the bounded overload, or `executeFlux`. |
 | `adaptFlux(call, maxItems)` | The same collect, bounded: over the cap, `FlowOverflowException` and the source is cancelled. |
-| `fanOutMono(name, branches, join)` | Parallel split-join over reactive branches, each on its own worker. |
-| `executeMono()` | The terminal. Lazy, one execution per subscription. |
+| `fanOutMono(name, branches, join)` | Parallel split-join over reactive branches — it decorates core's `fanOutAsync`, so N remote calls hold **N futures, not N parked workers**. |
+| `executeMono()` | The terminal. Lazy, one execution per subscription; a dispose cancels the execution. |
 | `executeFlux(tail)` | The **streaming** terminal: one value out of the engine, then the tail's `Flux`. |
 
 A reactive stage is **not a new kind of link**: `handleMono` appends the same `Stage` every other step appends, whose function parks a virtual worker on the Mono. So it fuses, retries, rate-limits, lands in a lane and reports its metrics *because it is an ordinary stage*.
@@ -131,6 +130,25 @@ incoming.transform(orders.pipe(256, (order, step) -> step
 ```
 
 Do **not** reach for `inject`/`await` + `OverflowPolicy` here: its `BLOCK` policy parks the calling thread, which on an event loop is the one thing you must never do.
+
+### Async by default in `pipe`
+
+A `pipe` is the ingestion loop — Kafka, SSE, a batch import — at the highest concurrency in the app, and a `handleMono` there would park one virtual worker per in-flight element. So inside a `pipe`, `handleMono`/`adaptMono` route to the **async, future-holding** path automatically (RFC 0015): the element holds a `CompletableFuture`, not a parked thread, and — because the async run fuses (RFC 0013) — pays nothing in throughput for it. Measured: an async-routed `pipe` element retains ~1 KB against a parked worker's ~3 KB stack.
+
+Off the `pipe` path — a single request/response — `handleMono` keeps parking, which is the simpler thing and cheap for one request. To route a whole flow async explicitly, declare `preferAsync()` beside `defaultBudget`/`propagate`.
+
+### `pipe` over a prebuilt pipeline
+
+The `BiFunction` form above re-assembles the pipeline on **every element**. When the pipeline is the same for every element (the usual case), build it once and hand `pipe` the `Pipeline` — it dispatches off the plan compiled a single time (RFC 0014):
+
+```java
+Pipeline<Order, Receipt> ingest = orders.pipeline(step ->
+        Reactive.lane(step).handleMono("enrich", enrich::call).adaptMono(Receipt::of));
+
+incoming.transform(orders.pipe(64, ingest));   // no per-element assembly
+```
+
+`pipeOrdered` and `pipeResilient` take a `Pipeline` too. Build it from a `preferAsync()` flow to keep the future-holding routing on the prebuilt path.
 
 ## A `Flux` out of the flow
 
@@ -214,16 +232,16 @@ orders.just(id)
         .executeMono();
 ```
 
-It buys two things and costs one:
+It buys the heap back and — since a run of async stages now **fuses** — costs nothing in throughput:
 
 | | `handleMono` | `handleMonoAsync` |
 | --- | --- | --- |
-| Retained per in-flight request | **3 173 B** (an `Execution` + a parked virtual thread's stack) | **489 B** (an `Execution` + a `CompletableFuture`) |
-| Four remote stages in a row | fuse: **2 thread hops** | **4 dispatches** — it is a dispatch boundary |
-| Engine overhead (four immediately-resolved Monos) | 56.2 ops/ms | 20.6 ops/ms — **~8 µs per extra dispatch** |
+| Retained per in-flight request | **3 173 B** (an `Execution` + a parked virtual thread's stack) | **489 B** (an `Execution` + a `CompletableFuture`) — **6.5× less** |
+| Four remote stages in a row | fuse into one worker run | **also fuse** — a worker-side trampoline drives the run, one boss touch for the whole thing |
+| Engine overhead (four immediately-resolved Monos) | 72.4 ops/ms | **74.4 ops/ms** — within ~3%, no throughput penalty |
 | The timeout | abandons the parked worker; only `mono.timeout(budget)` cancels the call | **cancels the `CompletionStage`** — the subscription dies and reactor-netty releases the connection |
 
-Read that third row for what it is: 8 µs a stage is 0.015 % of a 200 ms remote call, and it is *most of the cost* of a `Mono.just`. `handleMonoAsync` pays a fixed dispatch to stop holding a thread — worth it in front of the network, never worth it in front of a value you already have.
+That second and third row are the point, and they used to read the other way: before the async run fused, four `handleMonoAsync` stages were four boss round trips against one for `handleMono`, and paid ~2.8× in throughput. A worker-side driver now runs consecutive async stages inline on one worker — invoking each call and, when its Mono is already resolved, looping straight to the next without a hop — so the async path holds no thread **and** matches the blocking path's throughput. (See [RFC 0013](https://github.com/fabiangftech/nioflow/blob/main/docs/rfc/0013-async-stage-fusion.md).)
 
 The budget on `handleMonoAsync(name, call, budget)` **is** the engine's timeout, and it cancels — so the two mechanisms `handleMono` had to keep apart (a stage timeout that only stops waiting, a Mono budget that actually cancels) are one thing here.
 
@@ -238,10 +256,10 @@ A request in flight, parked on a remote call, retains **3 173 B** (an `Execution
 So the choice:
 
 - **not every stage is a remote call, concurrency is ordinary** → `handleMono`. It fuses, it is the simplest thing that works, and a parked virtual thread is cheap.
-- **high in-flight concurrency (≳10k), or the call must be cancellable** → `handleMonoAsync`. You pay one dispatch per stage and get the heap back.
+- **high in-flight concurrency (≳10k), or the call must be cancellable** → `handleMonoAsync`. Since the async run fuses, you no longer trade throughput for it — you keep the fused speed and get the heap back. (In a `pipe` — the ingestion loop at high concurrency — this is the default: see [Async by default in `pipe`](#async-by-default-in-pipe).)
 - **every stage is a remote call, and you use none of the engine** (retry, rate limit, batch, `key`, `fork`, `recover`, runtime `splice`, the metrics SPI, chain validation) → plain Reactor. `Mono.zip` and `flatMap` are the right tools and this library is not a campaign to be in front of everything.
 
-Otherwise the engine is buying you policy — and with `handleMonoAsync` the price is no longer a thread per in-flight call.
+Otherwise the engine is buying you policy — and with `handleMonoAsync` the price is no longer a thread per in-flight call, nor throughput.
 
 ## Cancellation: a disposed subscription now stops the pipeline
 

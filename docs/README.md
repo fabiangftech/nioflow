@@ -44,6 +44,7 @@ Every step is a **link** in an immutable chain. A pool of **boss threads** orche
 - **Resilient by composition** — rate limit → per-attempt timeout → retry → `recover()`, all native. [Resilience →](resilience.md)
 - **Built for load** — stage fusion, batching, per-key ordering, backpressure, dedicated event loops. [Scaling →](scaling.md)
 - **Able to detach work** — `fork` runs a whole side pipeline the request never waits for: audit trails, notifications, replication. [Pipeline API →](pipeline-api.md)
+- **Cheap under load** — a remote call can hold a future instead of a parked thread (`handleAsync`), consecutive async stages fuse, and an ingestion `pipe` routes them async by default — the heap of thousands in flight, not their stacks. [WebFlux →](webflux.md)
 - **At home in WebFlux** — a pipeline ends in a `Mono`, and a `WebClient` call is an ordinary step. WebFlux gives you the non-blocking edge; nioflow gives you the blocking middle. [WebFlux →](webflux.md)
 - **Zero required dependencies** — Resilience4j, OpenTelemetry and Reactor are optional, compile-only integrations.
 
@@ -70,6 +71,8 @@ flowchart LR
 | Side work nobody waits for | `fork(name, segment)` — a whole detached pipeline, not a lambda |
 | Bulk downstream calls | `batch(size, window, bulk)` — callers still get individual results |
 | Per-entity ordering | `just(x).key(orderId)` — Kafka-partition style FIFO per key |
+| Remote calls without parking a thread | `handleAsync` / `handleMonoAsync` / `fanOutAsync` — a future in flight, not a stack; a run of them fuses |
+| The same pipeline every request | `flow.pipeline(segment)` — recorded, validated and compiled once, dispatched off the plan |
 | Hot changes | `splice`, named regions, `replaceRegion` — atomic, validated |
 | Protection | native `RateLimit`, `Retry`, timeouts, `recover()`, circuit breaker via Resilience4j |
 | A `Mono` for WebFlux | `handleMono` / `executeMono` — blocking code stays safe inside |

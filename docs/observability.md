@@ -25,8 +25,8 @@ engine.metrics(new NioFlowMetrics() {
 
 | Callback | Fires when |
 |---|---|
-| `executionCompleted / Failed / Filtered` | An execution ends, classified, with its latency |
-| `stageCompleted(name, nanos)` | A stage function returns (timed on the worker, fused runs included) |
+| `executionCompleted / Failed / Filtered / Cancelled` | An execution ends, classified, with its latency. **Cancelled** is a stop from the outside (a disposed `Mono`, a disconnected client) — it is neither a success nor a failure, so it reaches no complete handler and triggers no `recover()` |
+| `stageCompleted(name, nanos)` | A stage function returns (timed on the worker, fused runs — blocking and async — included) |
 | `stageRetried(name)` | A retry attempt is about to run |
 | `recoveryApplied(name)` | A `recover` caught a failure |
 | `forkStarted / forkCompleted / forkFailed(name, …)` | A detached sub-flow spawned, finished, or failed unrecovered. **Separate from the execution metrics on purpose**: a fork's latency is not the request's — the response never waited for it |

@@ -50,6 +50,22 @@ flow.handleContextual("auth", (order, ctx) -> {
 
 Keys are name-based, so a map handed to `engine.call(input, map)` interoperates entry by entry.
 
+### The stage that holds no thread — `handleAsync`
+
+A `handle` that calls a remote service blocks its virtual worker for the whole call. `handleAsync` does not: the function returns a `CompletionStage`, a worker *invokes* it and leaves, and the engine holds a future instead of a thread. It is `CompletionStage`-shaped, so it lives in **core** — no Reactor — for `HttpClient.sendAsync`, the AWS SDK v2, a Cassandra driver:
+
+```java
+flow.handleAsync("quote", order -> http
+        .sendAsync(request(order), ofString())
+        .thenApply(resp -> order.withQuote(resp.body())), Duration.ofSeconds(2));
+```
+
+- A run of consecutive async stages **fuses** (a worker-side driver runs them inline, one boss touch per run) — so it holds no thread and pays no throughput penalty for it.
+- The **timeout cancels** the `CompletionStage` (a `mono.toFuture()` cancels its subscription; an `HttpClient` future aborts the exchange) — the one thing a `handle` timeout can never do.
+- `adaptAsync(call)` is the re-typing form, and retry composes as usual. In WebFlux this is `handleMonoAsync` / `adaptMonoAsync` — [WebFlux →](webflux.md).
+
+Reach for it in front of the network at high concurrency; in front of a value you already have, a plain `handle` is simpler.
+
 ## Re-typing — `adapt`
 
 The step that moves the pipeline from one type to the next. It lives on the **per-request** builder (the shared definition is type-preserving, which is what lets `just()` start at the input type):
@@ -143,6 +159,16 @@ flow.fanOut("enrich", branches, results -> Enriched.of(results));
 
 A failing branch fails the fan-out — recoverable downstream. Use it for real work: trivial branches pay more in coordination than they win in parallelism.
 
+When the branches are **remote calls**, `fanOutAsync` takes `CompletionStage` branches instead: a worker only invokes each and leaves, so N concurrent calls hold N futures rather than parking N workers. The join, ordering and failure semantics are identical.
+
+```java
+List<Function<Order, CompletionStage<Object>>> calls = List.of(
+        o -> stockService.checkAsync(o),
+        o -> fraudService.scoreAsync(o));
+
+flow.fanOutAsync("enrich", calls, results -> Enriched.of(results));
+```
+
 ## Coalescing — `batch`
 
 Executions park at the link until `size` of them accumulated or `window` elapsed, then **one** bulk call maps all their values positionally. Callers never see the batch — each future completes with its own element:
@@ -168,6 +194,25 @@ flow.use(fraudGate)                      // inline, zero runtime footprint
 ```
 
 Naming the embedding turns it into a **region** — the unit of atomic runtime replacement. [Runtime editing →](runtime-editing.md)
+
+## Prebuilt pipelines — `pipeline`
+
+`just(...)…execute()` is convenient but rebuilds and re-interprets the chain on every request. When a pipeline is the same every time — its lambdas do not close over the input — declare it once and let each request only run it:
+
+```java
+// once, at startup: recorded, validated and compiled a single time
+Pipeline<Integer, String> charge = credits.pipeline(step -> step
+        .handle("charge", cents -> cents * 2)
+        .adapt(total -> "EUR " + total));
+
+// per request: allocates a run, dispatches off the plan — no chain copy, no re-interpret
+charge.just(cents).execute();
+charge.just(cents).key(customerId).executeAsync();
+```
+
+The run (`Pipeline.just(x)`) carries only what varies per request — input, `key`, seeded `with()` context, `onComplete`/`onError` — and offers the same terminals as a `NioStep` (`execute`, `executeAsync`, `executeResult`, `executeCancellable`). Because the segment is recorded and validated at build time, a structural mistake (a duplicate anchor, a dead recovery) throws a `ChainValidationException` **then**, not at the first request.
+
+A `Pipeline` snapshots the shared definition when it is built, so a later runtime `splice` does not reach it — a prebuilt pipeline is stable by design. Keep `just(...)…execute()` for pipelines that genuinely vary per request.
 
 ## Error handling — `recover`
 
