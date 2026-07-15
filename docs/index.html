@@ -2,6 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <!-- Google Tag Manager -->
+  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+  'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+  })(window,document,'script','dataLayer','GTM-W48ZV6XD');</script>
+  <!-- End Google Tag Manager -->
   <title>nioflow — typed pipelines on an event loop</title>
   <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"/>
   <meta name="description" content="nioflow: a fluent, typed pipeline API over an event-loop engine for Java. Business logic that changes at runtime.">
@@ -502,6 +509,10 @@
   </style>
 </head>
 <body>
+<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-W48ZV6XD"
+  height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
 <div id="app">Loading nioflow docs…</div>
 <script>
   window.$docsify = {
@@ -530,6 +541,25 @@
       }
     },
     plugins: [
+      // ── Google Tag Manager: one page_view per docsify route render ──
+      // docsify is a hash-routing SPA, so GTM's own page load fires once and
+      // never again. Push an explicit event to the dataLayer after EVERY
+      // render (document.title is final by doneEach, so the title is right).
+      // In GTM: fire the GA4 page_view tag on this 'spa_page_view' event and
+      // leave the GA4 config tag's automatic page_view OFF, so the first
+      // render is counted once, not twice. dataLayer.push is always safe —
+      // if GTM is blocked the array simply grows unread, never throwing.
+      function (hook, vm) {
+        hook.doneEach(function () {
+          var path = '/' + (vm.route.path || '').replace(/^\/+/, '');
+          (window.dataLayer = window.dataLayer || []).push({
+            event: 'spa_page_view',
+            page_path: path,
+            page_title: document.title,
+            page_location: location.origin + '/#' + path
+          });
+        });
+      },
       function (hook) {
         hook.doneEach(function () {
           if (window.mermaid) {

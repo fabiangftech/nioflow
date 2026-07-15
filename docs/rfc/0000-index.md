@@ -29,6 +29,7 @@ fast-path measured neutral and was dropped).
 | [0016](0016-fanoutmono-no-parked-workers.md) | `fanOutMono` without parked workers | ✅ Implemented | reactive | **0012** |
 | [0017](0017-reactive-streaming-hygiene.md) | Reactive streaming & blocking hygiene | ◐ Part 1 shipped (Part 2 neutral) | reactive | — |
 | [0018](0018-docs-refresh-2.1.0.md) | Documentation refresh for the 2.1.0 release | ✅ Implemented | docs, versions | 0009, 0011–0017 |
+| [0019](0019-docs-google-analytics.md) | Google Analytics for the docs site (per-page tracking on a SPA) | ✅ Implemented | docs | 0018 |
 
 **Bold** = hard dependency: the RFC cannot ship until its parent does. A plain
 number means the RFC builds on the parent's design but could be sequenced with
