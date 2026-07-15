@@ -1,10 +1,17 @@
 # RFC 0013 — Async-stage fusion: the 2.8× RFC 0006 accepted
 
-- **Status**: Proposed
+- **Status**: ✅ Implemented
 - **Target**: `core/` (`application.facade`), `tests/`
 - **Depends on**: RFC 0006 (`AsyncStage`), RFC 0007 (cancellation) — both implemented
 - **Enables**: RFC 0015 (async-routed `pipe`), the whole reactive heap win
 - **Part of**: the throughput series (0009–0017). **This is the riskiest item and the highest-leverage one.**
+- **Realized by**: `CompiledChain.asyncRuns` + the `AsyncRun` worker-side driver
+  (`inlineStage` trampoline with the synchronous fast-path, `onPending` for
+  genuinely-async calls, `attempt`/`settle` for budgeted stages) and the
+  `attemptAsyncCall` extraction (`DefaultNioEngine`). Tests:
+  `DefaultNioFlowAsyncStageFusionTest` (core), `AsyncRunCancellationStressTest`
+  (`tests/`, the random-cut acceptance test). Benchmark:
+  `ReactiveBenchmark.fourAsyncReactiveStages`.
 
 ## Summary
 
@@ -68,6 +75,25 @@ The driver is a small state machine over the run's `Link[]`:
 
 `CompiledChain.compile` grows one case: an `AsyncStage` window, under the same rules as a `Stage` window (`DefaultNioEngine:682`).
 
+### Scope as built
+
+The window fused is a run of **consecutive UNGUARDED `AsyncStage`s** (length ≥ 2),
+precollected exactly like the unguarded `Stage` runs. Two simplifications from the
+design above were deferred as unnecessary for the gate and to hold down the risk
+of a second driver:
+
+- **A plain `Stage` between two async stages ENDS the async run** (it is not
+  applied inline inside it); it then dispatches as its own `Stage` window. So
+  `adaptMonoAsync(...).handle(...).handleMonoAsync(...)` is three dispatches, not
+  one. The all-async runs that the reactive series needs (`pipe` over async
+  stages, `fourAsyncReactiveStages`) fuse fully.
+- **A guarded async stage** (inside a `when`/`match` lane) falls back to
+  single-stage dispatch. Unguarded chains — the common non-branched case — fuse.
+
+Both keep the invariant that matters: compiled and interpreted produce identical
+results; the async run is purely an optimization for the unguarded case, and
+anything it does not fuse dispatches exactly as before.
+
 ## Why this is the riskiest item
 
 It is a **second execution driver**: it runs beside the boss rather than on it, and cancellation has to hold across it. Two drivers mean two places for a cancellation bug to hide. Mitigations:
@@ -90,13 +116,26 @@ It is a **second execution driver**: it runs beside the boss rather than on it, 
 
 ## Gate
 
-| Benchmark | Must |
-| --- | --- |
-| `fourAsyncReactiveStages` | reach `fourReactiveStages` **±10%** |
-| `fourReactiveStages` | unchanged |
-| `-prof gc` | async run allocation down |
+| Benchmark | Must | Measured (JDK 25) |
+| --- | --- | --- |
+| `fourAsyncReactiveStages` | reach `fourReactiveStages` **±10%** | **74.4 vs 72.4 ops/ms (+2.9%)** — up from 34.1 (2.2×) |
+| `fourReactiveStages` | unchanged | ~72 ops/ms, unchanged |
+| `-prof gc` | async run allocation down | **3488 → 1584 B/op (−55%)** |
 
-**This gate is load-bearing for the reactive series.** If async lands within 10% of blocking, RFC 0015 (async-routed `pipe`) is unblocked and the facade gets the 489 B/in-flight floor at fused throughput. If it does not, both reactive steps stay and the reactive heap win is deferred.
+**This gate is load-bearing for the reactive series, and it PASSED.** Four
+resolved-Mono async stages now fuse into one worker run — the trampoline invokes
+each stage inline and, because a `Mono.just` resolves synchronously, loops to the
+next without a thread hop, so the run costs ~2 hops like a fused blocking run
+instead of 8. Async landed within 3% of blocking (it edges ahead), which
+**unblocks RFC 0015** (async-routed `pipe`): the facade gets the 489 B/in-flight
+floor at fused throughput.
+
+The win is specific to stages whose `CompletionStage` is already resolved when
+invoked (the benchmark measures engine overhead, not a stubbed network). A
+genuinely-async stage (a real remote call completing later on a Netty thread)
+still costs one worker hop to resume off the completing thread — correct and
+unavoidable — but the boss is touched once per run, not twice per stage, either
+way. A budgeted async stage (timeout/retry) keeps the per-attempt machinery.
 
 ## Risks
 

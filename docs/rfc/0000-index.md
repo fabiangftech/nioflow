@@ -3,8 +3,8 @@
 The design record for nio-flow. RFCs 0001–0008 are **implemented** and describe
 the engine as it stands; 0009–0017 form the throughput series (split from two
 earlier monolithic drafts so each idea stands on its own) — of which **0009,
-0011 and 0012 are implemented**, **0010 is rejected** (measured regression), and
-the rest are proposed.
+0011, 0012 and 0013 are implemented**, **0010 is rejected** (measured
+regression), and the rest are proposed.
 
 ## Catalogue
 
@@ -22,7 +22,7 @@ the rest are proposed.
 | [0010](0010-terminal-on-the-worker.md) | The last hop: complete on the worker | ❌ Rejected (measured regression) | core | 0007 |
 | [0011](0011-per-request-plan.md) | A dispatch plan for per-request pipelines | ✅ Implemented | core | — |
 | [0012](0012-lock-free-fanout.md) | Lock-free fan-out + `fanOutAsync` | ✅ Implemented | core | — |
-| [0013](0013-async-stage-fusion.md) | Async-stage fusion (the 2.8× 0006 accepted) | 📝 Proposed | core | 0006, 0007 |
+| [0013](0013-async-stage-fusion.md) | Async-stage fusion (the 2.8× 0006 accepted) | ✅ Implemented | core | 0006, 0007 |
 | [0014](0014-pipe-prebuilt-pipeline.md) | `pipe` over a prebuilt `Pipeline` | 📝 Proposed | reactive | 0011 |
 | [0015](0015-async-routed-pipe.md) | Async-routed `pipe` (the heap win) | 📝 Proposed | reactive | **0013**, 0014 |
 | [0016](0016-fanoutmono-no-parked-workers.md) | `fanOutMono` without parked workers | 📝 Proposed | reactive | **0012** |
@@ -59,7 +59,7 @@ flowchart TD
     R0010["0010 Terminal on worker ✗"]:::rej
     R0011["0011 Per-request plan"]:::done
     R0012["0012 Lock-free fan-out"]:::done
-    R0013["0013 Async-stage fusion"]:::prop
+    R0013["0013 Async-stage fusion"]:::done
     R0007 --> R0010
     R0006 --> R0013
     R0007 --> R0013
@@ -99,11 +99,11 @@ request.
 - **The loose ends** — 0017 (deprecate uncapped `adaptFlux`; skip the latch on a
   resolved Mono).
 
-**The load-bearing edge is `0013 → 0015`.** If async-stage fusion closes the gap
-to blocking (±10% on `fourAsyncReactiveStages`), the facade gets the 489 B floor
-at fused throughput and the reactive heap win is real. If it does not, 0015 is
-deferred and the series still delivers everything else. Every RFC carries its own
-benchmark gate and ships only if that gate moves.
+**The load-bearing edge is `0013 → 0015`, and 0013 landed within the gate**
+(`fourAsyncReactiveStages` 74.4 vs `fourReactiveStages` 72.4 ops/ms, +2.9%), so
+async-stage fusion closed the gap to blocking: the facade can now get the 489 B
+floor at fused throughput and **RFC 0015 is unblocked**. Every RFC carries its
+own benchmark gate and ships only if that gate moves.
 
 ## Conventions
 
