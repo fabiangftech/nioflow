@@ -1,10 +1,11 @@
 # RFC 0029 — Completion/error handlers on the boss: offload, bound, or say so plainly
 
-- **Status**: 🔵 Proposed
-- **Target**: `core/` (`DefaultNioEngine` — `reportExecution`/`notifyError` handler loops) and `CLAUDE.md` / the observability docs
+- **Status**: ✅ Implemented — option 3 (accurate docs) + option 1 (BlockHound gate on handlers); option 2 deferred to the documented workaround
+- **Target**: `CLAUDE.md` (the claim), the example's BlockHound suite (the gate) — no runtime change
 - **Depends on**: RFC 0009 (the boss model), RFC 0023 (the handler-throw hardening this builds on)
 - **Severity**: **Medium** — a documented-but-underspecified availability coupling; a slow handler stalls every execution on a shared boss
 - **Sibling of**: RFC 0023 (handler *throws*), this (handler *blocks*)
+- **Realized by**: the `CLAUDE.md` "boss never runs user code" claim rewritten to "never runs *stage* user code" and to name the handlers as boss-run-by-design; a new BlockHound test `aBlockingCallPlantedInACompletionHandlerTripsItToo` (example suite) that plants a `Thread.sleep` in an `onComplete` handler and asserts it trips, exactly as the existing `handleSync` one does. No engine change — the boss loop already runs handlers under `BossLoop.run` (disallowed by the BlockHound integration), so the guarantee was already mechanical; it just was not tested or claimed accurately.
 
 ## The finding
 
@@ -104,3 +105,38 @@ genuinely needs a heavy handler and accepts the ordering change.
   and by callers, and must not change silently.
 - **Doc-only (option 3 alone) fixes nothing mechanical.** It is the minimum, not
   the fix; ship it *with* option 1.
+
+## Results
+
+Shipped option 3 + option 1, and the implementation revealed that option 1 needed
+**zero** engine code — only a test.
+
+- **The guarantee was already mechanical; it was just untested and mis-claimed.**
+  The example's `NioFlowBlockHoundIntegration` already marks boss threads
+  (`nio-flow-boss-*`) non-blocking and `disallowBlockingCallsInside(BossLoop,
+  "run")` — and the handler loops run inside `complete`/`fail`, which run as a
+  boss task under `BossLoop.run`. So a blocking handler *already* tripped
+  BlockHound; nobody had planted one to prove it. The new test does, and it
+  passes (4 tests, 0 failures), so "keep handlers fast" is now a falsifiable
+  invariant, matching the `handleSync` one beside it. The BlockingOperationError
+  the handler raises is caught by the RFC 0023 guard and routed to the error
+  handlers — which the test asserts.
+
+- **The claim is now accurate.** `CLAUDE.md` said "the boss never runs user
+  code", full stop; it now says "never runs *stage* user code" and lists what
+  does run on the boss by design (Decision/Filter predicates, `handleSync`, and
+  the `onComplete`/`onError` handlers), all held to the non-blocking rule the
+  BlockHound gate enforces. The observability note gained the same correction and
+  the pragmatic escape hatch.
+
+- **Option 2 (offload as an opt-in) was deferred, on purpose.** A per-handler
+  `ASYNC` mode would add API surface (and a reactive-mirror override, RFC 0030
+  territory) and complicate the `onComplete`-before-`execute()` ordering
+  contract, to serve a need the docs now cover in one line: *for a genuinely
+  heavy handler, hand the work to your own executor* (`onComplete(v ->
+  myPool.execute(() -> heavy(v)))`). That keeps the boss free without the engine
+  owning a second execution context or a new contract. If a concrete case ever
+  needs first-class support, option 2 is specified above and can land then.
+
+No `core`/`reactive` source changed, so there is nothing new for those SonarLint
+gates; the example test suite (BlockHound armed) is green.

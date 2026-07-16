@@ -100,6 +100,34 @@ class BlockHoundTest {
     }
 
     @Test
+    void aBlockingCallPlantedInACompletionHandlerTripsItToo() throws Exception {
+        // The other user code the boss runs (RFC 0029): onComplete/onError handlers
+        // fire in the terminal (reportExecution/notifyError) ON the boss, exactly
+        // like a handleSync stage. So a blocking handler is the same event-loop
+        // violation and must trip BlockHound too — that is what makes "keep handlers
+        // fast" mechanical rather than a doc line. The block surfaces as a
+        // BlockingOperationError, which the RFC 0023 handler guard catches and
+        // routes to the error handlers.
+        AtomicReference<Throwable> seen = new AtomicReference<>();
+
+        try (DefaultNioFlow<String, String> flow = DefaultNioFlow.from(String.class)) {
+            flow.onError(seen::set);
+            flow.onComplete(value -> {
+                try {
+                    Thread.sleep(5);        // in a handler, on the boss: forbidden
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            flow.handle("cheap", value -> value);
+
+            assertEquals("order-1", flow.just("order-1").execute());
+        }
+        assertInstanceOf(BlockingOperationError.class, rootOf(seen.get()),
+                "a blocking completion handler did not trip BlockHound: " + seen.get());
+    }
+
+    @Test
     void theBlockingStagesOfTheExampleNeverTripIt() {
         // The experiment. /orders/1/pay is a BLOCKING JDBC-style repository call, a
         // WebClient call parked on with Mono.block() inside the engine, and a
