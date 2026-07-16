@@ -1,10 +1,10 @@
 # RFC 0032 — Break up the `DefaultNioEngine` god class; unify the three execution drivers
 
-- **Status**: ◐ Phases A + B1 shipped (`Execution` now a top-level class); B2 (flatten its nested drivers) low-value and C (unify the three drivers) deferred to a dedicated pass
+- **Status**: ✅ Resolved — Phases A + B1 shipped (`Execution` now a top-level class); C reconsidered and closed by a test, not a unification (see below); B2 (flatten the nested drivers) left as low-value
 - **Target**: `core` (`DefaultNioEngine` and the types it nests) — a structural refactor, no behavior change
 - **Depends on**: RFC 0009, RFC 0011 (the plan), RFC 0013 (async fusion) — the machinery being reorganized
 - **Severity**: **Medium** — maintainability/correctness-risk, not a live defect: the duplication is where the *next* bug will hide
-- **Realized by**: extracting `Execution`, `CompiledChain`, and `BatchGroup` to top-level package-private classes (as the code style already demands for new code), and unifying the shared logic of the three execution drivers (the cancellation gate, the positional recover scan, the per-stage timing) behind one helper so it exists once.
+- **Realized by**: extracting `CompiledChain`, the value records, `SharedExecutors` (A) and `Execution` (B1) to top-level classes (as the code style already demands for new code). The proposed driver unification (C) was reconsidered and NOT done — the three drivers are genuinely distinct and a shared helper would harm the hot path; the invariant it aimed to protect (RFC 0007's cancellation rule in every driver) is instead enforced by a test in the one driver where it was untested.
 
 ## Progress
 
@@ -14,7 +14,18 @@
 
 **Phase B2 — deferred (low value): flatten the nested drivers.** `FanOutJoin`/`AsyncSettle`/`AsyncRun`/`ExecutionContext` are still nested inside the top-level `Execution`. They are already OUT of the god class; lifting them to their own files would expose a lot of `Execution` private state (they read its fields heavily) for marginal gain. Do it only if the "no nested types" rule is enforced strictly.
 
-**Phase C — deferred: unify the three drivers.** `advance`/`applyRun`/`AsyncRun.drive` share the cancellation gate, the positional recover scan and the per-stage timing. Unifying them is the correctness payoff (RFC 0007's cancellation rule living in one place, not three) but it is the one phase that TOUCHES hot-path logic rather than only moving it, so it ships last, gated by the compiled≡interpreted and fusion-equivalence probes. Now that `Execution` is its own class (B1), C is a self-contained follow-up.
+**Phase C — reconsidered, and closed by a test rather than a unification.** Studying the three drivers with B1 done showed the premise was optimistic: they are genuinely distinct, not duplicated.
+
+- `advance` is the boss loop (per-link, dispatches); `applyRun` is the fused blocking-worker driver (inline recovery scan, returns a sentinel); `AsyncRun.drive` is the fused async-worker driver (callback-based, hops to the boss).
+- The "shared cancellation gate" is a one-line `cancelled` field read with THREE context-specific responses — `complete(CANCELLED)` on the boss, return the `CANCELLED` sentinel on a blocking worker, `resumeOnBoss(() -> complete(CANCELLED))` on an async worker. There is no common *response* to unify; the check itself is a field read.
+- The "recover scan" runs on different structures in different contexts: `recover()` scans the CHAIN and dispatches applyRecovery to a worker; `applyRun` scans the RUN array and applies inline — and that inline-vs-dispatch difference IS the fusion, not incidental duplication.
+- The per-stage timing is sync-inline (`timedApply`) vs async-callback (`inlineStage`/`onPending`) — structurally different.
+
+Forcing a shared helper would add indirection to the per-link hot path — exactly what the JMH benchmarks and the S3776 entry in `tools/sonarlint/README.md` deliberately protect ("splitting any of them to please the rule is what the JMH benchmarks guard against"). The DRY win is illusory and the concurrency risk is real.
+
+What C actually *cares* about — RFC 0007's cancellation rule holding in every driver — is a testable invariant, not a structural one. The fused-blocking case was already pinned (`theStageAfterTheCancelledOneNeverRuns`), but the fused-ASYNC driver (`AsyncRun.drive`, cancellation between two fused async stages) was untested — the real "fixed in two of three" gap. That gap is now closed by `aCancelledFusedAsyncRunStopsBeforeTheNextStage` (a per-request pipeline of two consecutive `handleMonoAsync` stages, the first left pending, cancelled while the fused run is parked between them; the second stage must never run). So the invariant is mechanical across all three drivers — enforced where it belongs, without contorting the hot path.
+
+**Phase B2 — left undone (low value):** `FanOutJoin`/`AsyncSettle`/`AsyncRun`/`ExecutionContext` remain nested inside the top-level `Execution`. They are already out of the god class; lifting them would expose a lot of `Execution` private state for marginal gain.
 
 ## The finding
 

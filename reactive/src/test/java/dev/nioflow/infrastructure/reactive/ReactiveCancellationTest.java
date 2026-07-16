@@ -86,6 +86,45 @@ class ReactiveCancellationTest {
     }
 
     /**
+     * The SAME rule, in the THIRD execution driver: two consecutive
+     * {@code handleMonoAsync} stages FUSE into one worker-side async run
+     * ({@code AsyncRun.drive}, RFC 0013), so — exactly as with the fused BLOCKING
+     * run in {@link #theStageAfterTheCancelledOneNeverRuns} — the cancellation
+     * check has to live BETWEEN the stages of that run, not just in the boss loop.
+     * Without it, the second stage would run on a cancelled execution. This is the
+     * driver whose invariant RFC 0032 left untested; a per-reference driver
+     * unification was judged the wrong fix, so the rule is pinned here instead.
+     */
+    @Test
+    void aCancelledFusedAsyncRunStopsBeforeTheNextStage() throws InterruptedException {
+        CountDownLatch firstSubscribed = new CountDownLatch(1);
+        CountDownLatch secondRan = new CountDownLatch(1);
+
+        Disposable subscription = flow.just(1)
+                // First async stage: pending forever, so the fused async run parks
+                // on its completion callback with the second stage still ahead.
+                .handleMonoAsync("first", value -> Mono.<Integer>never()
+                        .doOnSubscribe(ignored -> firstSubscribed.countDown()))
+                .handleMonoAsync("second", value -> {
+                    secondRan.countDown();
+                    return Mono.just(value);
+                })
+                .executeMono()
+                .subscribe();
+
+        assertTrue(firstSubscribed.await(1, TimeUnit.SECONDS));
+        subscription.dispose();   // cancel while the fused run is parked between stages
+
+        // The first stage's callback fires (its subscription is cancelled), sees the
+        // cancelled flag, and ends the run — the second stage is never invoked.
+        assertFalse(secondRan.await(300, TimeUnit.MILLISECONDS),
+                "a cancelled fused async run ran the next stage anyway");
+
+        // ...and the engine still serves the next request.
+        assertEquals(42, flow.just(2).handle("work", value -> value * 21).executeMono().block());
+    }
+
+    /**
      * The RFC in one test: what cancellation buys is that the NEXT stage never
      * runs. The card is not charged because charge() is never invoked.
      */
