@@ -30,6 +30,14 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// Pin the documented floor (RFC 0037): compile against the Java 21 API so a
+// newer-than-21 method cannot silently land and break the "Java 21+" promise.
+// options.release (not a toolchain) so the build needs no separate JDK 21 install
+// — it targets release 21 with whatever modern JDK runs Gradle.
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
+
 test {
     useJUnitPlatform()
     finalizedBy jacocoTestReport

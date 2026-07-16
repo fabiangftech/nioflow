@@ -9,7 +9,7 @@ fast-path measured neutral and was dropped). **0023–0030 are the
 production-hardening cluster — all implemented** — fixes for a multi-agent
 audit's findings, all clustered in the shutdown / cancel / metrics /
 reactive-bridge corners the steady-state hot path never exercises. **0031–0041
-are the second audit cluster — 0031, 0033, 0034, 0035, 0036, 0038 and 0039 implemented, 0032 part-shipped (phase A), the rest proposed** — a fresh
+are the second audit cluster — 0031, 0033, 0034, 0035, 0036, 0037, 0038 and 0039 implemented, 0032 part-shipped (phase A), the rest proposed** — a fresh
 multi-agent review (core, reactive, docs, adopter) covering an admission-control
 gap on `call()`, the engine god class, reactive safety defaults, and a batch of
 docs/build and long-uptime hardening items; none is on the steady-state hot path.
@@ -54,7 +54,7 @@ docs/build and long-uptime hardening items; none is on the steady-state hot path
 | [0034](0034-reactive-budget-safe-by-default.md) | The reactive budget footgun ships armed — make safety the default | ✅ Implemented | reactive | 0003, 0006, 0028 |
 | [0035](0035-mirror-test-covers-every-builder.md) | `ReactiveMirrorTest` must cover every builder pair + one behaviour per family | ✅ Implemented | reactive (tests) | 0008, **0030** |
 | [0036](0036-examples-overhaul.md) | Examples overhaul: stop shipping the anti-pattern the docs warn against | ✅ Implemented | examples, docs | — |
-| [0037](0037-docs-and-build-hygiene.md) | Docs & build hygiene: one benchmark source, reachable RFCs, a pinned JDK floor | 📋 Proposed | docs, build | 0018, 0022 |
+| [0037](0037-docs-and-build-hygiene.md) | Docs & build hygiene: one benchmark source, reachable RFCs, a pinned JDK floor | ✅ Implemented | docs, build | 0018, 0022 |
 | [0038](0038-per-request-decision-id-compaction.md) | Compact per-request decision ids so branching never falls off the bitset | ✅ Implemented | core | 0011 |
 | [0039](0039-bounded-key-lane-and-depth-metric.md) | Bound the per-key lane, and surface its depth | ✅ Implemented | core | 0024, 0026 |
 | [0040](0040-lane-held-visibility-in-shutdown-terminal.md) | `laneHeld` visibility on the off-boss shutdown terminal | 📋 Proposed | core | 0007, 0024, 0026 |
@@ -175,15 +175,16 @@ dropped) — its streaming deprecation shipped, so the node is green.
 
 ## The throughput series, read as one argument
 
-The series starts from a measured fact: an execution of a 1-stage chain and a
-32-stage chain cost the same (~17.5 µs), so **fusion already made the links
-free** and everything left is plumbing around them — thread handoffs, the queue
-that carries them, objects allocated on the way, and the chain rebuilt per
-request.
+The series starts from a measured fact: a 1-stage chain and a 32-stage chain
+cost **nearly the same — about 1.5× apart over 32× more links** (measured 88.6
+vs 58.8 ops/ms; see [benchmarks](../benchmarks.md)), so **fusion already made
+the links nearly free** and everything left is plumbing around them — thread
+handoffs, the queue that carries them, objects allocated on the way, and the
+chain rebuilt per request.
 
 - **The hops** — 0009 (the boss's park/unpark), 0010 (the redundant third hop),
-  0013 (async stages that never fused). Two `unpark` syscalls per request are
-  most of the 17.5 µs; 0009 is the largest single win.
+  0013 (async stages that never fused). Two `unpark` syscalls per request
+  dominate the per-execution cost; 0009 is the largest single win.
 - **The allocations** — 0011 (per-request pipelines that copy the chain twice
   and interpret), 0012 (fan-out's `CompletableFuture` tree).
 - **The reactive heap** — 0014 (`pipe` re-assembling per element), 0015 (parking
@@ -194,7 +195,8 @@ request.
   already elides the latch — and dropped).
 
 **The load-bearing edge is `0013 → 0015`, and 0013 landed within the gate**
-(`fourAsyncReactiveStages` 74.4 vs `fourReactiveStages` 72.4 ops/ms, +2.9%), so
+(`fourAsyncReactiveStages` 74.9 vs `fourReactiveStages` 72.4 ops/ms; see
+[benchmarks](../benchmarks.md), the single source for these numbers), so
 async-stage fusion closed the gap to blocking: the facade can now get the 489 B
 floor at fused throughput and **RFC 0015 is unblocked**. Every RFC carries its
 own benchmark gate and ships only if that gate moves.

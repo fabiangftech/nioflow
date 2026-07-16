@@ -238,7 +238,7 @@ It buys the heap back and — since a run of async stages now **fuses** — cost
 | --- | --- | --- |
 | Retained per in-flight request | **3 173 B** (an `Execution` + a parked virtual thread's stack) | **489 B** (an `Execution` + a `CompletableFuture`) — **6.5× less** |
 | Four remote stages in a row | fuse into one worker run | **also fuse** — a worker-side trampoline drives the run, one boss touch for the whole thing |
-| Engine overhead (four immediately-resolved Monos) | 72.4 ops/ms | **74.4 ops/ms** — within ~3%, no throughput penalty |
+| Engine overhead (four immediately-resolved Monos) | 72.4 ops/ms | **74.9 ops/ms** — within ~3%, no throughput penalty (see benchmarks.md) |
 | The timeout | abandons the parked worker; only `mono.timeout(budget)` cancels the call | **cancels the `CompletionStage`** — the subscription dies and reactor-netty releases the connection |
 
 That second and third row are the point, and they used to read the other way: before the async run fused, four `handleMonoAsync` stages were four boss round trips against one for `handleMono`, and paid ~2.8× in throughput. A worker-side driver now runs consecutive async stages inline on one worker — invoking each call and, when its Mono is already resolved, looping straight to the next without a hop — so the async path holds no thread **and** matches the blocking path's throughput. (See [RFC 0013](https://github.com/fabiangftech/nioflow/blob/main/docs/rfc/0013-async-stage-fusion.md).)

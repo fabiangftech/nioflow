@@ -43,6 +43,13 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// Pin the documented Java 21 floor (RFC 0037): options.release, not a toolchain,
+// so no separate JDK install is needed — it targets release 21 with whatever
+// modern JDK runs Gradle, and rejects a newer-than-21 API before it can ship.
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
+
 test {
     useJUnitPlatform()
     finalizedBy jacocoTestReport

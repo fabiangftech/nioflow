@@ -63,6 +63,28 @@ flowchart LR
     F --> G[Result]
 ```
 
+## When NOT to use it — and what to reach for instead
+
+nioflow is a **pipeline-orchestration engine**, not a concurrency primitive. The
+concurrency you get from the virtual-thread workers, plain JDK 21 already gives
+you. nioflow earns its keep when you need the machinery layered on top — as a
+bundle, not one piece:
+
+| If all you need is… | reach for | not nioflow, because |
+|---|---|---|
+| "call 3 things concurrently, join" | `StructuredTaskScope` (JDK 21+) | ~15 lines of stdlib, no new model, readable stack traces |
+| chain a few blocking calls, return | plain virtual threads / `CompletableFuture` | the boss/worker model buys you nothing here |
+| an end-to-end reactive pipeline at very high concurrency, using none of the engine | plain **Reactor** | a worker parked on `Blocking.await` retains ~16× a pure Reactor chain — untenable at 10⁵ in flight ([WebFlux decision tree](webflux.md)) |
+| durable, long-running, human-in-the-loop workflows | a real workflow engine (Temporal, Camunda) | nioflow is in-memory and request-scoped; it does not persist state across restarts |
+
+**Reach for nioflow when you need two or more of:** keyed FIFO ordering,
+request coalescing (`batch`), hot runtime chain editing (`splice`), positional
+`recover`, native retry/rate-limit, or one unified metrics view across a
+genuinely multi-step pipeline — and when the shape needs to change without a
+redeploy. If you need only one of those, a smaller tool is less risk for equal
+capability. When something goes wrong in production, the
+[troubleshooting runbook](troubleshooting.md) is the map.
+
 ## At a glance
 
 | You need | nioflow gives you |

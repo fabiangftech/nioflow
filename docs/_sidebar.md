@@ -19,6 +19,9 @@
 - [Benchmarks](benchmarks.md)
 - [Troubleshooting & operability](troubleshooting.md)
 
+- **Design record**
+- [RFC index](rfc/0000-index.md)
+
 - **Links**
 - [GitHub](https://github.com/fabiangftech/nioflow)
 - [Maven Central: nioflow-core](https://central.sonatype.com/artifact/dev.nioflow/nioflow-core)
