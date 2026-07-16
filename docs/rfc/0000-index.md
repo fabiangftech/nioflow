@@ -38,7 +38,7 @@ corners the steady-state hot path never exercises.
 | [0022](0022-benchmarks-evidence-page.md) | A benchmarks page: the performance claims, documented as evidence | ✅ Implemented | docs | 0021, 0009, 0011–0017 |
 | [0023](0023-metrics-spi-must-not-hang-a-future.md) | A throwing metrics SPI must not hang a future | ✅ Implemented | core | 0009 |
 | [0024](0024-atomic-exactly-once-terminal.md) | An atomic exactly-once terminal (drain never double-counts) | 🔵 Proposed | core | 0007, 0009 |
-| [0025](0025-cancel-off-the-timer-thread.md) | Subscription cancellation off the TimerWheel thread | 🔵 Proposed | core | 0006, 0007 |
+| [0025](0025-cancel-off-the-timer-thread.md) | Subscription cancellation off the TimerWheel thread | ✅ Implemented | core | 0006, 0007 |
 | [0026](0026-off-boss-key-lane-release.md) | Off-boss key-lane release must not recurse or race | 🔵 Proposed | core | **0024** |
 | [0027](0027-empty-mono-semantics.md) | `Mono.empty()` must mean one thing, not two | 🔵 Proposed | reactive | 0002, 0004 |
 | [0028](0028-preferasync-no-budget-leak.md) | Close the `preferAsync` no-budget leak | ✅ Implemented | reactive | 0003, 0006 |

@@ -12,9 +12,13 @@ import java.util.concurrent.locks.LockSupport;
  * Deliberately coarse: deadlines round up to the tick, and a new timeout
  * enters the wheel at the next tick's transfer, so an action fires up to
  * ~2 ticks late. A stage budget is a guard against hung calls, not a
- * precise timer. Actions must be cheap and never user code (the engine
- * only completes futures exceptionally; dependent continuations run
- * async elsewhere).
+ * precise timer. Actions must be cheap and never user code, and never
+ * block: this one thread ticks every timeout and batch window in the JVM,
+ * so anything slow on it stalls all of them. The engine's actions only
+ * complete futures exceptionally and enqueue work — the async-stage
+ * timeout completes the attempt future here but hands its
+ * subscription-cancel (which can run reactor-netty teardown) to a worker
+ * (RFC 0025); dependent continuations run async elsewhere.
  *
  * Single-writer design: scheduling threads only touch the MPSC staging
  * queue; the one daemon worker transfers staged timeouts into buckets at

@@ -1,10 +1,11 @@
 # RFC 0025 — Subscription cancellation must not run on the TimerWheel thread
 
-- **Status**: 🔵 Proposed
-- **Target**: `core/` (`DefaultNioEngine.Execution.attemptAsyncCall` — the timeout action; `TimerWheel` contract)
+- **Status**: ✅ Implemented — both cancel sites offloaded to a worker; `TimerWheel` contract tightened; 3 deterministic tests
+- **Target**: `core/` (`DefaultNioEngine.Execution.attemptAsyncCall` — the timeout action; `Execution.cancel`; `TimerWheel` contract)
 - **Depends on**: RFC 0006 (the async stage whose call is cancelled), RFC 0007 (cancellation)
 - **Severity**: **Medium-High** — a JVM-wide latency/liveness risk that only shows under real network teardown, so benchmarks never see it
 - **Sibling of**: the timer-wheel design in RFC 0009's counter/timer family
+- **Realized by**: `DefaultNioEngine.Execution.cancelOffThread(CompletionStage)` — snapshots the in-flight call at the call site and runs `cancel(...)` on a worker (inline fallback if the workers are gone). Both callers switched to it: the async-timeout action (was on the shared timer thread) and `Execution.cancel()` (was on the caller's thread). `TimerWheel` javadoc tightened to state the never-block contract and name the offload. Tests: `DefaultNioFlowAsyncTimeoutIsolationTest`.
 
 ## The finding
 
@@ -125,3 +126,34 @@ call user code or block — and point at this RFC as the reason.
   a worker in parallel. They are independent — the recovery does not depend on
   the teardown finishing — so parallelism is correct and, in fact, faster for
   the request.
+
+## Results
+
+Shipped as designed: one helper, `cancelOffThread`, with both cancel sites
+routed through it — the timer-thread one (`attemptAsyncCall`) and the
+caller-thread one (`Execution.cancel`). The Dekker handshake in `invokeAsync` is
+untouched, so the attempt future's CAS is still the sole arbiter of who cancels
+and the call is cancelled exactly once; the only change is *which thread* runs
+the teardown.
+
+Two things worth recording:
+
+- **The snapshot matters, and the helper's signature enforces it.**
+  `cancelOffThread(pendingCall)` reads the volatile field *at the call site*
+  (the timer thread / the caller thread) and passes the value; the worker lambda
+  captures that snapshot, not the field. So a retry that later republishes
+  `pendingCall` can never redirect an in-flight cancel to the wrong call — the
+  same property the inline version had for free by reading the field once.
+- **The test turns "off the timer thread" into a deterministic assertion.** An
+  `ObservingFuture` (a `CompletableFuture` whose `cancel` records — and can block
+  on — the thread that runs it) makes the fix falsifiable three ways: the
+  timeout cancel does not run on `nio-flow-timer`, the outside cancel does not
+  run on the caller thread, and a *blocking* teardown on one execution no longer
+  stalls a second execution's timeout on the shared wheel (without the fix the
+  second future never completes and the test hangs). No `Mono` needed, so the
+  test lives in core.
+
+`cd core && ./gradlew test` green (full suite, plus the `tests/` cancellation
+stress); `cd reactive && ./gradlew test` green; SonarLint diff over `core` is
+empty (a first pass tripped one S125 on a comment that read as code — the comment
+was reworded, not suppressed).

@@ -1169,10 +1169,12 @@ public class DefaultNioEngine implements NioEngine {
                 return;
             }
             cancelled = true;
-            // Kills the remote call itself: the subscription dies, the
-            // connection is released. Without this the chain would merely stop
-            // advancing while the expensive call ran on.
-            cancel(pendingCall);
+            // Kills the remote call itself so the subscription dies and the
+            // connection is released. Off the caller's thread (RFC 0025), because
+            // the teardown can block and a client-facing thread must not wear
+            // that. The current pendingCall is snapshotted at the call site, so a
+            // racing retry cannot send this cancel to the wrong call.
+            cancelOffThread(pendingCall);
             try {
                 boss.execute(() -> complete(CANCELLED));
             } catch (RejectedExecutionException gone) {
@@ -1870,12 +1872,15 @@ public class DefaultNioEngine implements NioEngine {
             // read from two places that may run on any thread: this timeout, and
             // an outside cancel(). Only one of them wins the attempt future, and
             // only the winner cancels — attemptResult's CAS is the arbiter.
+            // The winner completes the future INLINE (cheap, keeps the wheel
+            // ticking) but hands the subscription-cancel to a worker (RFC 0025):
+            // the teardown must not run on the shared timer thread.
             TimerWheel.Timeout budget = stage.timeout() == null ? null
                     : TimerWheel.shared().schedule(stage.timeout().toNanos(), () -> {
                         boolean expired = attemptResult.completeExceptionally(new TimeoutException(
                                 ASYNC_STAGE + stage.name() + "' exceeded " + stage.timeout()));
                         if (expired) {
-                            cancel(pendingCall);
+                            cancelOffThread(pendingCall);
                         }
                     });
 
@@ -2156,6 +2161,29 @@ public class DefaultNioEngine implements NioEngine {
                 call.toCompletableFuture().cancel(false);
             } catch (UnsupportedOperationException notCancellable) {
                 // Nothing to take back; the execution has already failed.
+            }
+        }
+
+        /**
+         * Cancels the in-flight async call on a WORKER, never on the thread that
+         * asked for it. Cancelling a {@code mono.toFuture()} disposes the Reactor
+         * subscription, which can run reactor-netty's connection teardown — not
+         * cheap, and not something the two threads that reach here may run: the
+         * shared {@link TimerWheel} thread (it must keep ticking for every other
+         * timeout and batch window in the JVM) and an outside {@code cancel()}
+         * caller's thread. The caller passes the CURRENT {@code pendingCall}
+         * value, so a retry that later republishes the field cannot redirect this
+         * cancel to the wrong call. Workers gone mid-shutdown: cancel inline,
+         * there is nothing left to protect. See RFC 0025.
+         */
+        private void cancelOffThread(CompletionStage<Object> call) {
+            if (call == null) {
+                return;
+            }
+            try {
+                workersExecutorService.execute(() -> cancel(call));
+            } catch (RejectedExecutionException gone) {
+                cancel(call);
             }
         }
 
