@@ -340,6 +340,16 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
         return state.nioEngine;
     }
 
+    /**
+     * Test seam (RFC 0038): the compiled per-request plan, or null if no local
+     * link was added (this pipeline runs the shared chain as-is). Pair with
+     * {@link DefaultNioEngine#planMaxDecisionId} to assert the plan's decisions
+     * were compacted to fit the bitset.
+     */
+    PreparedChain preparedForTest() {
+        return state.links == null ? null : state.prepared();
+    }
+
     @Override
     void appendLink(Link link) {
         state.localLinks().add(link);
@@ -406,7 +416,17 @@ final class ExecutionNioFlow<T, O> extends AbstractChain<T> implements NioStep<T
         /** The compiled snapshot of the local chain, built once and cached. */
         private PreparedChain prepared() {
             if (prepared == null) {
-                prepared = nioEngine.planFor(List.copyOf(links));
+                // Compact this request's decision ids to 0..n-1 before compiling
+                // WHEN one would fall off the bitset (RFC 0038). Ids come from the
+                // engine-wide counter, which climbs forever under per-request
+                // when()/match(); left alone, an id past the limit drops every such
+                // execution onto the per-execution overflow map (boxing on the hot
+                // path) for the life of the JVM. A per-request chain's decisions
+                // are private to it — exactly like a fork's — so compaction is safe.
+                // Below the limit the bitset already fits, so this is the plain
+                // List.copyOf it always was: no cost until the counter climbs.
+                prepared = nioEngine.planFor(
+                        AbstractChain.compactDecisionsIfBeyond(links, DefaultNioEngine.MAX_BITSET_DECISION_ID));
             }
             return prepared;
         }

@@ -60,6 +60,12 @@ public class DefaultNioEngine implements NioEngine {
     private static final String ASYNC_STAGE = "Async stage '";
     private static final String IN_FLIGHT_CAPACITY = "In-flight capacity ";
 
+    // Bitset limit: decision ids 0..511 fit in 16 longs (128 bytes) per execution.
+    // Beyond that the bitset would outgrow a small map, so decisions overflow into
+    // one. Package-visible so a per-request plan can decide whether its decisions
+    // need compacting to fit (RFC 0038), the same limit the Execution bitset uses.
+    static final int MAX_BITSET_DECISION_ID = 511;
+
     // Public sentinel carried by raw call() futures when a Filter cut the
     // execution. Engine exits (await, complete handlers) and the flow-level
     // execute()/executeAsync() map it to null; executeResult() observes it.
@@ -399,6 +405,16 @@ public class DefaultNioEngine implements NioEngine {
 
     /** The opaque handle prepare()/planFor() hand out: a compiled plan and nothing else. */
     private record Prepared(CompiledChain plan) implements PreparedChain {
+    }
+
+    /**
+     * Test seam (RFC 0038): the compiled plan's highest decision id. Lets a test
+     * assert a per-request pipeline compacts its decisions to fit the bitset
+     * instead of dragging the engine-wide counter into it — a difference the
+     * public API hides, because the bitset and the overflow map route identically.
+     */
+    static int planMaxDecisionId(PreparedChain prepared) {
+        return ((Prepared) prepared).plan().maxDecisionId();
     }
 
     private RejectedExecutionException rejection() {
@@ -1091,10 +1107,6 @@ public class DefaultNioEngine implements NioEngine {
      * closure per call.
      */
     private final class Execution implements Runnable {
-
-        // Bitset limit: ids 0..511 fit in 16 longs (128 bytes). Beyond that the
-        // bitset would outgrow a small map, so decisions overflow into one.
-        private static final int MAX_BITSET_DECISION_ID = 511;
 
         private final ExecutorService boss;
         private final List<Link> links;

@@ -190,15 +190,36 @@ abstract class AbstractChain<X> {
     }
 
     /**
-     * Renumbers the sub-chain's decisions to 0..n-1. Ids come from the
-     * engine-wide counter, which grows forever under per-request forks and
-     * would push the child's decision bitset into its overflow map for no
-     * reason: inside a fork they are private (the chain is guard-closed), so
-     * they can be compacted. Links with neither guards nor a decision id keep
-     * their instance — Batch in particular, whose identity keys its in-flight
-     * group.
+     * Renumbers a chain's decisions to 0..n-1. Ids come from the engine-wide
+     * counter, which grows forever under per-request branching and forks and
+     * would push a private chain's decision bitset into its overflow map for no
+     * reason. Used in two places, both building a chain whose decisions are
+     * PRIVATE to one execution and so free to compact: a fork's guard-closed
+     * sub-chain (see forkSegment), and a per-request pipeline's cached plan (see
+     * ExecutionNioFlow.State.prepared) — RFC 0038. Links with neither guards nor
+     * a decision id keep their instance — Batch in particular, whose identity
+     * keys its in-flight group.
      */
-    private static List<Link> compactDecisions(List<Link> links) {
+    /**
+     * Compacts only when a decision id would fall off the per-execution bitset
+     * (RFC 0038): below the limit the bitset already fits, so a per-request chain
+     * pays nothing — no scan-and-rebuild, exactly the {@code List.copyOf} it did
+     * before. Once the engine-wide counter has climbed past the limit, compaction
+     * kicks in and also spares the per-execution overflow map. A fork compacts
+     * unconditionally (its ids are private regardless); this is the per-request
+     * fast path.
+     */
+    static List<Link> compactDecisionsIfBeyond(List<Link> links, int limit) {
+        int highest = -1;
+        for (Link link : links) {
+            if (link instanceof Decision decision && decision.id() > highest) {
+                highest = decision.id();
+            }
+        }
+        return highest > limit ? compactDecisions(links) : List.copyOf(links);
+    }
+
+    static List<Link> compactDecisions(List<Link> links) {
         Map<Integer, Integer> remap = new HashMap<>();
         for (Link link : links) {
             if (link instanceof Decision decision) {

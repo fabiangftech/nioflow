@@ -1,10 +1,10 @@
 # RFC 0038 — Compact per-request decision ids so branching never falls off the bitset
 
-- **Status**: 📋 Proposed
-- **Target**: `core` (`AbstractChain`, the per-request pipeline path)
+- **Status**: ✅ Implemented — option 1 (compact per-request ids like a fork), guarded so it costs nothing below the bitset limit
+- **Target**: `core` (`AbstractChain`, `ExecutionNioFlow`, `DefaultNioEngine`)
 - **Depends on**: RFC 0011 (the plan / decision bitset)
 - **Severity**: **Medium** — a long-uptime hazard and a hot-path allocation cliff for per-request branching; the fork path already shows the fix
-- **Realized by**: compacting a per-request pipeline's decision ids to `0..n-1` the same way `Fork` does, so a per-request `when`/`match` always fits the fast bitset and never consumes the engine-wide counter.
+- **Realized by**: compacting a per-request pipeline's decision ids to `0..n-1` in its cached plan (`ExecutionNioFlow.State.prepared` → `AbstractChain.compactDecisionsIfBeyond`), reusing the fork path's `compactDecisions`, but only when a decision id would fall off the bitset (`> MAX_BITSET_DECISION_ID`) so the common case pays exactly the `List.copyOf` it always did.
 
 ## The finding
 
@@ -42,3 +42,49 @@ Recommended: **option 1.** It removes both the overflow-map cost and the counter
 - **Interaction with runtime splice/region edits** on a per-request chain: compacted local ids must stay consistent if the local chain is edited. Per-request pipelines are ephemeral (not sealed/spliced the way the shared definition is), so this is likely a non-issue — but test a per-request `when` after a local `use(segment)` to be sure.
 - **Two id spaces (shared global vs per-request local)** must never be read against the same bitset. The fork path already runs this way safely (its ids are compacted and its bitset is private); mirror that isolation exactly for per-request chains.
 - **Very deep single-request branching** (> 511 in one request) still needs the overflow map as a correctness fallback — keep it, do not delete it; option 1 makes it rare, not impossible.
+
+## Results
+
+Shipped option 1, guarded. No hot-path change (compaction is build-time, once per
+per-request pipeline, and only when needed); `BranchRoutingBenchmark` (shared-
+definition branching, whose `just()` adds no local links and so never reaches the
+compaction seam) stayed flat at ~92 ops/ms.
+
+- **The compaction is conditional.** `ExecutionNioFlow.State.prepared` now compiles
+  `AbstractChain.compactDecisionsIfBeyond(links, MAX_BITSET_DECISION_ID)` instead
+  of `List.copyOf(links)`. Below the limit — the common case, and the whole warm-up
+  of any service — it *is* the old `List.copyOf` (a single id scan, no rebuild), so
+  there is no allocation regression for per-request branching. Once the engine-wide
+  counter has climbed past 511, compaction kicks in, renumbers to `0..n-1`, and the
+  execution rides the bitset instead of allocating a per-execution overflow
+  `HashMap<Integer,Boolean>` (boxing every decision) for the rest of the JVM's life.
+
+- **It reuses the fork machinery.** `compactDecisions` (made package-private) and
+  its guard/link remapping are exactly what a fork already used; a per-request
+  chain's decisions are equally private to one execution, so the same remap is
+  safe. `MAX_BITSET_DECISION_ID` was promoted from `Execution` to a
+  `DefaultNioEngine` constant so the plan and the bitset agree on the one limit.
+
+- **Counter exhaustion is defused too.** Even if the engine-wide `AtomicInteger`
+  wraps to negative after `Integer.MAX_VALUE` per-request decisions, compaction
+  maps whatever ids exist (negative included) to `0..n-1`, so the executed chain
+  never depends on the raw id's magnitude. The counter still climbs — it only has
+  to hand out ids unique *within one chain being built* — but nothing reads it as a
+  bitset index for a per-request execution anymore.
+
+- **Tests:** `DefaultNioFlowBranchingCompactionTest` — `compactDecisions` renumber
+  + guard remap; `compactDecisionsIfBeyond` skips below the limit and compacts
+  above it; a per-request `when()`/`match()` built on a counter pushed past 511
+  compiles to a plan whose `maxDecisionId` is `0`/`1` (proven white-box via two
+  package-private test seams, `DefaultNioEngine.planMaxDecisionId` and
+  `ExecutionNioFlow.preparedForTest`, because the bitset and the overflow map route
+  identically and hide the difference from the public API); and routing stays
+  correct through the compacted plan. The existing
+  `DefaultNioEngineDecisionBitsetTest` (overflow-map correctness, kept as the
+  fallback) and the fork suite stay green. SonarLint over the diff is clean.
+
+- **Not done:** approach (b) — drawing per-request ids from a local counter so the
+  engine-wide one never grows — was not taken. It is more invasive (every
+  `appendDecision` on a per-request chain would need a local counter threaded
+  through building) for no additional correctness: compacting the finished chain,
+  the way forks do, already fits the bitset and defuses exhaustion.
