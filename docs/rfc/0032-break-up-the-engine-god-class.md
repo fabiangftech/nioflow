@@ -1,10 +1,18 @@
 # RFC 0032 — Break up the `DefaultNioEngine` god class; unify the three execution drivers
 
-- **Status**: 📋 Proposed
+- **Status**: ◐ Phase A shipped (self-contained value types extracted); phases B (extract `Execution`) and C (unify the three drivers) deferred to a dedicated pass
 - **Target**: `core` (`DefaultNioEngine` and the types it nests) — a structural refactor, no behavior change
 - **Depends on**: RFC 0009, RFC 0011 (the plan), RFC 0013 (async fusion) — the machinery being reorganized
 - **Severity**: **Medium** — maintainability/correctness-risk, not a live defect: the duplication is where the *next* bug will hide
 - **Realized by**: extracting `Execution`, `CompiledChain`, and `BatchGroup` to top-level package-private classes (as the code style already demands for new code), and unifying the shared logic of the three execution drivers (the cancellation gate, the positional recover scan, the per-stage timing) behind one helper so it exists once.
+
+## Progress
+
+**Phase A — done** (commit "extract self-contained value types from DefaultNioEngine"). The engine-agnostic nested types are now their own top-level files: `CompiledChain` (with `maxDecisionId` moved in beside its `compile`/fusion logic), `ChainVersion`, `Region`, `Prepared`, `RejectedCall`, and the `SharedExecutors` holder (`createBossPool`/`NIO_FLOW_BOSS` made package-private for it). Pure extraction, full core suite green, SonarLint over the diff clean. `DefaultNioEngine` drops 2647 → 2423 lines and loses six nested types.
+
+**Phase B — deferred: extract `Execution`.** Measured before starting: `Execution` (~1400 lines, with `FanOutJoin`/`AsyncRun`/`ExecutionContext` nested) reaches the engine almost entirely through IMPLICIT references — exactly ONE explicit `DefaultNioEngine.this` in the whole class. Extracting it means qualifying ~100+ bare references (fields `activeExecutions`/`activeForks`/`batchGroups`/`closed`/`errorHandlers`/`completeHandlers`/`inFlight`/`keyLanes`/`version`/…, sentinels `CANCELLED`/`FILTERED`/`HANDED_OFF`/`MAX_BITSET_DECISION_ID`, methods `notifyError`/`releasePermit`/`signalKeyLaneVacancy`/`nextBoss`/`bossFor`/`unwrap`/…) with `engine.`, plus making ~30 engine members package-private, and doing the same for the three nested drivers. A blind regex transform risks mis-binding a name (e.g. `metrics` is a field of BOTH `Execution` and the engine), which would plant the exact kind of subtle concurrency bug this RFC exists to prevent. So B is a careful per-reference pass, best done on its own: first a trivial commit making the needed engine members package-private, then the move with per-reference verification against the full suite.
+
+**Phase C — deferred: unify the three drivers.** `advance`/`applyRun`/`AsyncRun.drive` share the cancellation gate, the positional recover scan and the per-stage timing. Unifying them is the correctness payoff (RFC 0007's cancellation rule living in one place, not three) but it is the one phase that TOUCHES hot-path logic rather than only moving it, so it ships last, gated by the compiled≡interpreted and fusion-equivalence probes.
 
 ## The finding
 
