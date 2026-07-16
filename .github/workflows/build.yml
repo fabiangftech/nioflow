@@ -9,6 +9,12 @@ name: Build
 #   suite. It now lives in reactive/. So a PR can add a step to core, leave core green,
 #   and break the mirror. THIS WORKFLOW is what catches that. It is not optional.
 
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
 permissions:
   contents: read
 
