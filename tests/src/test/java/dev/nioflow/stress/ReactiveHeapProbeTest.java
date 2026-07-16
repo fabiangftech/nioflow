@@ -140,7 +140,8 @@ class ReactiveHeapProbeTest {
         int executions = IN_FLIGHT / branchCount;   // ~IN_FLIGHT branch futures total
         var engine = new DefaultNioEngine();
         try {
-            ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+            ReactiveFlow<Integer, Integer> flow = Reactive.<Integer, Integer>flow(
+                    DefaultNioFlow.from(Integer.class, engine)).allowUnbudgeted();
             Sinks.One<Integer> never = Sinks.one();
             var reached = new CountDownLatch(executions * branchCount);
             List<Function<Integer, Mono<Integer>>> branches = new ArrayList<>(branchCount);
@@ -176,7 +177,8 @@ class ReactiveHeapProbeTest {
     private long measureAsyncPipe() throws Exception {
         var engine = new DefaultNioEngine();
         try {
-            ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+            ReactiveFlow<Integer, Integer> flow = Reactive.<Integer, Integer>flow(
+                    DefaultNioFlow.from(Integer.class, engine)).allowUnbudgeted();
             Sinks.One<Integer> never = Sinks.one();
             var reached = new CountDownLatch(IN_FLIGHT);
             Function<Flux<Integer>, Flux<Integer>> pipe = flow.pipe(IN_FLIGHT, (input, step) -> step
@@ -209,7 +211,8 @@ class ReactiveHeapProbeTest {
     private long measureNioflow(BiConsumer<ReactiveFlow<Integer, Integer>, Sink> step) throws Exception {
         var engine = new DefaultNioEngine();
         try {
-            ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+            ReactiveFlow<Integer, Integer> flow = Reactive.<Integer, Integer>flow(
+                    DefaultNioFlow.from(Integer.class, engine)).allowUnbudgeted();
             // One sink every request awaits: it never emits, so every request
             // sits at the remote call — parked on a worker, or on nothing.
             Sinks.One<Integer> never = Sinks.one();

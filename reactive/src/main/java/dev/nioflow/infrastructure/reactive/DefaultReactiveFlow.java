@@ -73,6 +73,11 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
         return new DefaultReactiveFlow<>(delegate, config.withRequireBudget());
     }
 
+    @Override
+    public ReactiveFlow<I, O> allowUnbudgeted() {
+        return new DefaultReactiveFlow<>(delegate, config.withAllowUnbudgeted());
+    }
+
     // The step a pipe hands each element: the flow's config plus preferAsync, so a
     // handleMono in the pipeline holds a future instead of parking a worker — the
     // ingestion-loop default (RFC 0015). Nothing else about the step changes.

@@ -143,7 +143,7 @@ class ReactiveParityTest {
 
     private static ReactiveFlow<Integer, Integer> configure(DefaultNioEngine engine, boolean preferAsync,
                                                             Duration budget) {
-        ReactiveFlow<Integer, Integer> flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+        ReactiveFlow<Integer, Integer> flow = Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, engine)).allowUnbudgeted();
         if (preferAsync) {
             flow = flow.preferAsync();
         }

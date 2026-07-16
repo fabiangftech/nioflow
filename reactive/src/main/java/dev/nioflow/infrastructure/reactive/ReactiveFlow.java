@@ -142,15 +142,32 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      * per-step budget nor a {@link #defaultBudget}) is rejected at assembly, where
      * the caller's line number still exists.
      *
-     * <p>Off by default, on purpose: a {@code Mono.just(...)} or an in-memory
-     * cache lookup genuinely needs no budget, and forcing one on every reactive
-     * step would be friction the fast path does not deserve. Turn it on when the
-     * flow talks to the network and you want the safe thing to be mandatory — the
-     * facade cannot tell a remote call from a {@code Mono.just}, so the guarantee
-     * is opt-in and total rather than guessed. The same build-time stance {@code
-     * propagate()} and the bounded {@code adaptFlux} already take.
+     * <p><b>On by default since RFC 0034</b>, on purpose: an unbudgeted reactive
+     * step is the documented forever-leak (a parked worker on a hung upstream, a
+     * pinned execution and a leaked connection on the async path), so the safe
+     * thing is mandatory — the facade cannot tell a remote call from a {@code
+     * Mono.just}, so the guarantee is total rather than guessed. This method stays
+     * as an explicit affirmation; to WAIVE the requirement for the {@code
+     * Mono.just(...)}/in-memory-cache chains that genuinely need no budget, call
+     * {@link #allowUnbudgeted()}. The same build-time stance {@code propagate()}
+     * and the bounded {@code adaptFlux} already take.
      */
     ReactiveFlow<I, O> requireBudget();
+
+    /**
+     * Waives the {@link #requireBudget() default} budget requirement: with this
+     * on, an unbudgeted reactive step is allowed instead of a build-time error.
+     *
+     * <p>The opt-out for a flow whose reactive steps genuinely park on nothing — a
+     * {@code Mono.just(...)}, an in-memory cache lookup, a {@code Sinks} you
+     * control — where forcing a budget would be friction with no leak to prevent.
+     * It is a conscious waiver, not a default: a network-facing flow that reaches
+     * for this instead of a {@link #defaultBudget} is turning off the one thing
+     * standing between a hung socket and a worker lost for the life of the JVM. A
+     * {@code defaultBudget} or a per-step budget is the safe answer; this is for
+     * when there is genuinely nothing to bound.
+     */
+    ReactiveFlow<I, O> allowUnbudgeted();
 
     // ── the reactive steps ───────────────────────────────────────────────
 

@@ -27,10 +27,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Two properties. First, the load-bearing one that already holds: a
  * {@code defaultBudget} reaches the ASYNC path too, so a hung call there is
  * cancelled (execution and connection freed) instead of pinned forever — the
- * quiet, thread-less twin of the parked-worker leak. Second, the new guard:
- * {@code requireBudget()} turns an unbudgeted reactive step into a BUILD-TIME
- * error, in every position a reactive step can be declared — main line,
- * {@code just()} pipeline, a branch lane, a fork body.
+ * quiet, thread-less twin of the parked-worker leak. Second, the guard that is
+ * now the DEFAULT (RFC 0034): an unbudgeted reactive step is a BUILD-TIME error,
+ * in every position a reactive step can be declared — main line, {@code just()}
+ * pipeline, a branch lane, a fork body. {@code requireBudget()} is the explicit
+ * affirmation of that default; {@code allowUnbudgeted()} waives it for the
+ * {@code Mono.just}/cache chains that genuinely park on nothing, and the waiver
+ * reaches every position exactly as the enforcement does.
  */
 class ReactivePreferAsyncBudgetTest {
 
@@ -167,11 +170,27 @@ class ReactivePreferAsyncBudgetTest {
         assertEquals(8, result);
     }
 
-    // ── parity: off by default, an unbudgeted Mono.just is fine ──
+    // ── the default is ON (RFC 0034): no requireBudget() call needed ──
 
     @Test
-    void withoutRequireBudgetAnUnbudgetedMonoJustStillWorks() {
-        ReactiveFlow<Integer, Integer> flow = flow();   // requireBudget OFF (default)
+    void unbudgetedIsRejectedByDefaultWithoutCallingRequireBudget() {
+        // The flip: a plain flow — no requireBudget(), no defaultBudget — already
+        // rejects an unbudgeted reactive step. Safety is the default, not opt-in.
+        ReactiveFlow<Integer, Integer> flow = flow();
+
+        IllegalStateException rejected = assertThrows(IllegalStateException.class,
+                () -> flow.handleMono("charge", Mono::just));
+
+        assertTrue(rejected.getMessage().contains("charge"), rejected::getMessage);
+    }
+
+    // ── allowUnbudgeted() waives it, and the waiver reaches every position ──
+
+    @Test
+    void allowUnbudgetedPermitsAnUnbudgetedMonoJust() {
+        // allowUnbudgeted() waives the default requirement for a chain that
+        // genuinely parks on nothing (an in-memory Mono.just).
+        ReactiveFlow<Integer, Integer> flow = flow().allowUnbudgeted();
 
         Integer result = flow.just(5)
                 .handleMono("in-memory", value -> Mono.just(value + 1))
@@ -179,6 +198,39 @@ class ReactivePreferAsyncBudgetTest {
                 .block(Duration.ofSeconds(5));
 
         assertEquals(6, result);
+    }
+
+    @Test
+    void allowUnbudgetedReachesAnUnbudgetedStepInsideALane() {
+        // The waiver must propagate into a branch lane exactly as requireBudget's
+        // enforcement does — otherwise the lane would default back to requiring a
+        // budget the flow deliberately waived (the Lanes.inert coupling, RFC 0034).
+        ReactiveFlow<Integer, Integer> flow = flow().allowUnbudgeted();
+
+        Integer result = flow.just(10)
+                .when(value -> value > 5)
+                    .then(lane -> Reactive.lane(lane).handleMono("lane-lookup", value -> Mono.just(value + 1)))
+                    .otherwise(lane -> lane.handle("small", value -> value))
+                .executeMono()
+                .block(Duration.ofSeconds(5));
+
+        assertEquals(11, result);
+    }
+
+    @Test
+    void allowUnbudgetedReachesAnUnbudgetedStepInsideAForkBody() {
+        ReactiveFlow<Integer, Integer> flow = flow().allowUnbudgeted();
+        CountDownLatch forkRan = new CountDownLatch(1);
+
+        Integer result = flow.just(7)
+                .fork("notify", lane -> Reactive.lane(lane)
+                        .handleMono("fork-lookup", value -> Mono.just(value + 1))
+                        .background("done", value -> forkRan.countDown()))
+                .executeMono()
+                .block(Duration.ofSeconds(5));
+
+        assertEquals(7, result);   // the fork is detached; the main line is unchanged
+        assertTrue(awaitQuietly(forkRan), "the fork body with an unbudgeted step never ran");
     }
 
     private static boolean awaitQuietly(CountDownLatch latch) {

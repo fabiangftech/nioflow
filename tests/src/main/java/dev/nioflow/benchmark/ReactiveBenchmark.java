@@ -78,7 +78,8 @@ public class ReactiveBenchmark {
         // Four reactive stages in a row: they fuse into ONE worker run, so the
         // four awaits park the same virtual worker one after another.
         NioEngine reactiveEngine = new DefaultNioEngine();
-        reactiveStages = Reactive.flow(DefaultNioFlow.from(Integer.class, reactiveEngine));
+        reactiveStages = Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, reactiveEngine))
+                .allowUnbudgeted();
         reactiveStages.handleMono("a", value -> Mono.just(value + 1))
                 .handleMono("b", value -> Mono.just(value * 2))
                 .handleMono("c", value -> Mono.just(value - 3))
@@ -91,7 +92,8 @@ public class ReactiveBenchmark {
                 value -> Mono.just(value * 2),
                 value -> Mono.just(value - 3));
         NioEngine concurrentEngine = new DefaultNioEngine();
-        reactiveConcurrent = Reactive.flow(DefaultNioFlow.from(Integer.class, concurrentEngine));
+        reactiveConcurrent = Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, concurrentEngine))
+                .allowUnbudgeted();
         reactiveConcurrent.fanOutMono("enrich", branches,
                         results -> results.stream().mapToInt(Integer::intValue).sum())
                 .handleMono("d", value -> Mono.just(value * 5));
@@ -101,7 +103,8 @@ public class ReactiveBenchmark {
         // where the four handleMonos above fuse into ONE worker run. Same Monos,
         // resolved immediately: what is measured is the hops, nothing else.
         NioEngine asyncEngine = new DefaultNioEngine();
-        asyncStages = Reactive.flow(DefaultNioFlow.from(Integer.class, asyncEngine));
+        asyncStages = Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, asyncEngine))
+                .allowUnbudgeted();
         asyncStages.handleMonoAsync("a", value -> Mono.just(value + 1))
                 .handleMonoAsync("b", value -> Mono.just(value * 2))
                 .handleMonoAsync("c", value -> Mono.just(value - 3))

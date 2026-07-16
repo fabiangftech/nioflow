@@ -42,7 +42,7 @@ class ReactiveFanOutMonoAsyncTest {
     }
 
     private ReactiveFlow<Integer, Integer> flow() {
-        return Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+        return Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, engine)).allowUnbudgeted();
     }
 
     @Test

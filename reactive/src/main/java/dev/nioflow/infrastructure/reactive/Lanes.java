@@ -25,10 +25,17 @@ final class Lanes {
     private Lanes() {
     }
 
-    // Skip the wrap only when the config carries nothing a lane needs: no
-    // budget, no preferAsync, and no requireBudget to enforce inside the lane.
+    // Skip the wrap only when propagating the config would give the lane the
+    // SAME behaviour it defaults to unwrapped — i.e. the config matches
+    // ReactiveConfig.NONE, which an unwrapped lane inherits via Reactive.lane.
+    // Since RFC 0034 that default has requireBudget ON, so a plain flow's lane
+    // already enforces it; what must NOT be skipped is an allowUnbudgeted() flow
+    // (requireBudget OFF, differing from the default) — its waiver has to reach
+    // the lane, or a handleMono inside a branch/fork would wrongly demand a budget
+    // the flow deliberately waived. A default budget or preferAsync must propagate
+    // for the same reason.
     private static boolean inert(ReactiveConfig config) {
-        return config.budget() == null && !config.preferAsync() && !config.requireBudget();
+        return config.budget() == null && !config.preferAsync() && config.requireBudget();
     }
 
     static <T> UnaryOperator<Lane<T>> budgeted(UnaryOperator<Lane<T>> lane, ReactiveConfig config) {

@@ -38,7 +38,7 @@ class ReactiveEquivalenceProbeTest {
     void setUp() {
         reactiveEngine = new DefaultNioEngine();
         plainEngine = new DefaultNioEngine();
-        reactive = Reactive.flow(DefaultNioFlow.from(Integer.class, reactiveEngine));
+        reactive = Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, reactiveEngine)).allowUnbudgeted();
         plain = DefaultNioFlow.from(Integer.class, plainEngine);
     }
 

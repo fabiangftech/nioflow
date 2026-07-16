@@ -1,10 +1,10 @@
 # RFC 0034 — The reactive budget footgun ships armed: make safety the default
 
-- **Status**: 📋 Proposed
-- **Target**: `reactive` (`ReactiveConfig`, `ReactiveFlow` sealing, docs)
+- **Status**: ✅ Implemented — option 1 (flip the default ON) + `allowUnbudgeted()` opt-out
+- **Target**: `reactive` (`ReactiveConfig`, `ReactiveFlow`, `Lanes`, docs)
 - **Depends on**: RFC 0003 (the thread-leak knobs), RFC 0006 (async stage), RFC 0028 (the preferAsync leak — the sibling this generalizes)
-- **Severity**: **High** — the out-of-the-box behavior of the headline API is the documented forever-leak: a hung socket parks a worker (and pins an `Execution`, ~3.6 KB) for the life of the JVM
-- **Realized by**: making `requireBudget` default-*on* (opt out for `Mono.just`/cache chains), or — at minimum — emitting a one-time startup warning when a flow seals with reactive network-shaped steps and no budget anywhere.
+- **Severity**: **High** — the out-of-the-box behavior of the headline API was the documented forever-leak: a hung socket parks a worker (and pins an `Execution`, ~3.6 KB) for the life of the JVM
+- **Realized by**: flipping `ReactiveConfig.NONE` to `requireBudget=true`, so an unbudgeted reactive step is a build-time `IllegalStateException` at its call site; adding `allowUnbudgeted()` (flow method → `ReactiveConfig.withAllowUnbudgeted`) for the `Mono.just`/cache chains that genuinely need none; and correcting `Lanes.inert` so the waiver (and the default enforcement) propagates into branch lanes and fork bodies, not just the main line.
 
 ## The finding
 
@@ -46,3 +46,51 @@ Recommended: **option 1** — a required decision is the honest design; the `Mon
 - **Flipping the default is a breaking change** for any existing flow that relied on unbudgeted steps. Mitigation: ship option 2's WARN for one release first, document in the changelog (RFC 0037) and migration note, and make `allowUnbudgeted()` a one-line escape. Since the current default is the *leak*, this break is a fix.
 - **Users will reflexively `allowUnbudgeted()` to make the build pass.** A required decision only helps if the message explains the stakes; make the exception text say *why* (worker leak on a hung upstream), not just *what*.
 - **`Mono.just`/cache chains are common and legitimately budgetless.** The opt-out must be ergonomic and obviously correct for them, or option 1 becomes friction people route around blindly.
+
+## Results
+
+Shipped option 1 (flip the default) + `allowUnbudgeted()`. No runtime/hot-path
+change — the enforcement is at assembly (`budgetFor` already ran there), and the
+`Lanes.inert` fix is a build-time lane-wrapping decision. The reactive benchmark
+smoke held (`monoOverhead` ~70, `fourReactiveStages` ~85 ops/ms, in line with the
+baseline).
+
+- **The default is ON.** `ReactiveConfig.NONE.requireBudget` is now `true`, so a
+  plain `Reactive.flow(...)` rejects an unbudgeted `handleMono`/`adaptMono`/
+  `handleMonoAsync`/`adaptMonoAsync`/`adaptFlux`/`fanOutMono` at the step's call
+  site with an `IllegalStateException` naming the step — no `requireBudget()` call
+  needed. A `defaultBudget` or a per-step budget satisfies it.
+
+- **`allowUnbudgeted()` waives it** (flow method → `withAllowUnbudgeted`, sets
+  `requireBudget=false`), for the `Mono.just`/in-memory-cache chains that park on
+  nothing.
+
+- **The waiver reaches every position.** `Lanes.inert` was inverted on the
+  `requireBudget` term: a config is "inert" (safe not to propagate into a lane)
+  only when it matches the default `NONE` — which now has `requireBudget=true`. So
+  a plain flow's lanes still enforce the requirement, and an `allowUnbudgeted`
+  flow's lanes/forks inherit the waiver instead of defaulting back to enforcement.
+  This is the coupling the RFC 0034 review flagged: a new config field that a
+  lane needs must be reflected in `inert`, and this one is.
+
+- **Tests:** `ReactivePreferAsyncBudgetTest` gained
+  `unbudgetedIsRejectedByDefaultWithoutCallingRequireBudget` (proves the flip),
+  `allowUnbudgetedPermitsAnUnbudgetedMonoJust`, and
+  `allowUnbudgetedReachesAnUnbudgetedStepInsideALane`/`InsideAForkBody` (lock the
+  `Lanes.inert` propagation). The existing `requireBudgetRejects*` tests still
+  pass (now redundant-but-valid explicit affirmations of the default).
+
+- **Migration:** every unit/stress/benchmark flow that used `Mono.just`-style
+  reactive steps without a budget declared `allowUnbudgeted()` — the honest signal
+  that those steps park on nothing. The `springwebflux` example was already safe
+  (it declares `defaultBudget(3s)`). Full reactive suite (150 tests), the tests
+  module, and the example are green; SonarLint over the reactive diff is clean.
+
+### A note on the breaking change
+
+Flipping the default is source-breaking for an existing reactive flow that relied
+on unbudgeted steps: it now fails to build until it declares a `defaultBudget`, a
+per-step budget, or `allowUnbudgeted()`. This is intended — the previous default
+*was* the leak — and the fix is a one-line, self-documenting opt-out. It belongs
+in the changelog and a migration note (RFC 0037), and warrants a version bump that
+signals the break.

@@ -19,7 +19,12 @@ import java.util.List;
  */
 record ReactiveConfig(Duration budget, List<Context.Key<?>> keys, boolean preferAsync, boolean requireBudget) {
 
-    static final ReactiveConfig NONE = new ReactiveConfig(null, List.of(), false, false);
+    // requireBudget is ON by default (RFC 0034): an unbudgeted reactive step is
+    // the documented forever-leak (a parked worker on a hung upstream), so the
+    // safe thing is mandatory unless the flow opts out with allowUnbudgeted() for
+    // the Mono.just/cache chains that genuinely need none. A defaultBudget or a
+    // per-step budget satisfies it; allowUnbudgeted() waives it.
+    static final ReactiveConfig NONE = new ReactiveConfig(null, List.of(), false, true);
 
     ReactiveConfig withBudget(Duration budget) {
         if (budget == null || budget.isZero() || budget.isNegative()) {
@@ -51,6 +56,18 @@ record ReactiveConfig(Duration budget, List<Context.Key<?>> keys, boolean prefer
      */
     ReactiveConfig withRequireBudget() {
         return requireBudget ? this : new ReactiveConfig(budget, keys, preferAsync, true);
+    }
+
+    /**
+     * Waives the default budget requirement (RFC 0034): with this on, an
+     * unbudgeted reactive step is allowed instead of a build-time error. It is the
+     * opt-out for the {@code Mono.just(...)}/in-memory-cache chains that genuinely
+     * need no budget — a conscious "these steps park on nothing, I accept it",
+     * where {@code requireBudget} is on by default because a network-facing step
+     * that forgets one leaks a worker forever.
+     */
+    ReactiveConfig withAllowUnbudgeted() {
+        return requireBudget ? new ReactiveConfig(budget, keys, preferAsync, false) : this;
     }
 
     /**

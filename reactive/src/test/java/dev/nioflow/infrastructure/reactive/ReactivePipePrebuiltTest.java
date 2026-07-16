@@ -36,7 +36,7 @@ class ReactivePipePrebuiltTest {
     @BeforeEach
     void setUp() {
         engine = new DefaultNioEngine();
-        flow = Reactive.flow(DefaultNioFlow.from(Integer.class, engine));
+        flow = Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, engine)).allowUnbudgeted();
     }
 
     @AfterEach
