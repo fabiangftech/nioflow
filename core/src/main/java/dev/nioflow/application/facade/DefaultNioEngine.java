@@ -58,6 +58,7 @@ public class DefaultNioEngine implements NioEngine {
 
     private static final String NIO_FLOW_BOSS = "nio-flow-boss-";
     private static final String ASYNC_STAGE = "Async stage '";
+    private static final String IN_FLIGHT_CAPACITY = "In-flight capacity ";
 
     // Public sentinel carried by raw call() futures when a Filter cut the
     // execution. Engine exits (await, complete handlers) and the flow-level
@@ -108,9 +109,14 @@ public class DefaultNioEngine implements NioEngine {
     private final ExecutorService workersExecutorService;
     private final boolean ownsExecutors;
 
-    // Backpressure for inject/await: permits are acquired BEFORE the execution
-    // starts and released when await() collects the result — the bounded
-    // resource is the pending-results queue. null = unbounded (default).
+    // Backpressure for BOTH admission paths (RFC 0031): a permit is acquired
+    // BEFORE the execution starts and released on a path-specific seam.
+    //   - inject/await: the bounded resource is the un-collected results queue,
+    //     so the permit is released when await() collects the result.
+    //   - call/callCancellable: the bounded resource is in-flight calls (there
+    //     is no results queue), so the permit is released in finishBookkeeping
+    //     when the execution reaches any terminal.
+    // Same capacity + OverflowPolicy govern both. null = unbounded (default).
     private final Semaphore inFlightPermits;
     private final OverflowPolicy overflowPolicy;
     private final int inFlightCapacity;
@@ -187,6 +193,18 @@ public class DefaultNioEngine implements NioEngine {
         this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, 0, OverflowPolicy.BLOCK);
     }
 
+    /**
+     * A capacity-bounded engine. The bound applies to BOTH admission paths
+     * (RFC 0031): {@code inject}/{@code await} (bounding the un-collected results
+     * queue) and {@code call}/{@code callCancellable} (bounding in-flight calls —
+     * the path the reactive facade runs on). FAIL rejects the excess call with a
+     * {@link RejectedExecutionException} (thrown to a producer, a failed future to
+     * a caller); DROP discards it (reported to the error handlers and the metrics
+     * sink); BLOCK parks the CALLING thread until a slot frees — so do NOT use
+     * BLOCK when calls originate on an event loop (a Netty/boss thread), where
+     * parking is the hazard the engine otherwise forbids; prefer FAIL or DROP and
+     * bound admission upstream (WebFlux concurrency, a {@code RateLimit} stage).
+     */
     public DefaultNioEngine(int inFlightCapacity, OverflowPolicy overflowPolicy) {
         this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, inFlightCapacity, overflowPolicy);
     }
@@ -244,14 +262,18 @@ public class DefaultNioEngine implements NioEngine {
         if (!admit()) {
             // DROP: the value never runs; observable through the error handlers.
             RejectedExecutionException rejection = new RejectedExecutionException(
-                    "In-flight capacity " + inFlightCapacity + " reached; value dropped");
+                    IN_FLIGHT_CAPACITY + inFlightCapacity + " reached; value dropped");
             if (sink != null) {
                 sink.valueDropped();
             }
             notifyError(rejection);
             return;
         }
-        inFlight.add(call(input, context));
+        // Submit directly, NOT through the public call(): call() now admits on
+        // its own (RFC 0031), and routing inject through it would take a second
+        // permit. inject's permit is released by await() (it bounds the
+        // un-collected results queue), so the execution does not release it.
+        inFlight.add(submit(input, context, version.get().links(), null, false).result);
         if (sink != null) {
             sink.queueDepth(inFlight.size());
         }
@@ -274,7 +296,7 @@ public class DefaultNioEngine implements NioEngine {
             case DROP -> inFlightPermits.tryAcquire();
             case FAIL -> {
                 if (!inFlightPermits.tryAcquire()) {
-                    throw new RejectedExecutionException("In-flight capacity " + inFlightCapacity + " reached");
+                    throw new RejectedExecutionException(IN_FLIGHT_CAPACITY + inFlightCapacity + " reached");
                 }
                 yield true;
             }
@@ -302,10 +324,17 @@ public class DefaultNioEngine implements NioEngine {
         if (closed) {
             return CompletableFuture.failedFuture(rejection());
         }
+        // Admission on the request/response path too (RFC 0031): capacity bounds
+        // in-flight calls, not just inject's results queue. FAIL throws here; DROP
+        // fails the future; BLOCK parks the caller (never use BLOCK when calls
+        // originate on an event loop). Unbounded (the default) is one null check.
+        if (!admit()) {
+            return CompletableFuture.failedFuture(capacityRejection());
+        }
         // The raw result future goes straight to the caller: bookkeeping
         // (drain slot, metrics, handlers) runs inside Execution BEFORE the
         // future completes, so no dependent whenComplete future is allocated.
-        return submit(input, context, chain, key).result;
+        return submit(input, context, chain, key, true).result;
     }
 
     /**
@@ -319,7 +348,10 @@ public class DefaultNioEngine implements NioEngine {
         if (closed) {
             return new RejectedCall(CompletableFuture.failedFuture(rejection()));
         }
-        return new ExecutionHandle(submit(input, context, chain, key));
+        if (!admit()) {
+            return new RejectedCall(CompletableFuture.failedFuture(capacityRejection()));
+        }
+        return new ExecutionHandle(submit(input, context, chain, key, true));
     }
 
     @Override
@@ -328,7 +360,10 @@ public class DefaultNioEngine implements NioEngine {
         if (closed) {
             return CompletableFuture.failedFuture(rejection());
         }
-        return submit(input, context, ((Prepared) prepared).plan(), key).result;
+        if (!admit()) {
+            return CompletableFuture.failedFuture(capacityRejection());
+        }
+        return submit(input, context, ((Prepared) prepared).plan(), key, true).result;
     }
 
     @Override
@@ -337,7 +372,10 @@ public class DefaultNioEngine implements NioEngine {
         if (closed) {
             return new RejectedCall(CompletableFuture.failedFuture(rejection()));
         }
-        return new ExecutionHandle(submit(input, context, ((Prepared) prepared).plan(), key));
+        if (!admit()) {
+            return new RejectedCall(CompletableFuture.failedFuture(capacityRejection()));
+        }
+        return new ExecutionHandle(submit(input, context, ((Prepared) prepared).plan(), key, true));
     }
 
     @Override
@@ -370,7 +408,25 @@ public class DefaultNioEngine implements NioEngine {
         return rejection;
     }
 
-    private Execution submit(Object input, Map<String, Object> context, List<Link> chain, Object key) {
+    /**
+     * The DROP outcome on the call path (RFC 0031): the value never runs, its
+     * future completes exceptionally, and the drop is observable exactly as
+     * inject's is — valueDropped() to the metrics sink, the exception to the
+     * error handlers. FAIL throws from admit() before reaching here; BLOCK parks.
+     */
+    private RejectedExecutionException capacityRejection() {
+        RejectedExecutionException rejection = new RejectedExecutionException(
+                IN_FLIGHT_CAPACITY + inFlightCapacity + " reached; call rejected");
+        NioFlowMetrics sink = metrics.get();
+        if (sink != null) {
+            sink.valueDropped();
+        }
+        notifyError(rejection);
+        return rejection;
+    }
+
+    private Execution submit(Object input, Map<String, Object> context, List<Link> chain, Object key,
+                             boolean releasesPermit) {
         // The plan only applies to the exact chain version it was built for;
         // execution-local chains, and a chain snapshot taken before an edit
         // that has since landed (identity mismatch), fall back to interpreting.
@@ -378,6 +434,7 @@ public class DefaultNioEngine implements NioEngine {
         CompiledChain plan = current.links() == chain ? current.plan() : null;
         Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
                 plan != null ? chain : List.copyOf(chain), context, plan, input, key, null);
+        execution.releasesPermit = releasesPermit;
         activeExecutions.increment();
         try {
             execution.boss.execute(execution);
@@ -393,9 +450,11 @@ public class DefaultNioEngine implements NioEngine {
      * their highest decision id). The chain the Execution walks IS the plan's
      * own list, so positions line up.
      */
-    private Execution submit(Object input, Map<String, Object> context, CompiledChain plan, Object key) {
+    private Execution submit(Object input, Map<String, Object> context, CompiledChain plan, Object key,
+                             boolean releasesPermit) {
         Execution execution = new Execution(key == null ? nextBoss() : bossFor(key),
                 plan.links(), context, plan, input, key, null);
+        execution.releasesPermit = releasesPermit;
         activeExecutions.increment();
         try {
             execution.boss.execute(execution);
@@ -1089,6 +1148,15 @@ public class DefaultNioEngine implements NioEngine {
         // never notifies the complete handlers: its terminal value is not the
         // flow's output. Failures still reach the error handlers.
         private final Fork forkOf;
+        // Set true (by submit, before dispatch) only for a request/response
+        // (call/callCancellable) execution that took an in-flight permit at
+        // admission: finishBookkeeping releases it on whichever terminal fires
+        // (value, FILTERED, CANCELLED, failure). An inject execution leaves this
+        // false — its permit bounds the un-collected results queue and is released
+        // by await(); a fork leaves it false too (it is spawned internally, never
+        // admitted). Non-final, set-once before dispatch like laneHeld, so the
+        // constructor stays within its parameter budget. See RFC 0031.
+        private boolean releasesPermit;
         // Snapshot of the installed metrics for this execution; null = untimed.
         private final NioFlowMetrics metrics;
         private final long startNanos;
@@ -1256,6 +1324,14 @@ public class DefaultNioEngine implements NioEngine {
                     reportExecution(value, error);
                 }
             } finally {
+                // A call-path permit frees on the terminal (RFC 0031): the
+                // bounded resource is in-flight calls, so admission opens up the
+                // moment this one is fully reported. Exactly-once via the
+                // finished CAS that gates complete()/fail(). Before the drain
+                // decrement so a freed slot never outlives the "in flight" count.
+                if (releasesPermit) {
+                    releasePermit();
+                }
                 // Released last: "in flight" means "not fully reported yet", so
                 // a clean drain guarantees every metric and handler already ran.
                 // awaitDrain observes the decrement by polling sum().

@@ -9,10 +9,10 @@ fast-path measured neutral and was dropped). **0023–0030 are the
 production-hardening cluster — all implemented** — fixes for a multi-agent
 audit's findings, all clustered in the shutdown / cancel / metrics /
 reactive-bridge corners the steady-state hot path never exercises. **0031–0041
-are the second audit cluster — all proposed** — a fresh multi-agent review
-(core, reactive, docs, adopter) covering an admission-control gap on `call()`,
-the engine god class, reactive safety defaults, and a batch of docs/build and
-long-uptime hardening items; none is on the steady-state hot path.
+are the second audit cluster — 0031 implemented, the rest proposed** — a fresh
+multi-agent review (core, reactive, docs, adopter) covering an admission-control
+gap on `call()`, the engine god class, reactive safety defaults, and a batch of
+docs/build and long-uptime hardening items; none is on the steady-state hot path.
 
 ## Catalogue
 
@@ -48,7 +48,7 @@ long-uptime hardening items; none is on the steady-state hot path.
 | [0028](0028-preferasync-no-budget-leak.md) | Close the `preferAsync` no-budget leak | ✅ Implemented | reactive | 0003, 0006 |
 | [0029](0029-handlers-off-the-boss.md) | Completion/error handlers on the boss: offload, bound, or say so | ✅ Implemented | docs, example | 0009, **0023** |
 | [0030](0030-reactive-mirror-behavioral-parity.md) | Guard the reactive mirror's behaviour, not just its existence | ✅ Implemented | reactive | 0008 |
-| [0031](0031-admission-control-on-call.md) | Admission control must cover `call()`, not just `inject()` | 📋 Proposed | core | 0009, **0024** |
+| [0031](0031-admission-control-on-call.md) | Admission control must cover `call()`, not just `inject()` | ✅ Implemented | core | 0009, **0024** |
 | [0032](0032-break-up-the-engine-god-class.md) | Break up the `DefaultNioEngine` god class; unify the three drivers | 📋 Proposed | core | 0009, 0011, 0013 |
 | [0033](0033-reactor-context-bridge-is-string-only.md) | `propagate` bridges strings, not trace context — make it work or say so | 📋 Proposed | reactive | 0005 |
 | [0034](0034-reactive-budget-safe-by-default.md) | The reactive budget footgun ships armed — make safety the default | 📋 Proposed | reactive | 0003, 0006, 0028 |

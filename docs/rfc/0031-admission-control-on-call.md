@@ -1,10 +1,10 @@
 # RFC 0031 — Admission control must cover `call()`, not just `inject()`
 
-- **Status**: 📋 Proposed
+- **Status**: ✅ Implemented — option 1 (admit the call path, release in `finishBookkeeping`) + option 3's doc fix
 - **Target**: `core` (`DefaultNioEngine`), plus the docs that describe backpressure
 - **Depends on**: RFC 0009 (the boss model), RFC 0024 (the atomic terminal the permit release must ride on)
 - **Severity**: **High** — the primary request/response path (everything the reactive facade runs) has no admission control, whatever capacity was configured
-- **Realized by**: gating `submit()` behind `admit()` and releasing the permit inside `finishBookkeeping` (so it frees on *every* terminal — value, filter, cancel, failure), OR — if `call()` is intended to stay unbounded — documenting that precisely and adding a separate concurrency limit for the request/response path.
+- **Realized by**: admitting on every `call`/`callCancellable` entry point (the shared `admit()`, so FAIL/DROP/BLOCK behave as for `inject`), releasing the permit inside `finishBookkeeping` so it frees on *every* terminal (value, FILTERED, CANCELLED, failure), and decoupling `inject` from the public `call()` funnel so it does not double-admit. `inject`'s own permit stays released by `await()` (its bounded resource is the un-collected results queue). Documented in `CLAUDE.md` and the capacity constructor's javadoc, including the BLOCK-on-an-event-loop caveat.
 
 ## The finding
 
@@ -39,3 +39,40 @@ Recommended: **option 1**, with the OverflowPolicy semantics for `call()` spelle
 - **BLOCK on a `call()` from an event-loop thread parks that thread.** Parking a Netty/boss thread is exactly what the library forbids elsewhere. Either reject BLOCK for `call()` (document it as an `inject`-only policy), or make the `call()` bound non-blocking (FAIL/DROP only). Call this out explicitly in the API.
 - **Changing `call()` to sometimes reject is a behavior change.** Today `call()` never rejects for capacity; callers that pass a capacity today get `inject`-only bounding and would start seeing rejections on `call()`. Since capacity is opt-in and its *documented purpose* is bounding, this is a fix, not a break — but note it in the changelog (RFC 0037).
 - **Permit release must be exactly-once.** It rides the same terminal as the drain counter; reuse the RFC 0024 `finished` CAS so a double terminal cannot double-release.
+
+## Results
+
+Shipped option 1 + option 3's doc fix. No hot-path regression (a JMH smoke of
+`engineCall` held at ~92/86/70 ops/ms for 1/8/32 stages, in line with the
+documented baseline — admission is one permit check per *call*, and for the
+default unbounded engine one null check, off the per-link path entirely).
+
+- **All four `call`/`callCancellable` entry points admit.** The `call(chain)`,
+  `callCancellable(chain)`, `call(prepared)`, and `callCancellable(prepared)`
+  forms each acquire a permit after the `closed` check; FAIL throws, DROP fails
+  the returned future (and reports `valueDropped()` + the error handlers, exactly
+  as `inject` does), BLOCK parks the caller. The `call(input, context)` /
+  `call(input, context, chain)` overloads funnel into the admitting one.
+
+- **The permit frees on every terminal.** `finishBookkeeping` releases it under a
+  `releasesPermit` flag set by `submit` before dispatch (a set-once field, like
+  `laneHeld`), so value, FILTERED, CANCELLED and failure all free the slot — and
+  it rides the RFC 0024 `finished` CAS, so a double terminal cannot double-release.
+  Released before the drain decrement, so a freed slot never outlives the
+  "in flight" count.
+
+- **`inject` no longer double-admits.** It submits directly instead of routing
+  through the public `call()`, keeping its own single admission (released by
+  `await()`, which bounds the un-collected results queue). `inject` and `call`
+  share the one semaphore + capacity + policy, with the two release seams matched
+  to their two bounded resources.
+
+- **Tests:** `DefaultNioEngineBackpressureCallTest` — unbounded admits everything;
+  FAIL rejects beyond capacity; DROP fails the future and reports it;
+  `callCancellable` admits; `inject` and `call` share the bound; and one test per
+  terminal (completed / filtered / failed / cancelled) proves the permit is freed,
+  so a later call is admitted rather than rejected. The full core and reactive
+  suites stay green; SonarLint over the diff is clean (the 8th constructor
+  parameter avoided by the set-once field, the duplicated capacity literal
+  extracted to a constant, the test's `assertThrows` lambdas reduced to one
+  throwing call).
