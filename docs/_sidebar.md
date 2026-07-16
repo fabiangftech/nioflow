@@ -16,6 +16,7 @@
 - **Deep dive**
 - [Architecture](architecture.md)
 - [API reference](api-reference.md)
+- [Benchmarks](benchmarks.md)
 
 - **Links**
 - [GitHub](https://github.com/fabiangftech/nioflow)

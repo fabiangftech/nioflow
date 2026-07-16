@@ -1,12 +1,12 @@
 # RFC 0022 — A benchmarks page: the performance claims, documented as evidence
 
-- **Status**: 📝 Proposed
+- **Status**: ✅ Implemented — `benchmarks.md` with numbers measured on an M1, linked in sidebar + navbar
 - **Target**: `docs/` (the docsify site) — a new `benchmarks.md`, plus `_sidebar.md`/`_navbar.md`
 - **Depends on**: RFC 0021 (the JMH gates that produce and enforce the numbers) and the throughput series (0009, 0011–0017) that measured them
 - **Sibling of**: RFC 0018/0019 (docs work) — same axis: what the reader sees
-- **Realized by** (proposed): a new `docs/benchmarks.md` page under **Deep dive** in
-  the sidebar, presenting each benchmark, its headline number, how to reproduce it,
-  and the gate that keeps it honest; no engine or benchmark change.
+- **Realized by**: `docs/benchmarks.md` under **Deep dive** in `_sidebar.md` and in the
+  navbar (both `_navbar.md` and the mirror in `index.html`); numbers measured on an
+  Apple M1 / JDK 25.0.3 with `./gradlew jmhGates -PgatesMode=full`. See **Results**.
 
 ## Summary
 
@@ -90,6 +90,34 @@ sections:
   from JMH) is not *retained heap per in-flight request* (from `ReactiveHeapProbeTest`).
   The async stage allocates a little more per op and retains far less in flight;
   conflating them is how "489 B" gets misquoted.
+
+## Results
+
+`docs/benchmarks.md` ships with **real, dated, machine-stamped numbers** — not
+placeholders. They were measured on an **Apple M1 (8 cores), OpenJDK 25.0.3,
+macOS 14.6.1, 2026-07-15** via `./gradlew jmhGates -PgatesMode=full` (all gates
+green, including the multi-core contention gate the M1 can actually exercise):
+
+- Fusion makes links free: `engineCall` 88.6 ops/ms at 1 stage, 58.8 at 32 — a
+  32× longer chain is only ~1.5× slower, and allocation is flat (616 B/op at both).
+- Boss-inlining: `syncSingle` 224.8 vs `workerSingle` 77.9 ops/ms (2.9×), 248 vs
+  688 B/op.
+- Compiled parity: 81.9 vs 78.9 ops/ms (1.04×), 688 vs 832 B/op (~17% less garbage).
+- Async within band of blocking: 74.9 vs 72.4 ops/ms (~1.0×).
+- Boss not a ceiling: contended[32] 109.3 vs single[32] 58.8 ops/ms (1.86× on 8 cores).
+
+Two numbers are **cited, not re-run** here, and labelled as such on the page: the
+async retained-heap footprint (489 B vs 3 173 B, from `ReactiveHeapProbeTest` /
+RFC 0006 & 0015) and the dedicated-pool tail-latency win (p99.9 −48%, from
+`DedicatedPoolBenchmark`) — both need a different measurement mode, so restating
+them as freshly measured would be dishonest.
+
+The page leads with reproduction (the three `gradlew` commands), presents the
+ratios as the portable claim and the absolutes as a dated illustration, points its
+"what is enforced" table at RFC 0021's gates by name, and keeps `B/op` distinct
+from retained heap. The documented `jmh -PjmhArgs='...'` and `jmhGates` commands
+were run verbatim to confirm they work as printed. It is linked under **Deep dive**
+in the sidebar and added to the navbar (both copies kept in sync).
 
 ## Non-goals
 
