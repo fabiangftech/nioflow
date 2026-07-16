@@ -24,6 +24,9 @@ import java.util.function.UnaryOperator;
  */
 class DefaultReactiveLane<T> implements ReactiveLane<T> {
 
+    // The step label adaptMono/adaptMonoAsync report under (they carry no name).
+    private static final String ADAPT_MONO = "adaptMono";
+
     final Lane<T> delegate;
     // The flow's config, handed down by the branch or segment that opened this
     // lane: its default budget, its preferAsync choice and its requireBudget
@@ -60,7 +63,7 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
         if (config.preferAsync()) {
             return handleMonoAsync(name, call, effective);
         }
-        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), effective))));
+        return wrap(delegate.handle(name, value -> Blocking.awaitValue(call.apply(value), effective, name)));
     }
 
     @Override
@@ -72,10 +75,10 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
     public ReactiveLane<T> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry) {
         Duration effective = config.budgetFor(name, budget);
         if (config.preferAsync()) {
-            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), effective, retry));
+            return wrap(delegate.handleAsync(name, value -> Blocking.requiredFuture(call.apply(value), name), effective, retry));
         }
         return wrap(delegate.handle(name,
-                value -> Blocking.await(Blocking.budgeted(call.apply(value), effective)), retry));
+                value -> Blocking.awaitValue(call.apply(value), effective, name), retry));
     }
 
     @Override
@@ -85,7 +88,7 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
 
     @Override
     public ReactiveLane<T> handleMonoAsync(String name, Function<T, Mono<T>> call, Duration budget) {
-        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), config.budgetFor(name, budget)));
+        return wrap(delegate.handleAsync(name, value -> Blocking.requiredFuture(call.apply(value), name), config.budgetFor(name, budget)));
     }
 
     @Override
@@ -95,7 +98,7 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
 
     @Override
     public <R> ReactiveLane<R> adaptMonoAsync(Function<T, Mono<R>> call, Duration budget) {
-        return retyped(delegate.adaptAsync(value -> call.apply(value).toFuture(),
+        return retyped(delegate.adaptAsync(value -> Blocking.requiredFuture(call.apply(value), ADAPT_MONO),
                 config.budgetFor("adaptMonoAsync", budget)));
     }
 
@@ -137,11 +140,11 @@ class DefaultReactiveLane<T> implements ReactiveLane<T> {
 
     @Override
     public <R> ReactiveLane<R> adaptMono(Function<T, Mono<R>> call, Duration budget) {
-        Duration effective = config.budgetFor("adaptMono", budget);
+        Duration effective = config.budgetFor(ADAPT_MONO, budget);
         if (config.preferAsync()) {
             return adaptMonoAsync(call, effective);
         }
-        return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), effective))));
+        return retyped(delegate.adapt(value -> Blocking.awaitValue(call.apply(value), effective, ADAPT_MONO)));
     }
 
     /** @deprecated see {@link ReactiveLane#adaptFlux(Function)} — prefer the bounded overload. */

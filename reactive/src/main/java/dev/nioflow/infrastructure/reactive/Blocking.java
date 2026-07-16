@@ -43,6 +43,33 @@ final class Blocking {
     }
 
     /**
+     * Turns an empty value-carrying Mono into an {@link EmptyMonoException}
+     * BEFORE it becomes a silent {@code null} (RFC 0027). The error is deferred
+     * (a supplier), so a Mono that DOES emit builds no exception. Only
+     * {@code handleMono}/{@code adaptMono} route through here — {@code adaptFlux}
+     * awaits a {@code collectList}, which emits an empty list, never an empty
+     * Mono, so it is unaffected.
+     */
+    static <T> Mono<T> required(Mono<T> mono, String step) {
+        return mono.switchIfEmpty(Mono.error(() -> new EmptyMonoException(step)));
+    }
+
+    /** The blocking value path: require exactly one value, budget it, await it. */
+    static <T> T awaitValue(Mono<T> mono, Duration budget, String step) {
+        return await(budgeted(required(mono, step), budget));
+    }
+
+    /**
+     * The async value path: require exactly one value, then to a
+     * {@link CompletionStage} — an empty Mono completes the future exceptionally
+     * with {@link EmptyMonoException}, exactly as the blocking path throws it, so
+     * {@code preferAsync} and the block path agree.
+     */
+    static <T> CompletionStage<T> requiredFuture(Mono<T> mono, String step) {
+        return required(mono, step).toFuture();
+    }
+
+    /**
      * Awaits the Mono and re-throws its failure AS ITSELF.
      *
      * <p>{@code Mono.block()} wraps whatever it throws in Reactor's

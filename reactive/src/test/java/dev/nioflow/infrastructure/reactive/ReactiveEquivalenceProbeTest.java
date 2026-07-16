@@ -10,10 +10,11 @@ import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.util.concurrent.CompletionException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * RFC 0020 — equivalence bug-hunt for the reactive facade. "A reactive stage is
@@ -97,14 +98,14 @@ class ReactiveEquivalenceProbeTest {
     }
 
     @Test
-    void anEmptyMonoIsCompletedNullThroughExecuteResult() {
-        // An empty Mono is a null the chain carries — NOT a filter cut. The
-        // three-arm FlowResult must report Completed(null), distinct from Filtered.
-        FlowResult<Integer> result = reactive.just(5)
-                .handleMono("lookup", value -> Mono.empty())
-                .executeResult();
+    void anEmptyMonoFailsWhereAFilterCutIsFiltered() {
+        // RFC 0027: an empty value-carrying handleMono is a stage FAILURE — it can
+        // no longer masquerade as Completed(null). It stays distinct from a
+        // filter() cut, which is Filtered (see the test above): the two notions of
+        // "no value" a caller must be able to tell apart, one a bug, one a choice.
+        ReactiveStep<Integer, Integer> emptyStep = reactive.just(5).handleMono("lookup", value -> Mono.empty());
 
-        assertInstanceOf(FlowResult.Completed.class, result);
-        assertNull(((FlowResult.Completed<Integer>) result).value());
+        CompletionException thrown = assertThrows(CompletionException.class, emptyStep::executeResult);
+        assertInstanceOf(EmptyMonoException.class, thrown.getCause());
     }
 }

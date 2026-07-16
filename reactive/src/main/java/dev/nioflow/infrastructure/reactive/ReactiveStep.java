@@ -33,6 +33,15 @@ public interface ReactiveStep<T, O> extends NioStep<T, O> {
      * A stage whose work IS a Mono: the virtual worker parks on it — forever, if
      * the Mono never completes and no budget (here or as the flow's default)
      * bounds it. See {@link ReactiveFlow#defaultBudget}.
+     *
+     * <p>The call must emit exactly one value. An empty Mono ({@code Mono.empty()},
+     * a cache miss, a 404 mapped to empty) is a stage FAILURE — an
+     * {@link EmptyMonoException} that {@code recover()} catches — not a silent null
+     * injected into the next step (RFC 0027). The same holds for {@code adaptMono}
+     * and the {@code handleMonoAsync}/{@code adaptMonoAsync} variants. Model
+     * absence explicitly (an {@code Optional} or a sentinel inside the Mono) or end
+     * the flow with {@code filter()}. An empty <em>terminal</em>
+     * ({@code executeMono}) is unaffected — it is the empty Mono it always was.
      */
     ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call);
 

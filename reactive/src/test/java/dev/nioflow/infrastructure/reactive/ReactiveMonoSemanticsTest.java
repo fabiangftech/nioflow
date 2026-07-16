@@ -2,7 +2,6 @@ package dev.nioflow.infrastructure.reactive;
 
 import dev.nioflow.application.facade.DefaultNioEngine;
 import dev.nioflow.application.facade.DefaultNioFlow;
-import dev.nioflow.core.facade.FlowResult;
 import dev.nioflow.core.facade.NioEngine;
 import dev.nioflow.core.facade.NioFlowMetrics;
 import dev.nioflow.core.model.Retry;
@@ -22,13 +21,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -151,54 +151,71 @@ class ReactiveMonoSemanticsTest {
     // ── the empty Mono: the one value a chain cannot carry ──
 
     @Test
-    void anEmptyMonoBecomesANullValueTheNextStageMustFace() {
-        // Mono.block() returns null for an empty Mono, and null is what the chain
-        // then carries: an empty Mono is NOT a filter() cut. The next stage runs,
-        // with null. Pinned because it is the trap of the facade — a remote call
-        // that legitimately returns "nothing" (a 404 mapped to Mono.empty()) must
-        // be mapped to a value BEFORE the chain sees it.
-        AtomicReference<Integer> nextStageSaw = new AtomicReference<>(0);
+    void anEmptyMonoFailsWithEmptyMonoExceptionInsteadOfInjectingNull() {
+        // A value-carrying handleMono that returns Mono.empty() no longer injects a
+        // silent null into the next stage (RFC 0027). It fails with an
+        // EmptyMonoException naming the step — the next stage never runs, and
+        // recover() catches it like any other stage failure. A remote call that
+        // legitimately returns "nothing" (a 404 mapped to Mono.empty()) must be
+        // modelled explicitly (an Optional/sentinel inside the Mono) instead.
+        AtomicBoolean nextRan = new AtomicBoolean(false);
+        AtomicReference<Throwable> recovered = new AtomicReference<>();
 
-        FlowResult<Integer> result = flow.just(1)
+        Integer result = flow.just(1)
                 .handleMono("lookup", value -> Mono.empty())
                 .handle("next", value -> {
-                    nextStageSaw.set(value);
+                    nextRan.set(true);
                     return value;
                 })
-                .executeResult();
+                .recover(error -> {
+                    recovered.set(error);
+                    return -1;
+                })
+                .executeMono()
+                .block();
 
-        assertNull(nextStageSaw.get(), "the next stage ran, and it ran with null");
-        // Not Filtered: the engine never cut the flow, it just carries a null.
-        assertInstanceOf(FlowResult.Completed.class, result);
-        assertNull(((FlowResult.Completed<Integer>) result).value());
+        assertEquals(-1, result);
+        assertFalse(nextRan.get(), "the next stage must not run on an empty value");
+        assertInstanceOf(EmptyMonoException.class, recovered.get());
+        assertTrue(recovered.get().getMessage().contains("lookup"), recovered.get()::getMessage);
     }
 
     @Test
-    void anEmptyMonoAndAFilterCutAreBothAnEmptyMonoOnTheTerminal() {
-        // Downstream of executeMono the two are indistinguishable (Reactor has one
-        // notion of "no value"). executeResult() is where a caller can still tell
-        // them apart — see the test above.
-        StepVerifier.create(flow.just(1).handleMono("lookup", value -> Mono.empty()).executeMono())
-                .verifyComplete();
+    void aMidChainEmptyMonoErrorsWhileAFilterCutStillCompletesEmpty() {
+        // These used to be indistinguishable — both an empty terminal Mono. Now a
+        // value-carrying handleMono that goes empty is a stage FAILURE (RFC 0027),
+        // while a filter() cut is still the empty terminal it always was: "no
+        // value" that a person chose, not one a remote call smuggled in.
+        StepVerifier.create(flow.just(1).handleMono("lookup", value -> Mono.<Integer>empty()).executeMono())
+                .verifyError(EmptyMonoException.class);
 
         StepVerifier.create(flow.just(1).filter(value -> false).executeMono())
                 .verifyComplete();
     }
 
     @Test
-    void anEmptyMonoInAnAdaptIsANullOfTheNewType() {
-        AtomicReference<String> nextStageSaw = new AtomicReference<>("untouched");
+    void anEmptyAdaptMonoFailsWithEmptyMonoExceptionInsteadOfNull() {
+        // adaptMono is value-carrying too, so an empty one fails identically —
+        // never a null of the new type handed to the next stage.
+        AtomicBoolean nextRan = new AtomicBoolean(false);
+        AtomicReference<Throwable> recovered = new AtomicReference<>();
 
-        flow.just(1)
+        String result = flow.just(1)
                 .adaptMono(value -> Mono.<String>empty())
                 .handle("next", text -> {
-                    nextStageSaw.set(text);
+                    nextRan.set(true);
                     return text;
+                })
+                .recover(error -> {
+                    recovered.set(error);
+                    return "recovered";
                 })
                 .executeMono()
                 .block();
 
-        assertNull(nextStageSaw.get());
+        assertEquals("recovered", result);
+        assertFalse(nextRan.get(), "the next stage must not run on an empty value");
+        assertInstanceOf(EmptyMonoException.class, recovered.get());
     }
 
     @Test

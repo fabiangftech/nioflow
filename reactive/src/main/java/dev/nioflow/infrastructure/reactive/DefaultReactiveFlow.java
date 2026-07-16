@@ -93,7 +93,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
         if (config.preferAsync()) {
             return handleMonoAsync(name, call, effective);
         }
-        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), effective))));
+        return wrap(delegate.handle(name, value -> Blocking.awaitValue(call.apply(value), effective, name)));
     }
 
     @Override
@@ -105,10 +105,10 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget, Retry retry) {
         Duration effective = config.budgetFor(name, budget);
         if (config.preferAsync()) {
-            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), effective, retry));
+            return wrap(delegate.handleAsync(name, value -> Blocking.requiredFuture(call.apply(value), name), effective, retry));
         }
         return wrap(delegate.handle(name,
-                value -> Blocking.await(Blocking.budgeted(call.apply(value), effective)), retry));
+                value -> Blocking.awaitValue(call.apply(value), effective, name), retry));
     }
 
     @Override
@@ -120,7 +120,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     // cancelling a mono.toFuture() cancels the subscription. One mechanism.
     @Override
     public ReactiveFlow<I, O> handleMonoAsync(String name, Function<I, Mono<I>> call, Duration budget) {
-        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), config.budgetFor(name, budget)));
+        return wrap(delegate.handleAsync(name, value -> Blocking.requiredFuture(call.apply(value), name), config.budgetFor(name, budget)));
     }
 
     @Override

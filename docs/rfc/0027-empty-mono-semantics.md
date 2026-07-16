@@ -1,10 +1,11 @@
 # RFC 0027 — `Mono.empty()` must mean one thing, not two
 
-- **Status**: 🔵 Proposed
-- **Target**: `reactive/` (`Blocking.await`, `DefaultReactiveStep.handleMono`/`adaptMono` and the flow/lane mirrors)
+- **Status**: ✅ Implemented — option 1 (empty is a failure), centralized in `Blocking`, applied to every value-carrying step on both paths; docs + tests updated
+- **Target**: `reactive/` (`Blocking`, `EmptyMonoException`, the `handleMono`/`adaptMono` paths of `DefaultReactive{Flow,Step,Lane}`)
 - **Depends on**: RFC 0002 (the blocking bridge), RFC 0004 (streaming terminal semantics)
 - **Severity**: **Medium** — a latent `NullPointerException` / silent-null waiting for a `Mono.empty()`, undocumented
 - **Sibling of**: RFC 0028 (the other reactive-bridge hole)
+- **Realized by**: `EmptyMonoException` (new top-level) + `Blocking.required`/`awaitValue`/`requiredFuture` — the one place empty→error lives. `handleMono`/`adaptMono` (blocking) route through `awaitValue`, their async variants through `requiredFuture`, in all three facades. `adaptFlux` is untouched (it awaits a `collectList`, which emits an empty list, never an empty Mono). Docs: `ReactiveStep.handleMono` javadoc. Tests: `ReactiveEmptyMonoTest`, plus `ReactiveMonoSemanticsTest`/`ReactiveEquivalenceProbeTest` updated from the old null-injecting contract.
 
 ## The finding
 
@@ -114,3 +115,36 @@ it in the `handleMono`/`adaptMono` javadoc next to the existing budget note.
   is a cheap assembly-time operator on the cold reactive path; the
   `ReactiveBenchmark` gate (async-within-band-of-blocking) confirms the hot path
   is untouched. If it registers at all, gate it.
+
+## Results
+
+Shipped option 1 (empty is a failure, not a filter cut). The change is centralized
+despite the three-facade duplication: the empty→error logic lives once in
+`Blocking.required`, and the value-carrying steps call one of two thin wrappers —
+`awaitValue` (blocking) or `requiredFuture` (async) — so the blocking and
+`preferAsync` paths cannot drift, which is the parity the RFC demanded. The error
+is deferred (`Mono.error(supplier)`), so a Mono that emits builds no exception.
+
+- **Three existing tests encoded the *old* behaviour and were rewritten, not
+  suppressed.** `ReactiveMonoSemanticsTest` had a whole "empty Mono → null the
+  next stage must face" section pinning the bug on purpose; those became
+  assertions that the empty step fails with `EmptyMonoException`, the next stage
+  never runs, and `recover()` catches it. `ReactiveEquivalenceProbeTest`'s
+  "empty is Completed(null) through executeResult" became "empty *fails* where a
+  filter cut is Filtered" — the two notions of "no value" are now distinct, which
+  is the entire point. That these tests existed and asserted the trap is why the
+  RFC called it "the least-tested seam": it *was* tested, into the wrong shape.
+
+- **The terminal is genuinely untouched.** An empty *terminal* (`executeMono`
+  after a `filter()` cut, or a Mono that legitimately ends empty at the end)
+  still surfaces as an empty Mono; only a *value-carrying mid-chain* step fails.
+  The filter-cut half of the old conflated test still asserts `verifyComplete()`.
+
+- **`adaptFlux` is correctly exempt.** It awaits `collectList`, which emits an
+  empty *list* for an empty Flux — never an empty Mono — so it was left on the
+  plain `await` path and its "empty Flux → empty list, not null" test still holds.
+
+The only new SonarLint finding was an S1192 (the `"adaptMono"` step label, now a
+literal in three places per file after this and RFC 0028) — extracted to an
+`ADAPT_MONO` constant, so the diff over `reactive` is clean. `cd reactive &&
+./gradlew test`, `cd core && ./gradlew test`, and the `tests/` suite are all green.
