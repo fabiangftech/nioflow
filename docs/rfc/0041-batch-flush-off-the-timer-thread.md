@@ -1,7 +1,7 @@
 # RFC 0041 — Keep the batch group lock off the shared TimerWheel thread
 
-- **Status**: 📋 Proposed
-- **Target**: `core` (`TimerWheel` firing, `BatchGroup.flushWindow`)
+- **Status**: ✅ Implemented — option 1 (stage the flush to a worker)
+- **Target**: `core` (`BatchGroup` — the window-flush path)
 - **Depends on**: RFC 0025 (cancel off the timer thread — the same "nothing slow on the shared timer thread" principle)
 - **Severity**: **Low-Medium** — a lock-coupling between batch windows and *every* timeout/window in the JVM; the critical section is short, so the impact is contention, not a stall
 - **Realized by**: having the timer action only *stage* a window flush (enqueue to a worker) and never acquire the `BatchGroup` lock on the timer thread — do the generation check and the ref-swap on the worker.
@@ -37,3 +37,38 @@ Recommended: **option 1** — it restores the invariant with a small, local chan
 - **Staging adds one worker hop per window flush.** Negligible (a window flush is already a cold, coalesced event, and the bulk dispatch was already a worker hop), and it buys the timer thread's independence.
 - **Generation re-check must run on the worker now.** It already exists inside `flushWindow`; option 1 just moves *where* the lock is taken, keeping the check. Ensure the staged task carries the expected generation so a size-flush-then-window-flush race stays a no-op.
 - **Shutdown interaction:** a window staged to the workers just as they shut down must still fail its parked members (the existing `RejectedExecutionException` path at `:1000` handles this) — keep that fallback on the staged path.
+
+## Results
+
+Shipped option 1. No hot-path change (the size-triggered flush — the benchmarked
+path — is untouched; only the cold window flush gains a stage), and the batch
+benchmark stayed in range.
+
+- **The timer thread stages, and takes no group lock.** The window timer now
+  schedules `() -> stageWindowFlush(gen)`, which does the minimum on the shared
+  TimerWheel thread — one `workersExecutorService.execute(...)` — and acquires no
+  `BatchGroup` lock. So a boss inside `add()` (which does take the group lock)
+  never contends the one thread that ticks every timeout and window in the JVM.
+
+- **The worker does the lock + swap + bulk, in one hop.** The staged
+  `flushWindow` runs on a worker: it takes `synchronized (this)`, re-checks the
+  generation (a size flush that beat the window is still a no-op), swaps and
+  resets, and runs the bulk inline — no second dispatch hop, since it is already
+  on a worker.
+
+- **Shutdown is handled on the staged path.** If the stage `execute(...)` is
+  rejected because the workers are gone (a window firing exactly at shutdown),
+  `failWindow` swaps under the lock — on the timer thread, but nothing contends
+  now that admission is closed — and fails the parked members, so none hangs. The
+  RFC's own risk note called for keeping this fallback; it is `failWindow`.
+
+- **Tests:** the existing `DefaultNioFlowBatchTest` (size trigger, window trigger,
+  per-element downstream, bulk failure, wrong-sized result, lane pooling,
+  consecutive reuse) stays green through the new staged path, and a new
+  `aWindowFlushRunsOffTheSharedTimerThread` guards the invariant — a window flush
+  runs its bulk (and, now, its group-lock swap) on a worker, never on
+  `nio-flow-timer`. SonarLint over the main-source diff is clean.
+
+- **Not taken: option 2** (a lock-free CAS generation word) — a real rewrite of the
+  coalescing state machine for no gain once the lock is off the timer thread; the
+  short critical section on the boss/worker is fine.

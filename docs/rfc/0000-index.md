@@ -9,7 +9,7 @@ fast-path measured neutral and was dropped). **0023–0030 are the
 production-hardening cluster — all implemented** — fixes for a multi-agent
 audit's findings, all clustered in the shutdown / cancel / metrics /
 reactive-bridge corners the steady-state hot path never exercises. **0031–0041
-are the second audit cluster — 0031, 0033, 0034, 0035, 0036, 0037, 0038 and 0039 implemented, 0032 part-shipped (phase A), the rest proposed** — a fresh
+are the second audit cluster — 0031, 0033, 0034, 0035, 0036, 0037, 0038, 0039 and 0041 implemented, 0032 part-shipped (phase A), 0040 proposed** — a fresh
 multi-agent review (core, reactive, docs, adopter) covering an admission-control
 gap on `call()`, the engine god class, reactive safety defaults, and a batch of
 docs/build and long-uptime hardening items; none is on the steady-state hot path.
@@ -58,7 +58,7 @@ docs/build and long-uptime hardening items; none is on the steady-state hot path
 | [0038](0038-per-request-decision-id-compaction.md) | Compact per-request decision ids so branching never falls off the bitset | ✅ Implemented | core | 0011 |
 | [0039](0039-bounded-key-lane-and-depth-metric.md) | Bound the per-key lane, and surface its depth | ✅ Implemented | core | 0024, 0026 |
 | [0040](0040-lane-held-visibility-in-shutdown-terminal.md) | `laneHeld` visibility on the off-boss shutdown terminal | 📋 Proposed | core | 0007, 0024, 0026 |
-| [0041](0041-batch-flush-off-the-timer-thread.md) | Keep the batch group lock off the shared TimerWheel thread | 📋 Proposed | core | 0025 |
+| [0041](0041-batch-flush-off-the-timer-thread.md) | Keep the batch group lock off the shared TimerWheel thread | ✅ Implemented | core | 0025 |
 
 **Bold** = hard dependency: the RFC cannot ship until its parent does. A plain
 number means the RFC builds on the parent's design but could be sequenced with

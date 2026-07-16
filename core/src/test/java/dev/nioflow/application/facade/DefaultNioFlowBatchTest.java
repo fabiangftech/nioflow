@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -65,6 +66,23 @@ class DefaultNioFlowBatchTest extends EngineTestSupport {
         assertEquals(1002, second.join());
         long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
         assertTrue(elapsedMillis >= 100, "a partial batch waits for its window, took only " + elapsedMillis + "ms");
+    }
+
+    @Test
+    void aWindowFlushRunsOffTheSharedTimerThread() {
+        // RFC 0041: the window flush is STAGED to a worker, so neither the bulk
+        // NOR the group-lock swap runs on the one thread that ticks every timeout
+        // and window in the JVM — a boss adding to a batch never contends it.
+        var bulkThread = new java.util.concurrent.atomic.AtomicReference<String>();
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.batch("bulk", 100, Duration.ofMillis(100), values -> {
+            bulkThread.set(Thread.currentThread().getName());
+            return values.stream().map(value -> value + 1).toList();
+        });
+
+        assertEquals(2, flow.just(1).executeAsync().orTimeout(5, TimeUnit.SECONDS).join());
+        assertNotEquals("nio-flow-timer", bulkThread.get(),
+                "a window flush must not run on the shared TimerWheel thread");
     }
 
     @Test

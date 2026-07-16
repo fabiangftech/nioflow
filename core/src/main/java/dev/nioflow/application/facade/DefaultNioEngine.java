@@ -930,7 +930,7 @@ public class DefaultNioEngine implements NioEngine {
                 if (values.size() == 1) {
                     long expected = generation;
                     windowTimer = TimerWheel.shared().schedule(batch.window().toNanos(),
-                            () -> flushWindow(expected));
+                            () -> stageWindowFlush(expected));
                 }
                 if (values.size() >= batch.size()) {
                     flushValues = values;
@@ -943,6 +943,27 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
 
+        // Scheduled on the shared TimerWheel: do the ABSOLUTE MINIMUM on the timer
+        // thread (RFC 0041) — hand the flush to a worker, taking NO group lock
+        // here, so a boss adding to a batch never contends the one thread that
+        // ticks every timeout and window in the JVM. The generation re-check on
+        // the worker still makes a size flush that beat the window a no-op.
+        private void stageWindowFlush(long expectedGeneration) {
+            try {
+                workersExecutorService.execute(() -> flushWindow(expectedGeneration));
+            } catch (RejectedExecutionException rejected) {
+                // Workers gone as the window fired at shutdown: swap here (the
+                // timer thread, but nothing contends now that admission is closed)
+                // and fail the parked members so none hangs. The group lock this
+                // RFC keeps off the timer thread in steady state is acceptable on
+                // the shutdown path.
+                failWindow(expectedGeneration, rejected);
+            }
+        }
+
+        // Runs on a WORKER (staged above). Takes the group lock there, re-checks
+        // the generation, swaps, and runs the bulk inline — already on a worker,
+        // so no second dispatch hop.
         private void flushWindow(long expectedGeneration) {
             List<Object> flushValues;
             List<BiConsumer<Object, Throwable>> flushContinuations;
@@ -954,7 +975,19 @@ public class DefaultNioEngine implements NioEngine {
                 flushContinuations = continuations;
                 reset();
             }
-            dispatchBulk(flushValues, flushContinuations);
+            runBulk(flushValues, flushContinuations);
+        }
+
+        private void failWindow(long expectedGeneration, Throwable cause) {
+            List<BiConsumer<Object, Throwable>> flushContinuations;
+            synchronized (this) {
+                if (generation != expectedGeneration) {
+                    return;
+                }
+                flushContinuations = continuations;
+                reset();
+            }
+            flushContinuations.forEach(continuation -> continuation.accept(null, cause));
         }
 
         // Always called under the group lock.
