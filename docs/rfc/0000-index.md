@@ -8,7 +8,11 @@ earlier monolithic drafts so each idea stands on its own) — of which **0009 an
 fast-path measured neutral and was dropped). **0023–0030 are the
 production-hardening cluster — all implemented** — fixes for a multi-agent
 audit's findings, all clustered in the shutdown / cancel / metrics /
-reactive-bridge corners the steady-state hot path never exercises.
+reactive-bridge corners the steady-state hot path never exercises. **0031–0041
+are the second audit cluster — all proposed** — a fresh multi-agent review
+(core, reactive, docs, adopter) covering an admission-control gap on `call()`,
+the engine god class, reactive safety defaults, and a batch of docs/build and
+long-uptime hardening items; none is on the steady-state hot path.
 
 ## Catalogue
 
@@ -44,6 +48,17 @@ reactive-bridge corners the steady-state hot path never exercises.
 | [0028](0028-preferasync-no-budget-leak.md) | Close the `preferAsync` no-budget leak | ✅ Implemented | reactive | 0003, 0006 |
 | [0029](0029-handlers-off-the-boss.md) | Completion/error handlers on the boss: offload, bound, or say so | ✅ Implemented | docs, example | 0009, **0023** |
 | [0030](0030-reactive-mirror-behavioral-parity.md) | Guard the reactive mirror's behaviour, not just its existence | ✅ Implemented | reactive | 0008 |
+| [0031](0031-admission-control-on-call.md) | Admission control must cover `call()`, not just `inject()` | 📋 Proposed | core | 0009, **0024** |
+| [0032](0032-break-up-the-engine-god-class.md) | Break up the `DefaultNioEngine` god class; unify the three drivers | 📋 Proposed | core | 0009, 0011, 0013 |
+| [0033](0033-reactor-context-bridge-is-string-only.md) | `propagate` bridges strings, not trace context — make it work or say so | 📋 Proposed | reactive | 0005 |
+| [0034](0034-reactive-budget-safe-by-default.md) | The reactive budget footgun ships armed — make safety the default | 📋 Proposed | reactive | 0003, 0006, 0028 |
+| [0035](0035-mirror-test-covers-every-builder.md) | `ReactiveMirrorTest` must cover every builder pair + one behaviour per family | 📋 Proposed | reactive (tests) | 0008, **0030** |
+| [0036](0036-examples-overhaul.md) | Examples overhaul: stop shipping the anti-pattern the docs warn against | 📋 Proposed | examples, docs | — |
+| [0037](0037-docs-and-build-hygiene.md) | Docs & build hygiene: one benchmark source, reachable RFCs, a pinned JDK floor | 📋 Proposed | docs, build | 0018, 0022 |
+| [0038](0038-per-request-decision-id-compaction.md) | Compact per-request decision ids so branching never falls off the bitset | 📋 Proposed | core | 0011 |
+| [0039](0039-bounded-key-lane-and-depth-metric.md) | Bound the per-key lane, and surface its depth | 📋 Proposed | core | 0024, 0026 |
+| [0040](0040-lane-held-visibility-in-shutdown-terminal.md) | `laneHeld` visibility on the off-boss shutdown terminal | 📋 Proposed | core | 0007, 0024, 0026 |
+| [0041](0041-batch-flush-off-the-timer-thread.md) | Keep the batch group lock off the shared TimerWheel thread | 📋 Proposed | core | 0025 |
 
 **Bold** = hard dependency: the RFC cannot ship until its parent does. A plain
 number means the RFC builds on the parent's design but could be sequenced with
@@ -76,6 +91,39 @@ test that *falsifies the bug* (an `orTimeout` on every joined future, so a hang
 is a visible failure) and, where a hot path is touched at all, a confirmation
 against the RFC 0021 allocation/throughput gates — none of these fixes is on the
 per-link hot path, so the gates should be flat.
+
+## The second audit cluster (0031–0041)
+
+A fresh four-lens review (core concurrency, reactive design, docs accuracy,
+adopter/DX) run against the 2.1.0 tree. Like the first cluster it found the
+steady-state hot path solid, and again the findings sit off it — an
+admission-control gap on the request/response path, reactive safety defaults,
+long-uptime hazards, and maintainability/docs debt. These are **proposed**, to
+be worked through later; ordered by severity for a production push:
+
+| # | Finding | Severity | Ship order |
+| --- | --- | --- | --- |
+| 0031 | `capacity`/`OverflowPolicy` only bounds `inject`; `call()` — hence the whole reactive facade — has no admission control at all | **High** | 1 |
+| 0034 | The reactive budget footgun ships armed: an unbudgeted `handleMono` leaks a worker + `Execution` forever on a hung upstream, and that is the default | **High** | 2 |
+| 0033 | `propagate` matches subscriber-context by string name only; wired against Micrometer/Sleuth tracing it silently seeds nothing (the #1 use case) | **Med-High** | 3 |
+| 0038 | Per-request `when`/`match` consume a JVM-lifetime counter and fall off the fast bitset past 511 — a hot-path allocation cliff the fork path already knows how to fix | **Med** | 4 |
+| 0039 | The per-key FIFO lane is unbounded with no depth metric; a stuck hot-key head grows it without limit and blocks a clean drain | **Med** | 5 |
+| 0035 | `ReactiveMirrorTest` checks only 3 of 12 builder pairs; a dropped reactive step in a branch family fails no test | **Med** | 6 |
+| 0032 | `DefaultNioEngine` is a 2414-line god class with three hand-synchronized execution drivers — where the next cancellation/fusion bug will hide | **Med** | 7 |
+| 0036 | The flagship Spring example ships the wildcard-bean anti-pattern its own Javadoc condemns; no operability/runbook example exists | **Med** | 8 |
+| 0037 | Benchmark numbers drift across three files; the RFC record is unreachable from the site; "Java 21+" is unenforced by any toolchain | **Med-Low** | 9 |
+| 0041 | A batch-window flush takes the group lock on the single shared TimerWheel thread — contention coupling into every unrelated timeout | **Low-Med** | 10 |
+| 0040 | `laneHeld` is read cross-thread on the documented off-boss shutdown terminal with no happens-before edge — a narrow but free-to-fix data race | **Low** | 11 |
+
+Sequencing notes: **0031 and 0034 first** (the two reachable production
+hazards — an unbounded request path and an armed leak). **0032 (the god-class
+extraction) before or alongside 0038/0039/0040/0041**, since those all edit
+`Execution`/engine internals and are far easier once the drivers are one. **0035
+before any core change to the branch builders**, so a dropped mirror override is
+caught. **0036 on its own** (a credibility fix, no core dependency). Each core/
+reactive RFC ships with an RFC 0020-style deterministic test that *falsifies the
+bug* and, where any hot path is touched, an RFC 0021 gate confirmation — none of
+these is on the per-link hot path, so the gates should stay flat.
 
 ## Dependency graph
 

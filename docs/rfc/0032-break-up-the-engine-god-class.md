@@ -1,0 +1,47 @@
+# RFC 0032 — Break up the `DefaultNioEngine` god class; unify the three execution drivers
+
+- **Status**: 📋 Proposed
+- **Target**: `core` (`DefaultNioEngine` and the types it nests) — a structural refactor, no behavior change
+- **Depends on**: RFC 0009, RFC 0011 (the plan), RFC 0013 (async fusion) — the machinery being reorganized
+- **Severity**: **Medium** — maintainability/correctness-risk, not a live defect: the duplication is where the *next* bug will hide
+- **Realized by**: extracting `Execution`, `CompiledChain`, and `BatchGroup` to top-level package-private classes (as the code style already demands for new code), and unifying the shared logic of the three execution drivers (the cancellation gate, the positional recover scan, the per-stage timing) behind one helper so it exists once.
+
+## The finding
+
+`DefaultNioEngine` is **2414 lines with 13 nested types** (`SharedExecutors`, `ChainVersion`, `KeyLane`, `Region`, `Prepared`, `ExecutionHandle`, `RejectedCall`, `BatchGroup`, `Execution`, and nested inside `Execution`: `FanOutJoin`, `AsyncSettle`, `AsyncRun`, `ExecutionContext`). `Execution` alone spans ~1266 lines (`:1034`–`:2300`).
+
+`CLAUDE.md`'s "No nested types" rule explicitly grandfathers these. But grandfathering a rule *this* hard is itself the smell: the rule exists because these types are painful to work with, and this one file is where all of them live.
+
+The concrete correctness angle: `Execution` contains **three distinct execution drivers** with subtly different invariants —
+
+- the boss `advance`/`step` loop (iterative, on the boss),
+- `applyRun` (the fused blocking-worker driver),
+- `AsyncRun.drive` (the fused async-worker driver).
+
+Each **independently re-implements** the cancellation check (RFC 0007's `cancelled` read must appear in `advance` *and* `applyRun` *and* the async run), the positional recover scan, and the per-stage metric timing. That triplication is enforced only by prose and review — `CLAUDE.md` itself notes the async-run driver "holds the same invariants the boss loop does." The RFC 0007 cancellation bug (cancellation had to be added to `applyRun`, not just `advance`, or a fused `handleMono` + `handle("charge")` charged the card anyway) is exactly the failure mode this shape invites: a rule that must hold in three places, written in three places.
+
+## Why it matters
+
+Every future change to the execution path — a new link type, a fusion tweak, a cancellation-point addition — has to be made in three drivers and kept consistent by hand. The `CompiledChain` record even hand-writes `equals`/`hashCode`/`toString` because arrays break record value semantics (a sign the abstraction is fighting the language while buried in a 2400-line file). A refactor here does not add a feature; it removes a standing tax on every feature that follows, and closes the class of "fixed in two of three drivers" bug that RFC 0007 already demonstrated once.
+
+## The options
+
+1. **Extract the data/value types first (low-risk, do first).** `CompiledChain`, `ChainVersion`, `KeyLane`, `Region`, `Prepared`, `ExecutionHandle`, `RejectedCall`, `BatchGroup` are mostly self-contained. Move each to its own top-level package-private file. Pure mechanical extraction, the test suite catches any capture mistake, and it shrinks `DefaultNioEngine` substantially before the harder move.
+
+2. **Extract `Execution` (and its inner drivers) to a top-level class (the main move).** `Execution` needs access to engine state (the version, the drain counter, the metrics, the boss array). Extract it to a top-level `Execution` that holds a reference back to the engine (or a small `EngineContext` seam of exactly what it needs), and lift `FanOutJoin`/`AsyncRun`/`ExecutionContext` to top-level too. Larger, but the boundary is clean: `Execution` already only touches engine state through a handful of fields.
+
+3. **Unify the three drivers behind one helper (the correctness payoff).** Pull the shared per-step logic — read-cancelled-flag, scan-forward-for-recovery, time-the-stage — into one place that all three drivers call, so the RFC 0007-style "add the check in every driver" hazard becomes "add it once." This is the change that turns a prose invariant into a structural one.
+
+Recommended sequencing: **1 → 2 → 3.** Ship option 1 on its own (it is safe and immediately halves the file); take 2 and 3 together since 3 is far easier once `Execution` is its own type.
+
+## Testing
+
+- No new behavior, so the whole existing suite is the test — in particular `DefaultNioEngineCompiledChainTest` (compiled ≡ interpreted), `DefaultNioFlowFusionEquivalenceProbeTest` (fused ≡ single-dispatch, blocking), `DefaultNioFlowCancellationTest`, and the shutdown/drain suite must stay green with zero edits.
+- **Add the missing async-fusion equivalence probe** (currently a gap): assert a chain that produces a fused *async* run yields identical results and ordering to the single-dispatch async path, mirroring the blocking `FusionEquivalenceProbe`. If option 3 unifies the drivers, this probe protects the unification.
+- RFC 0021 gates flat throughout (a refactor must not move an allocation onto the hot path).
+
+## Risks
+
+- **Accidental semantic change during extraction.** The inner classes capture `this` (the engine) implicitly; making that reference explicit can subtly change which field is read when. Mitigation: extract in small commits, each green against the full suite; do not combine extraction with any logic edit.
+- **`Execution`'s back-reference.** A naive `Execution(engine)` re-exposes everything; prefer a narrow interface (`EngineContext`) of exactly the members `Execution` uses, which also documents the coupling.
+- **Scope creep.** This is a refactor, not a redesign — resist "improving" the drivers' behavior while moving them. Behavior changes belong in their own RFCs (0031, 0038–0041).
