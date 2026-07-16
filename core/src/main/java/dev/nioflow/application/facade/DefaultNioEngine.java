@@ -45,6 +45,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
@@ -669,6 +670,13 @@ public class DefaultNioEngine implements NioEngine {
         return keyLanes.size();
     }
 
+    // Test hook: the drain counter. After everything reports it is 0; a NEGATIVE
+    // value is the smoking gun of a double terminal decrementing one execution
+    // twice, which the finished CAS prevents (RFC 0024).
+    long inFlightCount() {
+        return activeExecutions.sum();
+    }
+
     // Caller-thread affinity instead of a shared round-robin cursor: no atomic
     // on the call() path, and a request thread keeps landing on the same boss
     // (cache locality). Sequential thread ids spread across the pool at least
@@ -1032,9 +1040,16 @@ public class DefaultNioEngine implements NioEngine {
         // continuation at a time, each hop a happens-before edge — so a plain
         // HashMap is enough. Only touched through ExecutionContext views.
         private Map<String, Object> context;
-        // Exactly-once completion guard. Written on the boss; the only off-boss
-        // writer is the resume-rejection path, which implies the boss is gone.
-        private volatile boolean finished;
+        // Exactly-once completion guard, an atomic CAS (RFC 0024). Normally the
+        // boss is the only writer, but shutdown of a dedicated engine has TWO
+        // off-boss terminals that can race each other: a worker whose
+        // resumeOnBoss is rejected (fail), and an outside cancel() whose
+        // boss.execute is rejected (complete). A plain check-then-set would let
+        // both win and run finishBookkeeping — and its activeExecutions.decrement
+        // — twice, so a graceful drain could report clean while work still runs.
+        // The CAS elects exactly one terminal; the loser returns before touching
+        // the drain counter.
+        private final AtomicBoolean finished = new AtomicBoolean();
         // Raised by cancel() from ANY thread, read only on the boss (between
         // links, before a recovery, before a retry) — so rule 1 holds: the flag
         // crosses threads, the orchestration state it guards does not.
@@ -1126,10 +1141,9 @@ public class DefaultNioEngine implements NioEngine {
          * wrapper gave, without allocating a dependent future per call.
          */
         private void complete(Object value) {
-            if (finished) {
+            if (!finished.compareAndSet(false, true)) {
                 return;
             }
-            finished = true;
             finishBookkeeping(value, null);
             result.complete(value);
             if (laneHeld) {
@@ -1138,10 +1152,9 @@ public class DefaultNioEngine implements NioEngine {
         }
 
         private void fail(Throwable error) {
-            if (finished) {
+            if (!finished.compareAndSet(false, true)) {
                 return;
             }
-            finished = true;
             finishBookkeeping(null, unwrap(error));
             result.completeExceptionally(error);
             if (laneHeld) {
@@ -1165,7 +1178,7 @@ public class DefaultNioEngine implements NioEngine {
          * boundary, because by then the execution is finished.
          */
         private void cancel() {
-            if (finished || cancelled) {
+            if (finished.get() || cancelled) {
                 return;
             }
             cancelled = true;

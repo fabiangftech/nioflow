@@ -1,10 +1,11 @@
 # RFC 0024 — An atomic exactly-once terminal, so shutdown never double-counts the drain
 
-- **Status**: 🔵 Proposed
-- **Target**: `core/` (`DefaultNioEngine.Execution` — `finished`, `complete`, `fail`)
+- **Status**: ✅ Implemented — `finished` is an `AtomicBoolean` CAS; 2 tests (a deterministic clean-drain, a barrier-driven race bug-hunter)
+- **Target**: `core/` (`DefaultNioEngine.Execution` — `finished`, `complete`, `fail`, `cancel`)
 - **Depends on**: RFC 0007 (cancellation, one of the two off-boss writers), RFC 0009 (the boss model the guard assumes)
 - **Severity**: **Medium** — narrow (dedicated-engine shutdown only), but it defeats the exact guarantee `shutdown(grace)` sells
 - **Sibling of**: RFC 0023, RFC 0026 (the other off-boss shutdown paths)
+- **Realized by**: `Execution.finished` changed from a `volatile boolean` check-then-set to a `final AtomicBoolean` — `complete`/`fail` gate on `compareAndSet(false, true)`, `cancel` reads `finished.get()`. A new package-private test hook `DefaultNioEngine.inFlightCount()` exposes the drain sum so a double decrement is observable as a negative value. Tests: `DefaultNioEngineShutdownRaceTest`.
 
 ## The finding
 
@@ -129,3 +130,33 @@ possible, `orTimeout` on every joined future):
   no-ops the future but double-runs bookkeeping; after the fix it no-ops both.
   That is strictly the intended semantics — nothing relied on bookkeeping
   running twice.
+
+## Results
+
+Shipped as the `AtomicBoolean` form (clearer than a `VarHandle` int, and a final
+object field sidesteps S3077 — no new static-analysis findings). The field
+comment now names **both** off-boss writers, correcting the "only one" the old
+comment claimed.
+
+- **It closes half of RFC 0026 for free, as predicted.** With a CAS terminal,
+  the two off-boss paths can no longer both reach `releaseKey()` — the loser
+  returns first — so the *double-release* symptom of RFC 0026 is already gone.
+  What 0026 still has to fix is the other half: the off-boss `releaseKey`
+  recursing on a worker stack and reading a racy deque. This RFC does not touch
+  that; it is sequenced first precisely so 0026 lands on a clean terminal.
+
+- **The race is a bug-hunter, and it says so.** The cross-thread double-terminal
+  (a worker's rejected `resumeOnBoss` racing an outside `cancel` with the boss
+  gone) cannot be forced deterministically through the public API — there is no
+  seam to pause a worker mid-`resumeOnBoss`. So the test drives three threads
+  (shutdown, cancel, async-completion) to overlap on a `CyclicBarrier`, over 120
+  iterations of a fresh `dedicated(1)` engine, with the precise oracle that the
+  drain counter (exposed by the new `inFlightCount()` hook) must never go
+  **negative** — the unmistakable signature of one execution decrementing twice.
+  A deterministic companion (`aCleanDedicatedShutdownDrainsToExactlyZero`) pins
+  the ordinary contract: 50 executions drain to exactly zero and `shutdown`
+  returns 0.
+
+`cd core && ./gradlew test` green (full suite, including the drain and dedicated-
+pool tests); `cd reactive && ./gradlew test` green; SonarLint diff over `core` is
+empty.
