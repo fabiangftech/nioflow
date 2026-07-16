@@ -134,9 +134,9 @@ class DefaultNioEngineCompiledChainTest {
         List<Link> links = List.of(EngineTestSupport.stage("a", value -> value),
                 EngineTestSupport.stage("b", value -> value));
 
-        DefaultNioEngine.CompiledChain plan = DefaultNioEngine.CompiledChain.compile(links);
-        DefaultNioEngine.CompiledChain same = DefaultNioEngine.CompiledChain.compile(links);
-        DefaultNioEngine.CompiledChain other = DefaultNioEngine.CompiledChain.compile(
+        CompiledChain plan = CompiledChain.compile(links);
+        CompiledChain same = CompiledChain.compile(links);
+        CompiledChain other = CompiledChain.compile(
                 List.of(EngineTestSupport.stage("a", value -> value)));
 
         assertEquals(plan, same);                          // distinct array instances, same contents

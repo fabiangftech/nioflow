@@ -26,7 +26,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -56,7 +55,7 @@ import java.util.function.Function;
 
 public class DefaultNioEngine implements NioEngine {
 
-    private static final String NIO_FLOW_BOSS = "nio-flow-boss-";
+    static final String NIO_FLOW_BOSS = "nio-flow-boss-";
     private static final String ASYNC_STAGE = "Async stage '";
     private static final String IN_FLIGHT_CAPACITY = "In-flight capacity ";
 
@@ -81,25 +80,7 @@ public class DefaultNioEngine implements NioEngine {
     // worker, forked, batched) or ended it, so the boss must stop walking.
     private static final Object HANDED_OFF = new Object();
 
-    /**
-     * Executors shared by every engine in the JVM (commonPool style): a pool of
-     * daemon boss threads plus one virtual-thread worker pool, no matter how many
-     * DefaultNioEngine/DefaultNioFlow instances exist. Each execution is pinned to
-     * ONE boss (EventLoopGroup-style affinity), which keeps its orchestration
-     * state single-threaded while letting concurrent executions spread across
-     * bosses instead of queueing behind a single thread.
-     */
-    private static final class SharedExecutors {
-
-        // Tunable at JVM level: -Dnioflow.bosses=N (default: available cores,
-        // floor 2). Read once — the shared pool is a JVM-wide singleton.
-        private static final int BOSS_COUNT = Integer.getInteger("nioflow.bosses",
-                Math.max(2, Runtime.getRuntime().availableProcessors()));
-        private static final ExecutorService[] BOSSES = createBossPool(BOSS_COUNT, NIO_FLOW_BOSS);
-        private static final ExecutorService WORKERS = Executors.newVirtualThreadPerTaskExecutor();
-    }
-
-    private static ExecutorService[] createBossPool(int count, String namePrefix) {
+    static ExecutorService[] createBossPool(int count, String namePrefix) {
         ThreadFactory factory = Thread.ofPlatform().name(namePrefix, 0).daemon(true).factory();
         ExecutorService[] bosses = new ExecutorService[count];
         for (int i = 0; i < bosses.length; i++) {
@@ -158,19 +139,7 @@ public class DefaultNioEngine implements NioEngine {
     // the forksInFlight gauge.
     private final AtomicInteger activeForks = new AtomicInteger();
 
-    /**
-     * The chain and the plan compiled for it are ONE value, swapped atomically:
-     * reading them separately could pair a chain with the plan of another
-     * version. Immutable, so an in-flight call keeps its snapshot while the
-     * chain is being edited at runtime.
-     *
-     * <p>plan == null means "interpret": append() invalidates it, seal() and
-     * splice() recompile. Executions match the plan by chain identity, so local
-     * per-request chains simply fall back to interpreting.
-     */
-    private record ChainVersion(List<Link> links, CompiledChain plan) {
-    }
-
+    // The chain and its compiled plan as ONE atomic value (see ChainVersion).
     private final AtomicReference<ChainVersion> version =
             new AtomicReference<>(new ChainVersion(List.of(), null));
     private volatile boolean sealed;
@@ -203,9 +172,6 @@ public class DefaultNioEngine implements NioEngine {
     // by LINK IDENTITY, not by index, so edits elsewhere in the chain never
     // stale them. Guarded by the engine's synchronized edit methods.
     private final Map<String, Region> regions = new HashMap<>();
-
-    private record Region(Link first, Link last) {
-    }
 
     public DefaultNioEngine() {
         this(SharedExecutors.BOSSES, SharedExecutors.WORKERS, false, 0, OverflowPolicy.BLOCK);
@@ -517,10 +483,6 @@ public class DefaultNioEngine implements NioEngine {
         return new Prepared(CompiledChain.compile(List.copyOf(chain)));
     }
 
-    /** The opaque handle prepare()/planFor() hand out: a compiled plan and nothing else. */
-    private record Prepared(CompiledChain plan) implements PreparedChain {
-    }
-
     /**
      * Test seam (RFC 0038): the compiled plan's highest decision id. Lets a test
      * assert a per-request pipeline compacts its decisions to fit the bitset
@@ -605,15 +567,6 @@ public class DefaultNioEngine implements NioEngine {
         @Override
         public void cancel() {
             execution.cancel();
-        }
-    }
-
-    /** A call the shut-down engine never started: there is nothing to cancel. */
-    private record RejectedCall(CompletableFuture<Object> future) implements Cancellable<Object> {
-
-        @Override
-        public void cancel() {
-            // Nothing ran; the future is already failed.
         }
     }
 
@@ -929,19 +882,6 @@ public class DefaultNioEngine implements NioEngine {
         return -1;
     }
 
-    // Highest Decision id in the chain, -1 with none: sizes the per-execution
-    // decision bitset by chain content, not by the engine-wide id counter
-    // (which grows forever under per-request forks).
-    private static int maxDecisionId(List<Link> links) {
-        int max = -1;
-        for (int i = 0; i < links.size(); i++) {
-            if (links.get(i) instanceof Decision decision && decision.id() > max) {
-                max = decision.id();
-            }
-        }
-        return max;
-    }
-
     /**
      * The failure a Recovery (and the caller's future) must see: the cause, not
      * the CompletableFuture plumbing around it. Loops, because the wrappers
@@ -957,170 +897,6 @@ public class DefaultNioEngine implements NioEngine {
         return cause;
     }
 
-    /**
-     * Dispatch plan precomputed once per chain version (at seal() and after
-     * each splice) instead of rescanned per execution. For every no-timeout
-     * Stage it records the static fusion window [i, runEnds[i]) — bounded
-     * conservatively at the first link that can never fuse (Decision,
-     * Background, timeout Stage) — and, when NO link in the window carries
-     * guards, the precollected runs[i] array: those dispatches do zero
-     * scanning and zero allocation. Windows containing guarded links keep the
-     * per-execution guard selection, just bounded to the window. It also
-     * records the chain's highest Decision id so executions size their
-     * decision bitset without rescanning.
-     */
-    record CompiledChain(List<Link> links, Link[][] runs, int[] runEnds, AsyncStage[][] asyncRuns,
-                         int maxDecisionId, Map<Fork, CompiledChain> forkPlans) {
-
-        static CompiledChain compile(List<Link> links) {
-            int size = links.size();
-            Link[][] runs = new Link[size][];
-            int[] runEnds = new int[size];
-            for (int i = 0; i < size; i++) {
-                // No window starts at a sync stage: advance inlines it on the
-                // boss and never dispatches there (validated chains can't
-                // carry sync+timeout/retry). It still FUSES into a preceding
-                // stage's window like any other no-timeout stage.
-                if (!(links.get(i) instanceof Stage stage) || stage.timeout() != null || stage.sync()) {
-                    continue;
-                }
-                int end = i + 1;
-                while (end < size && extendsWindow(links.get(end))) {
-                    end++;
-                }
-                runEnds[i] = end;
-                if (unguarded(links, i, end)) {
-                    runs[i] = links.subList(i, end).toArray(Link[]::new);
-                }
-            }
-            return new CompiledChain(links, runs, runEnds, asyncRuns(links),
-                    DefaultNioEngine.maxDecisionId(links), compileForks(links));
-        }
-
-        /**
-         * The async fusion windows (RFC 0013): a run of consecutive UNGUARDED
-         * AsyncStages is driven from the worker side, touching the boss once for
-         * the whole run instead of twice per stage. Only unguarded runs of
-         * length >= 2 are precollected — a guarded async stage (in a lane) and a
-         * lone one fall back to single dispatch, identically. asyncRuns[i] is set
-         * only at the START of a maximal run, which is the only index the boss
-         * ever reaches (it drives the whole run and resumes past it).
-         */
-        private static AsyncStage[][] asyncRuns(List<Link> links) {
-            int size = links.size();
-            AsyncStage[][] asyncRuns = new AsyncStage[size][];
-            for (int i = 0; i < size; i++) {
-                // The START of a maximal run of unguarded async stages — the only
-                // index the boss ever reaches (it drives the whole run past it).
-                boolean runStart = isUnguardedAsync(links.get(i))
-                        && !(i > 0 && isUnguardedAsync(links.get(i - 1)));
-                if (runStart) {
-                    int end = i + 1;
-                    while (end < size && isUnguardedAsync(links.get(end))) {
-                        end++;
-                    }
-                    if (end - i >= 2) {
-                        asyncRuns[i] = links.subList(i, end).toArray(AsyncStage[]::new);
-                    }
-                }
-            }
-            return asyncRuns;
-        }
-
-        private static boolean isUnguardedAsync(Link link) {
-            List<Guard> guards = link.guards();
-            return link instanceof AsyncStage && (guards == null || guards.isEmpty());
-        }
-
-        /**
-         * A fork's sub-chain is immutable, so it compiles once with the chain
-         * that carries it: the child dispatches off a real plan instead of
-         * interpreting. Keyed by link IDENTITY (two structurally equal forks
-         * are still two different links).
-         */
-        private static Map<Fork, CompiledChain> compileForks(List<Link> links) {
-            Map<Fork, CompiledChain> plans = null;
-            for (int i = 0; i < links.size(); i++) {
-                if (links.get(i) instanceof Fork fork) {
-                    if (plans == null) {
-                        plans = new IdentityHashMap<>();
-                    }
-                    plans.put(fork, compile(fork.chain()));
-                }
-            }
-            return plans == null ? Map.of() : plans;
-        }
-
-        // The record's generated equals/hashCode/toString would compare the two
-        // array components by reference, which never matches the value semantics
-        // a record promises. The engine only ever compares plans by identity
-        // (plan.links() != chain), so these exist to keep the contract honest.
-        @Override
-        public boolean equals(Object other) {
-            return this == other
-                    || other instanceof CompiledChain(var otherLinks, var otherRuns, var otherRunEnds,
-                    var otherAsyncRuns, var otherMaxId, var otherForkPlans)
-                    && maxDecisionId == otherMaxId
-                    && links.equals(otherLinks)
-                    && Arrays.deepEquals(runs, otherRuns)
-                    && Arrays.equals(runEnds, otherRunEnds)
-                    && Arrays.deepEquals(asyncRuns, otherAsyncRuns)
-                    && forkPlans.equals(otherForkPlans);
-        }
-
-        @Override
-        public int hashCode() {
-            int result = links.hashCode();
-            result = 31 * result + Arrays.deepHashCode(runs);
-            result = 31 * result + Arrays.hashCode(runEnds);
-            result = 31 * result + Arrays.deepHashCode(asyncRuns);
-            result = 31 * result + maxDecisionId;
-            return 31 * result + forkPlans.size();
-        }
-
-        @Override
-        public String toString() {
-            return "CompiledChain[links=" + links
-                    + ", runs=" + Arrays.deepToString(runs)
-                    + ", runEnds=" + Arrays.toString(runEnds)
-                    + ", asyncRuns=" + Arrays.deepToString(asyncRuns)
-                    + ", maxDecisionId=" + maxDecisionId
-                    + ", forkPlans=" + forkPlans.size() + "]";
-        }
-
-        private static boolean staticallyFusable(Link link) {
-            return link instanceof Filter
-                    || link instanceof Recovery
-                    || (link instanceof Stage stage && stage.timeout() == null);
-        }
-
-        // Fusion across recorded decisions: a GUARDED non-fusable link (a
-        // match() case's Decision, a lane's Background/FanOut) might be
-        // skipped at runtime — its guards depend on decisions already
-        // recorded — so the window extends through it and the per-execution
-        // scan decides: guard-failed links are stepped over (a skipped
-        // Decision records nothing), a passing one still ends the run there.
-        // An UNGUARDED non-fusable link always executes: hard boundary, same
-        // as before. This matches what the interpreted scan (no plan) already
-        // does with its links.size() bound.
-        private static boolean extendsWindow(Link link) {
-            if (staticallyFusable(link)) {
-                return true;
-            }
-            List<Guard> guards = link.guards();
-            return guards != null && !guards.isEmpty();
-        }
-
-        private static boolean unguarded(List<Link> links, int from, int to) {
-            for (int i = from; i < to; i++) {
-                List<Guard> guards = links.get(i).guards();
-                if (guards != null && !guards.isEmpty()) {
-                    return false;
-                }
-            }
-            return true;
-        }
-    }
 
     /**
      * In-flight state of one Batch link. The batch point is where otherwise
@@ -1305,7 +1081,7 @@ public class DefaultNioEngine implements NioEngine {
             this.input = input;
             this.key = key;
             this.forkOf = forkOf;
-            int maxDecision = plan != null ? plan.maxDecisionId() : maxDecisionId(links);
+            int maxDecision = plan != null ? plan.maxDecisionId() : CompiledChain.maxDecisionId(links);
             this.decisionBits = maxDecision >= 0 && maxDecision <= MAX_BITSET_DECISION_ID
                     ? new long[(maxDecision >>> 5) + 1]
                     : null;
