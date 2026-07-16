@@ -1,8 +1,17 @@
 package dev.nioflow.infrastructure.reactive;
 
+import dev.nioflow.core.facade.Branch;
+import dev.nioflow.core.facade.Cases;
+import dev.nioflow.core.facade.Condition;
 import dev.nioflow.core.facade.Lane;
+import dev.nioflow.core.facade.LaneBranch;
+import dev.nioflow.core.facade.LaneCases;
+import dev.nioflow.core.facade.LaneCondition;
 import dev.nioflow.core.facade.NioFlow;
 import dev.nioflow.core.facade.NioStep;
+import dev.nioflow.core.facade.StepBranch;
+import dev.nioflow.core.facade.StepCases;
+import dev.nioflow.core.facade.StepCondition;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
@@ -37,6 +46,28 @@ class ReactiveMirrorTest {
     @Test
     void reactiveLaneOverridesEveryLaneMethod() {
         assertMirrors(Lane.class, ReactiveLane.class);
+    }
+
+    /**
+     * The nine branching builders — the families the covariance check reached only
+     * TRANSITIVELY before (that {@code NioFlow.when} returns a subtype, not that
+     * every method of Condition/Branch/Cases and their Step/Lane variants is
+     * itself mirrored). Add an overload to {@code Cases} and its reactive mirror
+     * inherits core's return type: a chain mid-{@code match()} silently drops back
+     * to the base and loses its reactive steps — exactly the rot this test exists
+     * to prevent, in the one family it did not cover (RFC 0035).
+     */
+    @Test
+    void everyBranchingBuilderMirrorsItsBase() {
+        assertMirrors(Condition.class, ReactiveCondition.class);
+        assertMirrors(Branch.class, ReactiveBranch.class);
+        assertMirrors(Cases.class, ReactiveCases.class);
+        assertMirrors(StepCondition.class, ReactiveStepCondition.class);
+        assertMirrors(StepBranch.class, ReactiveStepBranch.class);
+        assertMirrors(StepCases.class, ReactiveStepCases.class);
+        assertMirrors(LaneCondition.class, ReactiveLaneCondition.class);
+        assertMirrors(LaneBranch.class, ReactiveLaneBranch.class);
+        assertMirrors(LaneCases.class, ReactiveLaneCases.class);
     }
 
     /**

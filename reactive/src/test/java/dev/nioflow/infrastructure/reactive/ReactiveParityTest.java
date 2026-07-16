@@ -45,6 +45,8 @@ class ReactiveParityTest {
             assertTimeout(onMainLine(preferAsync, budget, hung), preferAsync, "main line");
             assertTimeout(inJustPipeline(preferAsync, budget, hung), preferAsync, "just() pipeline");
             assertTimeout(inLane(preferAsync, budget, hung), preferAsync, "when() lane");
+            assertTimeout(inStepMatch(preferAsync, budget, hung), preferAsync, "match() case");
+            assertTimeout(inFlowBranch(preferAsync, budget, hung), preferAsync, "when() on the flow");
             assertTimeout(inFork(preferAsync, budget, hung), preferAsync, "fork body");
         }
     }
@@ -59,6 +61,8 @@ class ReactiveParityTest {
             assertEmptyFailure(onMainLine(preferAsync, null, empty), preferAsync, "main line");
             assertEmptyFailure(inJustPipeline(preferAsync, null, empty), preferAsync, "just() pipeline");
             assertEmptyFailure(inLane(preferAsync, null, empty), preferAsync, "when() lane");
+            assertEmptyFailure(inStepMatch(preferAsync, null, empty), preferAsync, "match() case");
+            assertEmptyFailure(inFlowBranch(preferAsync, null, empty), preferAsync, "when() on the flow");
             assertEmptyFailure(inFork(preferAsync, null, empty), preferAsync, "fork body");
         }
     }
@@ -113,6 +117,43 @@ class ReactiveParityTest {
                     .then(lane -> Reactive.lane(lane).handleMono("probe", call).recover(capture(seen)))
                     .executeMono()
                     .block(BLOCK);
+            return seen.get();
+        } finally {
+            engine.shutdown(Duration.ofSeconds(1));
+        }
+    }
+
+    // A reactive step inside a match() case — the Cases/StepCases family, which
+    // the covariance test now covers structurally (RFC 0035) and this covers
+    // behaviourally: routing through match must apply the budget and fail on empty
+    // exactly as the main line does.
+    private Throwable inStepMatch(boolean preferAsync, Duration budget, Function<Integer, Mono<Integer>> call) {
+        DefaultNioEngine engine = new DefaultNioEngine();
+        try {
+            AtomicReference<Throwable> seen = new AtomicReference<>();
+            configure(engine, preferAsync, budget).just(1)
+                    .match()
+                    .is(value -> true, lane -> Reactive.lane(lane).handleMono("probe", call).recover(capture(seen)))
+                    .otherwise(lane -> lane.handle(value -> value))
+                    .executeMono()
+                    .block(BLOCK);
+            return seen.get();
+        } finally {
+            engine.shutdown(Duration.ofSeconds(1));
+        }
+    }
+
+    // A reactive step inside a when() declared on the FLOW (the shared definition),
+    // not on a just() pipeline — the ReactiveCondition/ReactiveBranch family.
+    private Throwable inFlowBranch(boolean preferAsync, Duration budget, Function<Integer, Mono<Integer>> call) {
+        DefaultNioEngine engine = new DefaultNioEngine();
+        try {
+            ReactiveFlow<Integer, Integer> flow = configure(engine, preferAsync, budget);
+            AtomicReference<Throwable> seen = new AtomicReference<>();
+            flow.when(value -> true)
+                    .then(lane -> Reactive.lane(lane).handleMono("probe", call).recover(capture(seen)))
+                    .otherwise(lane -> lane.handle(value -> value));
+            flow.just(1).executeMono().block(BLOCK);
             return seen.get();
         } finally {
             engine.shutdown(Duration.ofSeconds(1));

@@ -1,10 +1,10 @@
 # RFC 0035 — `ReactiveMirrorTest` must cover every builder pair, and one behaviour per family
 
-- **Status**: 📋 Proposed
+- **Status**: ✅ Implemented — option 1 (all 12 builder pairs) + option 2 (behavioural probes for match and flow-level when)
 - **Target**: `reactive` (tests: `ReactiveMirrorTest`, `ReactiveParityTest`)
 - **Depends on**: RFC 0008 (the module split that made the mirror cross-build), RFC 0030 (behavioural parity — this closes the hole 0030 left in the branch families)
 - **Severity**: **Medium** — a coverage hole in the exact test that exists to stop the mirror rotting; a dropped reactive step in a branch family fails no test
-- **Realized by**: driving `assertMirrors` over all 12 builder pairs (the `BUILDERS` set already exists), plus a behavioural parity probe position for `when`/`match` on the flow and step — not only lane and fork.
+- **Realized by**: `everyBranchingBuilderMirrorsItsBase` runs the existing `assertMirrors` over the nine branching pairs (`Condition`/`Branch`/`Cases` × flow/step/lane), and `ReactiveParityTest` gains a `match()`-case and a flow-level `when()` position so the budget/empty-Mono behaviour is probed through those families, not only the lane and fork.
 
 ## The finding
 
@@ -39,3 +39,34 @@ Recommended: **option 1 always** (it is nearly free and closes the structural ho
 - **Option 1 may surface a real, pre-existing gap** (a branch mirror already missing an override). That is the point — it is a latent bug, and a red test is how you find it before a user does. Fix the mirror, then the test stays a guard.
 - **Behavioural probes are hand-maintained** and can themselves drift (the RFC 0030 concern recurses). Option 3 mitigates this but at complexity cost; weigh it against how fast the mirror is actually growing.
 - **Reflection over generics erasure** (option 3) is fiddly; scope it to the budget-routing check where the payoff is concrete, not a general "impl does the right thing" oracle.
+
+## Results
+
+Shipped option 1 + option 2. Test-only — no `core`/`reactive` main source changed,
+so the authoritative analysis (which excludes test code) is untouched.
+
+- **Structural: all 12 builder pairs.** `everyBranchingBuilderMirrorsItsBase` runs
+  the same `assertMirrors` (unchanged) over `Condition`/`Branch`/`Cases`,
+  `StepCondition`/`StepBranch`/`StepCases`, `LaneCondition`/`LaneBranch`/`LaneCases`
+  against their `Reactive*` mirrors, alongside the existing NioFlow/NioStep/Lane
+  three. It passed on the current tree — the branch mirrors already narrow their
+  return types (`ReactiveCondition.then → ReactiveBranch`, `ReactiveCases.is →
+  ReactiveCases`, …), so there was no live gap; the value is the guard, which now
+  fails the build if a future overload on any branch builder is left un-mirrored
+  (the failure mode the three-pair test could not see).
+
+- **Behavioural: match() and flow-level when().** `ReactiveParityTest` gained an
+  `inStepMatch` position (a reactive step inside `just().match().is(...)`, the
+  Cases/StepCases family that had ZERO behavioural coverage) and an `inFlowBranch`
+  position (a `when()` declared on the shared definition, the flow
+  `Condition`/`Branch` family). Both run under the two existing properties — a
+  hung Mono under a `defaultBudget` times out, an empty Mono fails with
+  `EmptyMonoException` — across the block and preferAsync paths. So a step that
+  mirrors structurally but forgets its budget/empty wiring in the match or the
+  flow-branch family now fails too, not only in the lane and fork.
+
+- **Not done: option 3** (a reflective budget-routing probe). The structural check
+  now covers every family and the behavioural probe exercises the shared lane
+  budget path through both new families; a reflective oracle is more machinery than
+  the current mirror growth warrants. It stays specified above if the mirror keeps
+  expanding.
