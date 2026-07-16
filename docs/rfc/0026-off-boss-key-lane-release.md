@@ -1,10 +1,11 @@
 # RFC 0026 — The off-boss key-lane release at shutdown must not recurse or race
 
-- **Status**: 🔵 Proposed
-- **Target**: `core/` (`DefaultNioEngine.Execution.releaseKey`, and the off-boss `fail()` path in `resumeOnBoss`)
+- **Status**: ✅ Implemented — successor handoff posted to the boss, iterative drain when the boss is gone, lane queue made concurrent; 2 tests
+- **Target**: `core/` (`DefaultNioEngine.Execution.releaseKey`, `KeyLane.waiting`)
 - **Depends on**: RFC 0024 (the atomic terminal — closes the double-release half of this finding)
 - **Severity**: **Medium** — dedicated-engine shutdown with a keyed backlog only; contradicts two stated invariants at once
 - **Sibling of**: RFC 0024 (same off-boss shutdown corner)
+- **Realized by**: `releaseKey` now hands the lane to its successor as a fresh boss task (`boss.execute`) instead of an inline `advance`, and on rejection (the boss is gone) drains the whole backlog in `drainLaneOnShutdown` — a loop, never recursion. `KeyLane.waiting` changed from `ArrayDeque` to `ConcurrentLinkedQueue` so the off-boss `poll` is safe (FIFO and lock-freedom preserved). Test hook `keyLaneDepth(key)` added. Tests: `DefaultNioEngineKeyedShutdownTest`.
 
 ## The finding
 
@@ -127,3 +128,36 @@ Extend `KeyedExecutionStressTest` and add `KeyedShutdownDrainTest`:
 - **Interaction with RFC 0024.** These two must land together or 0024 first;
   0024 alone leaves the recursion, this alone leaves the double-entry. The index
   records the ordering.
+
+## Results
+
+Shipped both layers, and the fix turned out to help the *steady-state* path too.
+
+- **Posting the successor to the boss is universally correct, not just a
+  shutdown fix.** The inline `advance` recursed one frame per queued execution —
+  off-boss during shutdown (a worker's stack, unprotected) *and*, it turns out,
+  on the boss itself for an all-inline (`handleSync`) chain, whose successors run
+  to completion without ever yielding to the boss loop. Posting each handoff as a
+  fresh boss task makes both O(1) stack. FIFO is unchanged (a same-key arrival
+  still finds the lane active and queues behind), confirmed by the existing keyed
+  tests and a new parked-head ordering test.
+
+- **The concurrent queue closes the visibility race.** During `shutdown` there is
+  a real window where the boss consumer is still draining queued `run()` tasks
+  that `add` to `waiting` while a rejected `resumeOnBoss` reaches `poll` from a
+  worker. `ConcurrentLinkedQueue` makes that safe with proper happens-before,
+  where the `ArrayDeque` gave a torn or stale read; it stays lock-free, so the
+  keyed lane's single-writer steady state pays nothing structural.
+
+- **The test is not vacuous — verified.** Enrolling a 20 000-deep same-key
+  backlog behind a parked head, then cancelling the head off the boss, exercises
+  the exact cascade. Temporarily restoring the inline-recursive release makes the
+  test fail (the backlog is left un-drained / the stack blows), and the iterative
+  version drains it to zero — so the test genuinely guards the regression. A
+  second test pins that the posted handoff keeps strict per-key FIFO.
+
+Half of this landed for free with RFC 0024: the atomic terminal already stopped
+the *double* release, so this RFC only had to make the *single* release
+recursion-free and race-free. `cd core && ./gradlew test`, `cd reactive &&
+./gradlew test`, and the `tests/` keyed stress suite are all green; SonarLint
+diff over `core` is empty.

@@ -23,7 +23,6 @@ import dev.nioflow.core.model.Splice;
 import dev.nioflow.core.model.Stage;
 
 import java.time.Duration;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -35,6 +34,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -164,7 +164,14 @@ public class DefaultNioEngine implements NioEngine {
     private final ConcurrentHashMap<Object, KeyLane> keyLanes = new ConcurrentHashMap<>();
 
     private static final class KeyLane {
-        private final ArrayDeque<Execution> waiting = new ArrayDeque<>();
+        // A ConcurrentLinkedQueue, not an ArrayDeque (RFC 0026): in steady state
+        // only the key's boss touches it, but during dedicated-engine shutdown a
+        // rejected resumeOnBoss can reach it from a worker while the boss is still
+        // draining queued run() tasks that add to it. FIFO is unchanged (add to
+        // tail, poll from head), and it stays lock-free — the affinity that keeps
+        // it single-writer in steady state is preserved; this only makes the
+        // shutdown-window access safe.
+        private final ConcurrentLinkedQueue<Execution> waiting = new ConcurrentLinkedQueue<>();
         private boolean active;
     }
 
@@ -677,6 +684,12 @@ public class DefaultNioEngine implements NioEngine {
         return activeExecutions.sum();
     }
 
+    // Test hook: how many executions are queued behind a key's active head.
+    int keyLaneDepth(Object key) {
+        KeyLane lane = keyLanes.get(key);
+        return lane == null ? 0 : lane.waiting.size();
+    }
+
     // Caller-thread affinity instead of a shared round-robin cursor: no atomic
     // on the call() path, and a request thread keeps landing on the same boss
     // (cache locality). Sequential thread ids spread across the pool at least
@@ -1115,11 +1128,12 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
 
-        // Called exactly once from complete()/fail(): hand the lane to the
-        // next same-key execution, or retire it. Normally on the key's boss;
-        // the only off-boss caller is the shutdown-rejection path, where the
-        // boss is gone and nothing can race — the successor unwinds through
-        // the same rejections until the lane drains.
+        // Called exactly once from complete()/fail(): hand the lane to the next
+        // same-key execution, or retire it. Normally on the key's boss; the only
+        // off-boss caller is the shutdown-rejection path (a rejected resumeOnBoss
+        // on a worker, or a rejected cancel on the caller), and then the boss is
+        // gone. See releaseKey's body for how each case is handled without
+        // recursion or a racy deque read (RFC 0026).
         private void releaseKey() {
             KeyLane lane = keyLanes.get(key);
             if (lane == null) {
@@ -1128,10 +1142,41 @@ public class DefaultNioEngine implements NioEngine {
             Execution next = lane.waiting.poll();
             if (next == null) {
                 keyLanes.remove(key);
-            } else {
-                next.laneHeld = true;
-                next.advance(0, next.input);
+                return;
             }
+            // Hand the lane to the successor as a FRESH boss task, never an inline
+            // call. A successor advancing inside its predecessor's terminal frame
+            // recurses one stack frame per queued execution — the very thing the
+            // iterative-advance invariant forbids — and off-boss (shutdown) that
+            // frame is a worker's, whose stack the invariant never protected.
+            // Posting also keeps it iterative in steady state for an all-inline
+            // (handleSync) chain, whose successors would otherwise recurse on the
+            // boss stack.
+            try {
+                boss.execute(() -> {
+                    next.laneHeld = true;
+                    next.advance(0, next.input);
+                });
+            } catch (RejectedExecutionException gone) {
+                // The boss is gone: fail the whole remaining backlog iteratively.
+                drainLaneOnShutdown(lane, next, gone);
+            }
+        }
+
+        // Boss gone (dedicated-engine shutdown): fail the successor and every
+        // execution still queued behind it in a LOOP, never recursively. None of
+        // them is the lane head (laneHeld stays false, because the boss task that
+        // would set it never ran), so their fail() does not re-enter releaseKey —
+        // this method owns the drain. The ConcurrentLinkedQueue makes the poll
+        // safe from this off-boss thread; the lane is retired at the end so
+        // activeKeyLanes() reaches zero.
+        private void drainLaneOnShutdown(KeyLane lane, Execution head, Throwable cause) {
+            Execution current = head;
+            while (current != null) {
+                current.fail(cause);
+                current = lane.waiting.poll();
+            }
+            keyLanes.remove(key);
         }
 
         /**
