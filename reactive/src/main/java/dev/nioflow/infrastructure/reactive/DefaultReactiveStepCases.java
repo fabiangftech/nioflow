@@ -17,11 +17,11 @@ class DefaultReactiveStepCases<T, O> extends DefaultReactiveStep<T, O> implement
 
     @Override
     public ReactiveStepCases<T, O> is(Predicate<T> predicate, UnaryOperator<Lane<T>> lane) {
-        return new DefaultReactiveStepCases<>(cases.is(predicate, Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
+        return new DefaultReactiveStepCases<>(cases.is(predicate, Lanes.budgeted(lane, config)), config);
     }
 
     @Override
     public ReactiveStep<T, O> otherwise(UnaryOperator<Lane<T>> lane) {
-        return new DefaultReactiveStep<>(cases.otherwise(Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
+        return new DefaultReactiveStep<>(cases.otherwise(Lanes.budgeted(lane, config)), config);
     }
 }

@@ -8,23 +8,24 @@ import java.util.List;
 
 /**
  * What a reactive flow declares ONCE and everything it hands out inherits: the
- * default budget of its reactive steps, and the context keys it bridges from the
- * Reactor subscriber context.
+ * default budget of its reactive steps, the context keys it bridges from the
+ * Reactor subscriber context, whether reactive steps prefer the async path, and
+ * whether an unbudgeted reactive step is a build-time error.
  *
  * <p>It rides along every re-wrap — into {@code just()}'s pipeline, into a
  * branch's lane, into a fork's segment — which is what makes "declared once, on
  * the flow" true rather than aspirational. Immutable, and {@link #NONE} is the
  * shared empty one: a flow that declares neither pays for neither.
  */
-record ReactiveConfig(Duration budget, List<Context.Key<?>> keys, boolean preferAsync) {
+record ReactiveConfig(Duration budget, List<Context.Key<?>> keys, boolean preferAsync, boolean requireBudget) {
 
-    static final ReactiveConfig NONE = new ReactiveConfig(null, List.of(), false);
+    static final ReactiveConfig NONE = new ReactiveConfig(null, List.of(), false, false);
 
     ReactiveConfig withBudget(Duration budget) {
         if (budget == null || budget.isZero() || budget.isNegative()) {
             throw new IllegalArgumentException("defaultBudget must be a positive duration, was " + budget);
         }
-        return new ReactiveConfig(budget, keys, preferAsync);
+        return new ReactiveConfig(budget, keys, preferAsync, requireBudget);
     }
 
     /**
@@ -36,7 +37,40 @@ record ReactiveConfig(Duration budget, List<Context.Key<?>> keys, boolean prefer
      * fine at low concurrency.
      */
     ReactiveConfig withPreferAsync() {
-        return preferAsync ? this : new ReactiveConfig(budget, keys, true);
+        return preferAsync ? this : new ReactiveConfig(budget, keys, true, requireBudget);
+    }
+
+    /**
+     * Turns an unbudgeted reactive step into a BUILD-TIME error: with this on,
+     * every {@code handleMono}/{@code adaptMono}/{@code handleMonoAsync}/
+     * {@code adaptMonoAsync}/{@code adaptFlux}/{@code fanOutMono} that resolves to
+     * a null budget (none of its own and no {@link #withBudget defaultBudget}) is
+     * rejected where the caller's line still exists. Off by default so a
+     * {@code Mono.just(...)} chain stays frictionless; on, it is the mechanical
+     * guarantee that a network-facing flow cannot leak on a hung call. See RFC 0028.
+     */
+    ReactiveConfig withRequireBudget() {
+        return requireBudget ? this : new ReactiveConfig(budget, keys, preferAsync, true);
+    }
+
+    /**
+     * The effective budget for a reactive step: the step's own if it declared
+     * one, otherwise the flow default. When {@link #withRequireBudget
+     * requireBudget} is on and neither exists, this is a BUILD-TIME error — a
+     * reactive step with no budget can hang forever (a parked worker on the
+     * blocking path; a pinned execution and a leaked connection on the async
+     * path), and requireBudget() makes that a build failure instead of a
+     * production leak. See RFC 0028.
+     */
+    Duration budgetFor(String step, Duration stepBudget) {
+        Duration effective = stepBudget != null ? stepBudget : budget;
+        if (effective == null && requireBudget) {
+            throw new IllegalStateException("Reactive step '" + step + "' has no budget and requireBudget() is on:"
+                    + " give it one (e.g. handleMono(name, call, budget)) or declare a defaultBudget(...) on the flow."
+                    + " A reactive step with no budget can hang forever — a parked worker on the blocking path,"
+                    + " a pinned execution and connection on the async path.");
+        }
+        return effective;
     }
 
     /**
@@ -60,6 +94,6 @@ record ReactiveConfig(Duration budget, List<Context.Key<?>> keys, boolean prefer
             }
             copy.add(key);
         }
-        return new ReactiveConfig(budget, List.copyOf(copy), preferAsync);
+        return new ReactiveConfig(budget, List.copyOf(copy), preferAsync, requireBudget);
     }
 }

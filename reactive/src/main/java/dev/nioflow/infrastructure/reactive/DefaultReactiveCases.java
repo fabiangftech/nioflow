@@ -17,11 +17,11 @@ class DefaultReactiveCases<I, O> extends DefaultReactiveFlow<I, O> implements Re
 
     @Override
     public ReactiveCases<I, O> is(Predicate<I> predicate, UnaryOperator<Lane<I>> lane) {
-        return new DefaultReactiveCases<>(cases.is(predicate, Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
+        return new DefaultReactiveCases<>(cases.is(predicate, Lanes.budgeted(lane, config)), config);
     }
 
     @Override
     public ReactiveFlow<I, O> otherwise(UnaryOperator<Lane<I>> lane) {
-        return new DefaultReactiveFlow<>(cases.otherwise(Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
+        return new DefaultReactiveFlow<>(cases.otherwise(Lanes.budgeted(lane, config)), config);
     }
 }

@@ -53,10 +53,11 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget) {
+        Duration effective = config.budgetFor(name, budget);
         if (config.preferAsync()) {
-            return handleMonoAsync(name, call, budget);
+            return handleMonoAsync(name, call, effective);
         }
-        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
+        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), effective))));
     }
 
     @Override
@@ -66,11 +67,12 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMono(String name, Function<T, Mono<T>> call, Duration budget, Retry retry) {
+        Duration effective = config.budgetFor(name, budget);
         if (config.preferAsync()) {
-            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget, retry));
+            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), effective, retry));
         }
         return wrap(delegate.handle(name,
-                value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
+                value -> Blocking.await(Blocking.budgeted(call.apply(value), effective)), retry));
     }
 
     @Override
@@ -80,7 +82,7 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public ReactiveStep<T, O> handleMonoAsync(String name, Function<T, Mono<T>> call, Duration budget) {
-        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget));
+        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), config.budgetFor(name, budget)));
     }
 
     @Override
@@ -90,7 +92,8 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<R, O> adaptMonoAsync(Function<T, Mono<R>> call, Duration budget) {
-        return retyped(delegate.adaptAsync(value -> call.apply(value).toFuture(), budget));
+        return retyped(delegate.adaptAsync(value -> call.apply(value).toFuture(),
+                config.budgetFor("adaptMonoAsync", budget)));
     }
 
     @Override
@@ -131,30 +134,34 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<R, O> adaptMono(Function<T, Mono<R>> call, Duration budget) {
+        Duration effective = config.budgetFor("adaptMono", budget);
         if (config.preferAsync()) {
-            return adaptMonoAsync(call, budget);
+            return adaptMonoAsync(call, effective);
         }
-        return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
+        return retyped(delegate.adapt(value -> Blocking.await(Blocking.budgeted(call.apply(value), effective))));
     }
 
     /** @deprecated see {@link ReactiveStep#adaptFlux(Function)} — prefer the bounded overload. */
     @Override
     @Deprecated(forRemoval = false)
     public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call) {
+        Duration effective = config.budgetFor("adaptFlux", null);
         return retyped(delegate.adapt(
-                value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), config.budget()))));
+                value -> Blocking.await(Blocking.budgeted(call.apply(value).collectList(), effective))));
     }
 
     @Override
     public <R> ReactiveStep<List<R>, O> adaptFlux(Function<T, Flux<R>> call, int maxItems) {
         Blocking.checkMaxItems(maxItems);
-        return retyped(delegate.adapt(value -> Blocking.awaitBounded(call.apply(value), maxItems, config.budget())));
+        Duration effective = config.budgetFor("adaptFlux", null);
+        return retyped(delegate.adapt(value -> Blocking.awaitBounded(call.apply(value), maxItems, effective)));
     }
 
     @Override
     public <R, C> ReactiveStep<C, O> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                                 Function<List<R>, C> join) {
-        return retyped(delegate.fanOutAsync(name, Blocking.asyncBranches(branches, config.budget()), join));
+        return retyped(delegate.fanOutAsync(name,
+                Blocking.asyncBranches(branches, config.budgetFor(name, null)), join));
     }
 
     /**
@@ -309,17 +316,17 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
 
     @Override
     public <R> ReactiveStep<T, O> fork(Segment<T, R> sub) {
-        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget(), config.preferAsync())));
+        return wrap(delegate.fork(Lanes.budgeted(sub, config)));
     }
 
     @Override
     public <R> ReactiveStep<T, O> fork(String name, Segment<T, R> sub) {
-        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget(), config.preferAsync())));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, config)));
     }
 
     @Override
     public <R> ReactiveStep<R, O> use(Segment<T, R> segment) {
-        return retyped(delegate.use(Lanes.budgeted(segment, config.budget(), config.preferAsync())));
+        return retyped(delegate.use(Lanes.budgeted(segment, config)));
     }
 
     @Override

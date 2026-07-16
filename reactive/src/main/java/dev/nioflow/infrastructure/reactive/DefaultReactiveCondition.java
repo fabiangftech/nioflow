@@ -17,6 +17,6 @@ class DefaultReactiveCondition<I, O> implements ReactiveCondition<I, O> {
 
     @Override
     public ReactiveBranch<I, O> then(UnaryOperator<Lane<I>> lane) {
-        return new DefaultReactiveBranch<>(delegate.then(Lanes.budgeted(lane, config.budget(), config.preferAsync())), config);
+        return new DefaultReactiveBranch<>(delegate.then(Lanes.budgeted(lane, config)), config);
     }
 }

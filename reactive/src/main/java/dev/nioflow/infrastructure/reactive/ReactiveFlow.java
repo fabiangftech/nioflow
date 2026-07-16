@@ -50,12 +50,18 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      *
      * <p><b>Declare one if the flow talks to the network.</b> The engine has no
      * cancellation: a Mono that never completes — a hung connection, a broken
-     * server, a Sinks.One nobody emits into — parks its virtual worker for the
-     * life of the JVM, and nothing can ever free it. A default budget makes that
-     * impossible: the subscription is cancelled (reactor-netty releases the
-     * connection) and the failure reaches {@code recover()} as a
+     * server, a Sinks.One nobody emits into — leaks for the life of the JVM, and
+     * nothing can ever free it. The footprint differs by path but the leak is
+     * equally permanent: on the blocking path (the default) it <b>parks a virtual
+     * worker</b> forever; on the async path ({@link #preferAsync}, {@code
+     * handleMonoAsync}) it <b>pins the execution and leaks the connection</b>,
+     * with no parked thread to make it visible. A default budget closes BOTH: the
+     * subscription is cancelled (reactor-netty releases the connection) and the
+     * failure reaches {@code recover()} as a
      * {@link java.util.concurrent.TimeoutException}, exactly like an explicit
-     * {@code handleMono(name, call, budget)}.
+     * {@code handleMono(name, call, budget)}. To make an unbudgeted reactive step
+     * a build error rather than a documentation footnote, see {@link
+     * #requireBudget()}.
      *
      * <p>Not mandatory, on purpose: a {@code Mono.just(...)} or an in-memory
      * cache lookup does not need one, and a legitimately long step (an export, a
@@ -126,6 +132,25 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      * subscription on expiry, where the block path only abandons the worker.
      */
     ReactiveFlow<I, O> preferAsync();
+
+    /**
+     * Makes an unbudgeted reactive step a BUILD-TIME error instead of a runtime
+     * leak. With this on, every {@code handleMono}/{@code adaptMono}/{@code
+     * handleMonoAsync}/{@code adaptMonoAsync}/{@code adaptFlux}/{@code fanOutMono}
+     * — on this flow, in the pipelines its {@code just()} opens, inside its
+     * branches and inside its forks — that resolves to a null budget (neither a
+     * per-step budget nor a {@link #defaultBudget}) is rejected at assembly, where
+     * the caller's line number still exists.
+     *
+     * <p>Off by default, on purpose: a {@code Mono.just(...)} or an in-memory
+     * cache lookup genuinely needs no budget, and forcing one on every reactive
+     * step would be friction the fast path does not deserve. Turn it on when the
+     * flow talks to the network and you want the safe thing to be mandatory — the
+     * facade cannot tell a remote call from a {@code Mono.just}, so the guarantee
+     * is opt-in and total rather than guessed. The same build-time stance {@code
+     * propagate()} and the bounded {@code adaptFlux} already take.
+     */
+    ReactiveFlow<I, O> requireBudget();
 
     // ── the reactive steps ───────────────────────────────────────────────
 

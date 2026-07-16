@@ -68,6 +68,11 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
         return new DefaultReactiveFlow<>(delegate, config.withPreferAsync());
     }
 
+    @Override
+    public ReactiveFlow<I, O> requireBudget() {
+        return new DefaultReactiveFlow<>(delegate, config.withRequireBudget());
+    }
+
     // The step a pipe hands each element: the flow's config plus preferAsync, so a
     // handleMono in the pipeline holds a future instead of parking a worker — the
     // ingestion-loop default (RFC 0015). Nothing else about the step changes.
@@ -84,10 +89,11 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget) {
+        Duration effective = config.budgetFor(name, budget);
         if (config.preferAsync()) {
-            return handleMonoAsync(name, call, budget);
+            return handleMonoAsync(name, call, effective);
         }
-        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), budget))));
+        return wrap(delegate.handle(name, value -> Blocking.await(Blocking.budgeted(call.apply(value), effective))));
     }
 
     @Override
@@ -97,11 +103,12 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public ReactiveFlow<I, O> handleMono(String name, Function<I, Mono<I>> call, Duration budget, Retry retry) {
+        Duration effective = config.budgetFor(name, budget);
         if (config.preferAsync()) {
-            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget, retry));
+            return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), effective, retry));
         }
         return wrap(delegate.handle(name,
-                value -> Blocking.await(Blocking.budgeted(call.apply(value), budget)), retry));
+                value -> Blocking.await(Blocking.budgeted(call.apply(value), effective)), retry));
     }
 
     @Override
@@ -113,7 +120,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     // cancelling a mono.toFuture() cancels the subscription. One mechanism.
     @Override
     public ReactiveFlow<I, O> handleMonoAsync(String name, Function<I, Mono<I>> call, Duration budget) {
-        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), budget));
+        return wrap(delegate.handleAsync(name, value -> call.apply(value).toFuture(), config.budgetFor(name, budget)));
     }
 
     @Override
@@ -140,7 +147,8 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     @Override
     public <R> ReactiveFlow<I, O> fanOutMono(String name, List<Function<I, Mono<R>>> branches,
                                              Function<List<R>, I> join) {
-        return wrap(delegate.fanOutAsync(name, Blocking.asyncBranches(branches, config.budget()), join));
+        return wrap(delegate.fanOutAsync(name,
+                Blocking.asyncBranches(branches, config.budgetFor(name, null)), join));
     }
 
     // ── a Flux through the flow: Reactor's operators do the backpressure ──
@@ -381,22 +389,22 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
 
     @Override
     public <R> ReactiveFlow<I, O> fork(Segment<I, R> sub) {
-        return wrap(delegate.fork(Lanes.budgeted(sub, config.budget(), config.preferAsync())));
+        return wrap(delegate.fork(Lanes.budgeted(sub, config)));
     }
 
     @Override
     public <R> ReactiveFlow<I, O> fork(String name, Segment<I, R> sub) {
-        return wrap(delegate.fork(name, Lanes.budgeted(sub, config.budget(), config.preferAsync())));
+        return wrap(delegate.fork(name, Lanes.budgeted(sub, config)));
     }
 
     @Override
     public ReactiveFlow<I, O> use(Segment<I, I> segment) {
-        return wrap(delegate.use(Lanes.budgeted(segment, config.budget(), config.preferAsync())));
+        return wrap(delegate.use(Lanes.budgeted(segment, config)));
     }
 
     @Override
     public ReactiveFlow<I, O> use(String region, Segment<I, I> segment) {
-        return wrap(delegate.use(region, Lanes.budgeted(segment, config.budget(), config.preferAsync())));
+        return wrap(delegate.use(region, Lanes.budgeted(segment, config)));
     }
 
     @Override
@@ -430,7 +438,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     // executeMono is a later step (RFC 0014).
     @Override
     public <R> Pipeline<I, R> pipeline(Segment<I, R> segment) {
-        return delegate.pipeline(Lanes.budgeted(segment, config.budget(), config.preferAsync()));
+        return delegate.pipeline(Lanes.budgeted(segment, config));
     }
 
     @Override

@@ -1,10 +1,11 @@
 # RFC 0028 — Close the `preferAsync` no-budget leak (and tell the truth about it)
 
-- **Status**: 🔵 Proposed
-- **Target**: `reactive/` (`DefaultReactiveStep`/`Flow`/`Lane` `handleMonoAsync` paths, `ReactiveConfig`/`ReactiveFlow.defaultBudget` docs)
+- **Status**: ✅ Implemented — `requireBudget()` opt-in enforced centrally across all four entry points; the lane path unified onto `ReactiveConfig`; docs corrected; 9 tests
+- **Target**: `reactive/` (`ReactiveConfig.budgetFor`, `ReactiveFlow.requireBudget`, the `DefaultReactive{Flow,Step,Lane}` reactive-step paths, the lane mirrors, `defaultBudget` docs)
 - **Depends on**: RFC 0003 (`defaultBudget`, the safety property this closes a hole in), RFC 0006 (the async stage the leak lives on)
 - **Severity**: **Medium-High** — a permanent resource leak on the exact escape hatch (`preferAsync`) sold to *avoid* the leak it warns about
 - **Sibling of**: RFC 0027 (the other reactive-bridge hole)
+- **Realized by**: `ReactiveConfig.budgetFor(step, stepBudget)` — the single place a reactive step resolves its effective budget and, when `requireBudget()` is on and none exists, rejects it at build time; `ReactiveFlow.requireBudget()` + `ReactiveConfig.withRequireBudget()`; every reactive step in `DefaultReactiveFlow`/`Step`/`Lane` routed through `budgetFor`. The lane path (`DefaultReactiveLane` + its condition/cases/branch mirrors, `Lanes.budgeted`) was unified from loose `(Duration budget, boolean preferAsync)` fields onto the `ReactiveConfig` record, which is what carries `requireBudget` into a branch and a fork. Tests: `ReactivePreferAsyncBudgetTest`. Docs: `ReactiveFlow.defaultBudget`/`requireBudget` javadoc.
 
 ## The finding
 
@@ -118,3 +119,43 @@ worker is the thing that makes users think `preferAsync` is safe when it isn't.
   that duplication so this class of "fixed in two of three places" bug stops
   recurring. Until then, the test above must exercise all three entry points
   (main line, `just()` pipeline, inside a lane/fork).
+
+## Results
+
+Implementing the draft sharpened it in one important way, and did one piece of
+RFC 0030's work as a prerequisite.
+
+- **Part 1 ("thread the default to the async path") was already true.** Tracing
+  the code showed `config.budget()` already reaches `handleMonoAsync` on every
+  path — the async leak is *only* the case where no budget is declared anywhere,
+  so the resolved budget is null and core reads that as "no timeout". So the
+  load-bearing half ("declare `defaultBudget` once → both paths safe") needed no
+  change; it needed a **test** (`preferAsyncWithADefaultBudgetCancelsAHungAsyncCallInsteadOfLeaking`)
+  and the **doc correction** naming the async footprint, both of which shipped.
+  The real new feature is the truly-absent-budget guard.
+
+- **The guard is centralized, not copied.** `requireBudget()` sets one flag on
+  `ReactiveConfig`, and every reactive step resolves its budget through the
+  single `ReactiveConfig.budgetFor(step, stepBudget)` — which throws at build time
+  when the effective budget is null and the flag is on. There is exactly one
+  enforcement point, so the "fixed in two of three copies" risk the draft worried
+  about does not apply to *this* logic: Flow, Step and Lane all call the same
+  method. Verified in all four positions — main line, `just()` pipeline, a branch
+  lane, a fork body — each rejected at assembly with the step named.
+
+- **The lane path was unified onto `ReactiveConfig` (a down payment on RFC 0030).**
+  The lane mirrors carried the budget as loose `(Duration budget, boolean
+  preferAsync)` fields threaded by hand through `DefaultReactiveLane`, its
+  condition/cases/branch subclasses, `Lanes.budgeted` and `Reactive.lane`. Adding
+  `requireBudget` as a *third* loose field would have tripled exactly the
+  duplication RFC 0030 exists to remove. Instead the pair was replaced with the
+  `ReactiveConfig` record the flow/step side already carries, so `requireBudget`
+  (and any future config knob) reaches a branch and a fork **correct by
+  construction**, and the lane path stopped re-deriving what the flow already
+  knew. The refactor added **zero** new SonarLint findings and left the whole
+  reactive suite (including `ReactiveMirrorTest`) green.
+
+`cd reactive && ./gradlew test` green; SonarLint diff over `reactive` is empty
+(the refactor added nothing; the new test is clean); the Spring WebFlux example
+still compiles against the changed facade (the only API change is the additive
+`requireBudget()` on `ReactiveFlow`).
