@@ -31,6 +31,7 @@ fast-path measured neutral and was dropped).
 | [0018](0018-docs-refresh-2.1.0.md) | Documentation refresh for the 2.1.0 release | ✅ Implemented | docs, versions | 0009, 0011–0017 |
 | [0019](0019-docs-google-analytics.md) | Google Analytics for the docs site (per-page tracking on a SPA) | ✅ Implemented | docs | 0018 |
 | [0020](0020-unit-test-bug-hunt.md) | Bug-hunting with deterministic unit tests in `core/` and `reactive/` | ✅ Implemented | core, reactive (tests) | 0001–0017 |
+| [0021](0021-jmh-regression-gates.md) | Regression-hunting with JMH gates in `tests/` | 📝 Proposed | tests | 0009, 0011–0017, 0020 |
 
 **Bold** = hard dependency: the RFC cannot ship until its parent does. A plain
 number means the RFC builds on the parent's design but could be sequenced with
