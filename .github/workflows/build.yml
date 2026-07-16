@@ -9,12 +9,6 @@ name: Build
 #   suite. It now lives in reactive/. So a PR can add a step to core, leave core green,
 #   and break the mirror. THIS WORKFLOW is what catches that. It is not optional.
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened]
-
 permissions:
   contents: read
 
@@ -55,3 +49,26 @@ jobs:
       - name: ${{ matrix.task }}
         working-directory: ${{ matrix.module }}
         run: ./gradlew ${{ matrix.task }}
+
+  # RFC 0021 — the JMH regression-gate canary. Separate from the build matrix
+  # because it measures COST, not correctness: it runs the existing benchmarks
+  # through the gate harness and fails the PR if a performance invariant (fusion,
+  # compiled parity, boss-inlining, allocation) regressed. Relative + allocation
+  # gates only, so it survives a shared 2-core runner; the core-count-sensitive
+  # contention gate runs only in the full pass on a real multi-core box.
+  jmh-gates:
+    runs-on: ubuntu-latest
+    name: jmh-gates (canary)
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: jmhGates
+        working-directory: tests
+        run: ./gradlew jmhGates

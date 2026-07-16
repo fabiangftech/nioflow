@@ -42,3 +42,18 @@ tasks.register('jmh', JavaExec) {
     def custom = providers.gradleProperty('jmhArgs').orNull
     args(custom ? custom.split(' ') as List : ['-f', '1', '-wi', '3', '-i', '5', '-r', '1s', '-w', '1s'])
 }
+
+// RFC 0021 — JMH regression gates (ratio + allocation). Fails the build if a
+// performance invariant regresses.
+//   ./gradlew jmhGates                  → fast canary (catches ~2x regressions)
+//   ./gradlew jmhGates -PgatesMode=full → tighter full pass
+tasks.register('jmhGates', JavaExec) {
+    group = 'benchmark'
+    description = 'Runs the JMH regression gates (RFC 0021)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.nioflow.gates.JmhGates'
+    def mode = providers.gradleProperty('gatesMode').orNull
+    if (mode) {
+        args(mode)
+    }
+}

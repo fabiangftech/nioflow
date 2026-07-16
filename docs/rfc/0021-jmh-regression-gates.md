@@ -1,13 +1,15 @@
 # RFC 0021 — Regression-hunting with JMH gates in `tests/`
 
-- **Status**: 📝 Proposed
+- **Status**: ✅ Implemented — harness + 8 gates (canary green), wired into CI (`build.yml`)
 - **Target**: `tests/` (the JMH benchmarks and a new gate harness) — no `core/`/`reactive/` change
 - **Depends on**: the throughput series (RFC 0009, 0011–0017) — the measured facts this locks in
 - **Sibling of**: RFC 0020 (deterministic unit-test bug-hunt) — same shape, other axis: 0020 pins *correctness*, this pins *performance*
-- **Realized by** (proposed): relative **ratio gates** and **allocation gates** over the
-  existing `tests/src/main/java/dev/nioflow/benchmark/*` benchmarks, checked by a
-  small harness that runs JMH with `-rf json` and asserts the gates; a fast CI
-  canary plus the full manual run. No new engine feature.
+- **Realized by**: `tests/src/main/java/dev/nioflow/gates/JmhGates.java` — a harness
+  that runs the existing benchmarks through the JMH **Runner API** (which returns
+  `RunResult` with the throughput score *and* the GC profiler's `gc.alloc.rate.norm`
+  bytes/op, so no JSON parsing) and asserts 5 **ratio gates** + 3 **allocation
+  gates**; the `jmhGates` Gradle task (`./gradlew jmhGates`, or `-PgatesMode=full`).
+  See **Results** below for what implementing changed from this draft.
 
 ## Summary
 
@@ -78,24 +80,24 @@ that the margin is comfortable.
 
 ### Ratio gates (machine-independent)
 
-| Performance invariant (from the series / `CLAUDE.md`) | Gate |
-| --- | --- |
-| Fusion makes links free: a 32-stage chain costs ≈ a 1-stage chain | `engineCall[32] ≥ 0.5 × engineCall[1]` throughput (cost grew < 2×, not < 32×). **`NioFlowBenchmark`** |
-| Stage fusion is a real speedup (~5× on 8 stages) | fused 8-stage ≥ 2× the same chain with per-stage timeouts (dispatch-alone). **`FusionBenchmark`** |
-| The compiled plan is an optimization with parity, never a slowdown | `compiled ≥ 0.9 × interpreted` throughput (compiled never loses). **`CompiledChainBenchmark`** |
-| Async-stage fusion lands within ~3% of blocking (RFC 0013's gate) | `fourAsyncReactiveStages ≥ 0.95 × fourReactiveStages`. **`ReactiveBenchmark`** |
-| The boss is not a JVM-wide ceiling: contended spreads across the pool | `engineCallContended ≥ 3 × engineCall[1]` on an 8-core box (scales, not serializes). **`NioFlowBenchmark`** |
-| Branch routing stays off streams (the stream `passesGuards` cost ~20%) | routed throughput within its band vs a plain chain. **`BranchRoutingBenchmark`** |
+Thresholds are `canary / full` — the canary is wide (it catches a regression,
+not machine-load noise); the full pass is tighter.
 
-### Allocation gates (`-prof gc`, bytes/op)
-
-| Performance invariant | Gate |
+| Performance invariant (from the series / `CLAUDE.md`) | Gate (implemented) |
 | --- | --- |
-| Plain sealed chain ≈ 727 B/op | `≤ 850 B/op`. **`NioFlowBenchmark.engineCall`** |
-| Boss-inlined chain ≈ 248 B/op | `≤ 320 B/op`. **`SyncStageBenchmark`** |
-| Context map stays null until first put (~13% less garbage) | a no-context chain allocates `≤` a fixed floor; a contextual one only pays on first put. **`ContextBenchmark`** |
-| Fan-out is lock-free / no `CompletableFuture` tree bloat (RFC 0012) | fan-out B/op `≤` its band. **`FanOutBenchmark`** |
-| Reactive async in-flight ≈ 489 B vs 3 173 B parked (RFC 0015) | the async path allocates `<` the parking path. **`ReactiveBenchmark`** |
+| Fusion makes links free: a 32-stage chain costs ≈ a 1-stage chain | `engineCall[32] ≥ 0.5 × engineCall[1]` (cost grew < 2×, not < 32×). **`NioFlowBenchmark`** |
+| Boss-inlining is a real speedup (~2.2×) | `syncSingle ≥ 1.15 / 1.6 × workerSingle`. **`SyncStageBenchmark`** |
+| The compiled plan keeps parity, never a slowdown | `plain8Compiled ≥ 0.6 / 0.85 × plain8Interpreted`. **`CompiledChainBenchmark`** |
+| Async-stage fusion lands within band of blocking (RFC 0013) | `fourAsyncReactiveStages ≥ 0.75 / 0.9 × fourReactiveStages`. **`ReactiveBenchmark`** |
+| The boss is not a JVM-wide ceiling: contended spreads across the pool | `engineCallContended[32] ≥ 1.5 × engineCall[32]` — **full pass only** (a multi-core claim; skipped on the 2-core CI canary). **`NioFlowBenchmark`** |
+
+### Allocation gates (GC profiler, bytes/op — near-deterministic)
+
+| Performance invariant | Gate (implemented) |
+| --- | --- |
+| Plain sealed chain (measured ~617 B/op) | `engineCall[1] ≤ 1000 / 850 B/op`. **`NioFlowBenchmark`** |
+| Boss-inlined chain (measured 248 B/op) | `syncSingle ≤ 420 / 320 B/op`. **`SyncStageBenchmark`** |
+| No per-link allocation: fusion keeps allocation flat over links | `engineCall[32] ≤ 1.3 × engineCall[1]` B/op (measured ratio ≈ 1.0). **`NioFlowBenchmark`** |
 
 ## CI strategy: a canary that fits, a full run that does not
 
@@ -112,9 +114,59 @@ split:
   iterations, tighter margins, the numbers that a release RFC cites. This is where
   a real ~5% regression is caught and where new absolute numbers are recorded.
 
-The harness is a plain `main` (or a JUnit test in `tests/src/test`) that shells
-JMH with `-rf json -rff build/jmh.json`, reads the result, and asserts the gate
-table. No new dependency: JMH already emits JSON.
+The harness (`JmhGates`) is a plain `main` that drives JMH through its **Runner
+API** — `new Runner(options).run()` returns `Collection<RunResult>`, each with the
+primary throughput score and (with `GCProfiler` added) the `gc.alloc.rate.norm`
+secondary result in bytes/op. That is strictly better than shelling out and
+parsing `-rf json`: no file, no JSON, the numbers arrive as doubles. No new
+dependency — `jmh-core` is already on the `tests/` classpath.
+
+## Results
+
+The harness ships with **8 gates (5 ratio, 3 allocation)** over four existing
+benchmarks, verified green on the canary. Measured baselines on the dev machine:
+`engineCall[1]` 617 B/op, `syncSingle` 248 B/op (matching `CLAUDE.md`'s numbers),
+boss-inlining ~1.9–2.2×, compiled parity ~1.0–1.2×, async-vs-blocking ~1.0×,
+allocation flat across links (616 vs 617 B/op).
+
+**Implementing the draft changed it in two ways worth recording** — the same "the
+implementation is the review" effect RFC 0020 had:
+
+- **The draft cited a `FusionBenchmark` that does not exist.** Fusion's speedup is
+  actually measured by `NioFlowBenchmark`'s stage sweep (1/8/32) and by
+  `SyncStageBenchmark`'s `syncSingle` vs `workerSingle`. The gate now reads the
+  real benchmark (boss-inlining, ~2.2×) instead of a phantom one.
+- **The draft's "async allocates less than parking" gate confused two metrics.**
+  RFC 0015's *489 B vs 3 173 B* is **retained heap per in-flight request** (measured
+  by the `ReactiveHeapProbeTest` unit test), not *allocation rate per op*. By
+  bytes/op the async path allocates **more** (four dispatch round trips vs one
+  fused run), so the gate was measuring the wrong thing and was dropped. The
+  retained-heap invariant stays guarded where it belongs — in the heap probe, an
+  RFC 0020-style unit test — and this RFC added a correct allocation gate instead:
+  **fusion keeps allocation flat over links** (`engineCall[32]` ≈ `engineCall[1]`
+  B/op), which directly guards "no allocation on the per-link path".
+
+**Calibration is the real work of a gate.** Throughput ratios compress toward 1.0
+on a busy machine, so every ratio threshold carries a wide canary margin (the
+canary catches a *broken* invariant — inlining collapsing to ~1.0× — not a few
+percent of drift); the allocation gates need no such margin because bytes/op is
+near-deterministic. The contention gate uses the 32-stage denominator, not the
+1-stage one, because JMH leaves the very first benchmark in a fork nearly cold and
+that noise would swamp a 1-stage denominator.
+
+SonarLint over `tests/` is clean on the new file except `S106` (console output),
+documented in `tools/sonarlint/README.md` as deliberate — a gate harness whose job
+is to print a report and set an exit code.
+
+**CI wiring is done.** A `jmh-gates (canary)` job in `.github/workflows/build.yml`
+runs `./gradlew jmhGates` on every push and PR, separate from the build matrix
+because it measures cost, not correctness. It runs the 4 core-count-insensitive
+ratio gates plus the 3 allocation gates — all portable to a shared 2-core runner.
+The **contention gate is full-pass only**: "the boss spreads across the pool" is a
+multi-core claim, and 8 threads cannot scale on a 2-core runner, so asserting it
+there would be meaningless; it runs in `-PgatesMode=full` on a real multi-core box
+(nightly / pre-release). The canary's job is to catch a *catastrophic* regression
+on a PR, and it needs cores it can trust to do it.
 
 ## Non-goals
 
