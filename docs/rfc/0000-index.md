@@ -5,7 +5,10 @@ the engine as it stands; 0009–0017 form the throughput series (split from two
 earlier monolithic drafts so each idea stands on its own) — of which **0009 and
 0011–0016 are implemented**, **0010 is rejected** (measured regression), and
 **0017 is half-shipped** (its streaming deprecation landed; its blocking
-fast-path measured neutral and was dropped).
+fast-path measured neutral and was dropped). **0023–0030 are the
+production-hardening cluster** — proposed fixes for a multi-agent audit's
+findings, all clustered in the shutdown / cancel / metrics / reactive-bridge
+corners the steady-state hot path never exercises.
 
 ## Catalogue
 
@@ -33,10 +36,46 @@ fast-path measured neutral and was dropped).
 | [0020](0020-unit-test-bug-hunt.md) | Bug-hunting with deterministic unit tests in `core/` and `reactive/` | ✅ Implemented | core, reactive (tests) | 0001–0017 |
 | [0021](0021-jmh-regression-gates.md) | Regression-hunting with JMH gates in `tests/` | ✅ Implemented | tests | 0009, 0011–0017, 0020 |
 | [0022](0022-benchmarks-evidence-page.md) | A benchmarks page: the performance claims, documented as evidence | ✅ Implemented | docs | 0021, 0009, 0011–0017 |
+| [0023](0023-metrics-spi-must-not-hang-a-future.md) | A throwing metrics SPI must not hang a future | ✅ Implemented | core | 0009 |
+| [0024](0024-atomic-exactly-once-terminal.md) | An atomic exactly-once terminal (drain never double-counts) | 🔵 Proposed | core | 0007, 0009 |
+| [0025](0025-cancel-off-the-timer-thread.md) | Subscription cancellation off the TimerWheel thread | 🔵 Proposed | core | 0006, 0007 |
+| [0026](0026-off-boss-key-lane-release.md) | Off-boss key-lane release must not recurse or race | 🔵 Proposed | core | **0024** |
+| [0027](0027-empty-mono-semantics.md) | `Mono.empty()` must mean one thing, not two | 🔵 Proposed | reactive | 0002, 0004 |
+| [0028](0028-preferasync-no-budget-leak.md) | Close the `preferAsync` no-budget leak | 🔵 Proposed | reactive | 0003, 0006 |
+| [0029](0029-handlers-off-the-boss.md) | Completion/error handlers on the boss: offload, bound, or say so | 🔵 Proposed | core, docs | 0009, **0023** |
+| [0030](0030-reactive-mirror-behavioral-parity.md) | Guard the reactive mirror's behaviour, not just its existence | 🔵 Proposed | reactive | 0008 |
 
 **Bold** = hard dependency: the RFC cannot ship until its parent does. A plain
 number means the RFC builds on the parent's design but could be sequenced with
 care.
+
+## The production-hardening cluster (0023–0030)
+
+A four-agent audit (core concurrency, reactive design, test honesty, API/value)
+found no defect in the steady-state hot path — it is genuinely solid — but a set
+of reachable holes in the **shutdown / cancel / metrics / reactive-bridge**
+corners that benchmarks and happy-path tests never reach. These eight RFCs are
+the fixes, ordered by severity for a production push:
+
+| # | Finding | Severity | Ship order |
+| --- | --- | --- | --- |
+| 0023 | A throwing metrics sink hangs the caller's future forever (unguarded SPI, unlike the handlers right beside it) | **High** | 1 |
+| 0028 | `preferAsync` + no budget leaks an `Execution` + a connection forever — on the path sold to *avoid* the parked-worker leak | **High** | 2 |
+| 0025 | The async-timeout cancel runs connection teardown on the shared TimerWheel thread, stalling every timeout/batch JVM-wide | **Med-High** | 3 |
+| 0024 | The exactly-once terminal is a non-atomic check-then-set; two off-boss shutdown writers double-count the drain, so `shutdown(grace)` can report clean while work runs | **Med** | 4 |
+| 0026 | Off-boss `releaseKey` at shutdown recurses on a worker stack and reads a racy deque (depends on 0024) | **Med** | 5 |
+| 0027 | `Mono.empty()` injects a silent `null` mid-chain but means "filtered" at the terminal — a latent NPE | **Med** | 6 |
+| 0029 | "The boss never runs user code" is false for completion/error handlers; a slow handler stalls every execution on a shared boss (enforce or scope the claim) | **Med** | 7 |
+| 0030 | The reactive mirror guards method *existence*, not *behaviour*; the hand-replicated budget/preferAsync logic is a "fixed in two of three copies" hazard (do first if landing 0027/0028) | **Med** | 8 |
+
+Sequencing notes: **0023 and 0028 first** (the two reachable permanent leaks).
+**0024 before 0026** (the atomic terminal closes half of 0026). **0030's refactor
+before 0027/0028** if taken, so those bridge fixes are written once, not three
+times. Every RFC in the cluster ships with an RFC 0020-style deterministic unit
+test that *falsifies the bug* (an `orTimeout` on every joined future, so a hang
+is a visible failure) and, where a hot path is touched at all, a confirmation
+against the RFC 0021 allocation/throughput gates — none of these fixes is on the
+per-link hot path, so the gates should be flat.
 
 ## Dependency graph
 

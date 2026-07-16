@@ -1203,18 +1203,54 @@ public class DefaultNioEngine implements NioEngine {
             }
         }
 
+        /**
+         * Every NioFlowMetrics call goes through a guard: a throwing sink is
+         * reported through the error handlers, never allowed to hang a future,
+         * skip an advance, or misroute a good value into recover(). Symmetric
+         * with how completeHandlers and notifyError already treat user code —
+         * the metrics SPI is user code too, and a hung future is the exact
+         * failure mode the engine otherwise prevents religiously. See RFC 0023.
+         */
+        private void meter(Runnable sinkCall) {
+            try {
+                sinkCall.run();
+            } catch (Throwable failure) {
+                notifyError(failure);
+            }
+        }
+
+        // Pushes the terminal metric under whatever classification the outcome
+        // earned; kept out of reportExecution so that method stays under the
+        // cognitive-complexity limit (the meter() lambda is one call, not a
+        // four-way branch nested inside the handler section).
+        private void classifyExecution(Object value, Throwable error, long elapsed) {
+            if (error != null) {
+                metrics.executionFailed(error, elapsed);
+            } else if (value == FILTERED) {
+                metrics.executionFiltered(elapsed);
+            } else if (value == CANCELLED) {
+                metrics.executionCancelled(elapsed);
+            } else {
+                metrics.executionCompleted(elapsed);
+            }
+        }
+
+        // The per-stage timing call, guarded WITHOUT a lambda so the hot stage
+        // path allocates nothing extra for a metrics-enabled flow (a captured
+        // Runnable per stage would show up in the allocation gate). Callers
+        // already null-check metrics before reaching here.
+        private void meterStageCompleted(String name, long elapsed) {
+            try {
+                metrics.stageCompleted(name, elapsed);
+            } catch (Throwable failure) {
+                notifyError(failure);
+            }
+        }
+
         private void reportExecution(Object value, Throwable error) {
             if (metrics != null) {
                 long elapsed = System.nanoTime() - startNanos;
-                if (error != null) {
-                    metrics.executionFailed(error, elapsed);
-                } else if (value == FILTERED) {
-                    metrics.executionFiltered(elapsed);
-                } else if (value == CANCELLED) {
-                    metrics.executionCancelled(elapsed);
-                } else {
-                    metrics.executionCompleted(elapsed);
-                }
+                meter(() -> classifyExecution(value, error, elapsed));
             }
             // Hardened on purpose: this runs BEFORE the result future
             // completes, so a throwing handler must never escape — it would
@@ -1249,12 +1285,14 @@ public class DefaultNioEngine implements NioEngine {
             int running = activeForks.decrementAndGet();
             if (metrics != null) {
                 long elapsed = System.nanoTime() - startNanos;
-                if (error != null) {
-                    metrics.forkFailed(forkOf.name(), error, elapsed);
-                } else {
-                    metrics.forkCompleted(forkOf.name(), elapsed);
-                }
-                metrics.forksInFlight(running);
+                meter(() -> {
+                    if (error != null) {
+                        metrics.forkFailed(forkOf.name(), error, elapsed);
+                    } else {
+                        metrics.forkCompleted(forkOf.name(), elapsed);
+                    }
+                    metrics.forksInFlight(running);
+                });
             }
             if (error != null) {
                 notifyError(error);
@@ -1285,8 +1323,10 @@ public class DefaultNioEngine implements NioEngine {
             activeExecutions.increment();
             int running = activeForks.incrementAndGet();
             if (child.metrics != null) {
-                child.metrics.forkStarted(fork.name());
-                child.metrics.forksInFlight(running);
+                meter(() -> {
+                    child.metrics.forkStarted(fork.name());
+                    child.metrics.forksInFlight(running);
+                });
             }
             try {
                 boss.execute(child);
@@ -1538,7 +1578,7 @@ public class DefaultNioEngine implements NioEngine {
                             try {
                                 current = recovery.function().apply(pending);
                                 if (metrics != null) {
-                                    metrics.recoveryApplied(recovery.name());
+                                    meter(() -> metrics.recoveryApplied(recovery.name()));
                                 }
                                 recovered = true;
                                 break;
@@ -1767,7 +1807,7 @@ public class DefaultNioEngine implements NioEngine {
                 Retry retry = stage.retry();
                 if (retry != null && attempt < retry.attempts()) {
                     if (metrics != null) {
-                        metrics.stageRetried(stage.name());
+                        meter(() -> metrics.stageRetried(stage.name()));
                     }
                     CompletableFuture.delayedExecutor(retry.delayNanos(attempt), TimeUnit.NANOSECONDS, boss)
                             .execute(() -> attemptWithTimeout(stage, resume, value, attempt + 1));
@@ -1859,7 +1899,7 @@ public class DefaultNioEngine implements NioEngine {
             }
             if (error == null) {
                 if (metrics != null) {
-                    metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                    meterStageCompleted(stage.name(), System.nanoTime() - invokedAt);
                 }
                 advance(resume, nextValue);
                 return;
@@ -1870,7 +1910,7 @@ public class DefaultNioEngine implements NioEngine {
                 return;
             }
             if (metrics != null) {
-                metrics.stageRetried(stage.name());
+                meter(() -> metrics.stageRetried(stage.name()));
             }
             CompletableFuture.delayedExecutor(retry.delayNanos(attempt), TimeUnit.NANOSECONDS, boss)
                     .execute(() -> attemptAsync(stage, resume, value, attempt + 1));
@@ -1993,7 +2033,7 @@ public class DefaultNioEngine implements NioEngine {
                     return HANDED_OFF;
                 }
                 if (metrics != null) {
-                    metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                    meterStageCompleted(stage.name(), System.nanoTime() - invokedAt);
                 }
                 return outcome;
             }
@@ -2009,7 +2049,7 @@ public class DefaultNioEngine implements NioEngine {
                     return;
                 }
                 if (metrics != null) {
-                    metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                    meterStageCompleted(stage.name(), System.nanoTime() - invokedAt);
                 }
                 try {
                     workersExecutorService.execute(() -> drive(pos + 1, outcome));
@@ -2033,7 +2073,7 @@ public class DefaultNioEngine implements NioEngine {
                 AsyncStage stage = stages[pos];
                 if (error == null) {
                     if (metrics != null) {
-                        metrics.stageCompleted(stage.name(), System.nanoTime() - invokedAt);
+                        meterStageCompleted(stage.name(), System.nanoTime() - invokedAt);
                     }
                     drive(pos + 1, nextValue);   // already on a worker
                     return;
@@ -2044,7 +2084,7 @@ public class DefaultNioEngine implements NioEngine {
                     return;
                 }
                 if (metrics != null) {
-                    metrics.stageRetried(stage.name());
+                    meter(() -> metrics.stageRetried(stage.name()));
                 }
                 // Backoff on delayedExecutor (cold path), re-invoke on a worker:
                 // there is no parked worker to park a little longer, and the
@@ -2136,7 +2176,7 @@ public class DefaultNioEngine implements NioEngine {
             for (int attempt = 1; attempt <= retry.attempts(); attempt++) {
                 if (attempt > 1) {
                     if (metrics != null) {
-                        metrics.stageRetried(stage.name());
+                        meter(() -> metrics.stageRetried(stage.name()));
                     }
                     LockSupport.parkNanos(retry.delayNanos(attempt - 1));
                 }
@@ -2157,7 +2197,7 @@ public class DefaultNioEngine implements NioEngine {
             }
             long start = System.nanoTime();
             Object next = invoke(stage, value);
-            metrics.stageCompleted(stage.name(), System.nanoTime() - start);
+            meterStageCompleted(stage.name(), System.nanoTime() - start);
             return next;
         }
 
@@ -2226,7 +2266,7 @@ public class DefaultNioEngine implements NioEngine {
         private Object applyRecovery(Recovery recovery, Throwable error) {
             Object value = recovery.function().apply(error);
             if (metrics != null) {
-                metrics.recoveryApplied(recovery.name());
+                meter(() -> metrics.recoveryApplied(recovery.name()));
             }
             return value;
         }

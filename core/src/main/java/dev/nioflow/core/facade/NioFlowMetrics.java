@@ -4,7 +4,13 @@ package dev.nioflow.core.facade;
  * Metrics SPI: the engine pushes events here when an implementation is
  * installed via NioEngine.metrics(). All methods default to no-op so
  * implementations override only what they need. Callbacks run on engine
- * threads (boss or workers) — they must be fast and never throw.
+ * threads (boss or workers) — they should be fast and should not throw.
+ *
+ * <p>A throw is nonetheless <b>contained</b>: the engine wraps every call to
+ * this SPI and routes a thrown Throwable to the error handlers, so a buggy or
+ * failing sink (an exporter outage, a sink that throws during its own shutdown)
+ * can never hang a request future, skip an advance, or misroute a good value
+ * into recover(). See RFC 0023.
  */
 public interface NioFlowMetrics {
 
