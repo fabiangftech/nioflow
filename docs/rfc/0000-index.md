@@ -6,9 +6,9 @@ earlier monolithic drafts so each idea stands on its own) — of which **0009 an
 0011–0016 are implemented**, **0010 is rejected** (measured regression), and
 **0017 is half-shipped** (its streaming deprecation landed; its blocking
 fast-path measured neutral and was dropped). **0023–0030 are the
-production-hardening cluster** — proposed fixes for a multi-agent audit's
-findings, all clustered in the shutdown / cancel / metrics / reactive-bridge
-corners the steady-state hot path never exercises.
+production-hardening cluster — all implemented** — fixes for a multi-agent
+audit's findings, all clustered in the shutdown / cancel / metrics /
+reactive-bridge corners the steady-state hot path never exercises.
 
 ## Catalogue
 
@@ -43,7 +43,7 @@ corners the steady-state hot path never exercises.
 | [0027](0027-empty-mono-semantics.md) | `Mono.empty()` must mean one thing, not two | ✅ Implemented | reactive | 0002, 0004 |
 | [0028](0028-preferasync-no-budget-leak.md) | Close the `preferAsync` no-budget leak | ✅ Implemented | reactive | 0003, 0006 |
 | [0029](0029-handlers-off-the-boss.md) | Completion/error handlers on the boss: offload, bound, or say so | ✅ Implemented | docs, example | 0009, **0023** |
-| [0030](0030-reactive-mirror-behavioral-parity.md) | Guard the reactive mirror's behaviour, not just its existence | 🔵 Proposed | reactive | 0008 |
+| [0030](0030-reactive-mirror-behavioral-parity.md) | Guard the reactive mirror's behaviour, not just its existence | ✅ Implemented | reactive | 0008 |
 
 **Bold** = hard dependency: the RFC cannot ship until its parent does. A plain
 number means the RFC builds on the parent's design but could be sequenced with

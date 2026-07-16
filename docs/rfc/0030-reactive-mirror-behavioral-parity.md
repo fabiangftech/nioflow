@@ -1,10 +1,11 @@
 # RFC 0030 — Guard the reactive mirror's *behaviour*, not just its *existence*
 
-- **Status**: 🔵 Proposed
-- **Target**: `reactive/` (the Flow/Step/Lane duplication; `ReactiveMirrorTest`'s scope)
+- **Status**: ✅ Implemented — behavioural parity harness across all four positions; layer 1 dedup already done by RFC 0027/0028
+- **Target**: `reactive/` (a new behavioural parity test; the Flow/Step/Lane logic already single-sourced)
 - **Depends on**: RFC 0008 (the reactive module split and the mirror contract)
 - **Severity**: **Medium** — a structural source of "fixed in two of three copies" latent bugs; the maintenance tax that makes every future reactive fix risky
 - **Sibling of**: RFC 0028 (a concrete instance — the budget threading it must be applied to in three places)
+- **Realized by**: `ReactiveParityTest` — runs the same `handleMono` probe through the main line, a `just()` pipeline, a `when()` lane and a `fork()` body, and asserts identical outcomes for the load-bearing properties (a `defaultBudget` bounds a hung Mono; an empty Mono fails with `EmptyMonoException`), on both the block and the `preferAsync` path. Layer 1 (single-source the logic) was already delivered by RFC 0027 (`Blocking.required`/`awaitValue`/`requiredFuture`) and RFC 0028 (`ReactiveConfig.budgetFor`, plus unifying the lane onto `ReactiveConfig`).
 
 ## The finding
 
@@ -107,3 +108,41 @@ cannot give.
   irreducible (that is the mirror's whole design). The goal is to remove the
   *logic* duplication, not the *signature* duplication — the signatures stay,
   guarded by the existence check; the bodies converge, guarded by parity.
+
+## Results
+
+The two layers landed in the reverse of the drafted order, and it worked out
+better that way.
+
+- **Layer 1 (single-source the logic) was already done — by 0027 and 0028, not
+  here.** The draft assumed this RFC would land *before* the hardening fixes so
+  they were written once. In practice 0027 and 0028 shipped first and each
+  centralized its own logic as it went: RFC 0027 put the empty→error decision in
+  `Blocking.required`/`awaitValue`/`requiredFuture` (one place, called from all
+  three facades), and RFC 0028 put the budget resolution in
+  `ReactiveConfig.budgetFor` (one place) *and* replaced the lane's loose
+  `(budget, preferAsync)` fields with the `ReactiveConfig` record the flow/step
+  side already carried. So the load-bearing branch (`preferAsync`? budget
+  default? empty guard?) is no longer copied — only the thin `if
+  (config.preferAsync())` shell and the `delegate.handle`/`handleAsync` call
+  differ per facade, and those differ *because the return types do*, which is the
+  irreducible part. There was no risky refactor left to do.
+
+- **Layer 2 (the parity harness) is the deliverable, and it is not vacuous.**
+  `ReactiveParityTest` runs one probe through all four positions and asserts the
+  budget and empty-Mono properties agree. Temporarily reverting the lane's
+  `handleMono` to the pre-0027 `await(budgeted(...))` (dropping the empty guard)
+  makes the harness go red at the lane and fork positions while the main line and
+  pipeline stay green — precisely the "fixed in two of three copies" signature.
+  Restored, all four agree. That is the mechanical proof the existence check
+  could never give: a divergence in any one copy fails the build.
+
+- **The check is future-proof, not just a snapshot.** It asserts *properties*
+  (times out; fails on empty), so a *new* reactive step or a *new* hardening fix
+  is covered the moment it is added to the probe — and any copy that forgets it
+  diverges loudly. Combined with `ReactiveMirrorTest` (existence + covariance),
+  the mirror is now guarded on both axes: every method exists everywhere, and the
+  ones that carry logic behave identically everywhere.
+
+`cd reactive && ./gradlew test` green; SonarLint diff over `reactive` is empty
+(the RFC added only a test).
