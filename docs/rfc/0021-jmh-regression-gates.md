@@ -1,6 +1,6 @@
 # RFC 0021 — Regression-hunting with JMH gates in `tests/`
 
-- **Status**: ✅ Implemented — harness + 8 gates (canary green), wired into CI (`build.yml`)
+- **Status**: ✅ Implemented — harness + 8 gates (7 on the canary, contention full-only), wired into CI (`build.yml`)
 - **Target**: `tests/` (the JMH benchmarks and a new gate harness) — no `core/`/`reactive/` change
 - **Depends on**: the throughput series (RFC 0009, 0011–0017) — the measured facts this locks in
 - **Sibling of**: RFC 0020 (deterministic unit-test bug-hunt) — same shape, other axis: 0020 pins *correctness*, this pins *performance*
