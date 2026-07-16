@@ -91,18 +91,29 @@ public interface ReactiveFlow<I, O> extends NioFlow<I, O> {
      *       .executeMono();                            // TRACE is already there
      * </pre>
      *
-     * <p>The keys line up by NAME: {@code Context.Key.of("traceId")} reads the
-     * subscriber-context entry {@code "traceId"} (the same correspondence that
-     * lets a map handed to {@code engine.call} interoperate). A key the
-     * subscriber context does not carry is simply not seeded — no throw, no null
-     * entry, and {@code ctx.get} gives back null exactly as it would for a key
-     * nobody ever wrote.
+     * <p>The keys line up by NAME, from two sources in order (RFC 0033):
+     * {@code Context.Key.of("traceId")} reads the subscriber-context entry
+     * {@code "traceId"} first (a value a caller wrote with {@code contextWrite},
+     * or one automatic context propagation already lifted there) — the same
+     * correspondence that lets a map handed to {@code engine.call} interoperate —
+     * and, for a key the subscriber context does not carry, a registered
+     * Micrometer {@code ThreadLocalAccessor} of the same name. That second source
+     * is where tracing actually keeps the value: Micrometer Tracing / Sleuth / MDC
+     * hold the trace id in a ThreadLocal, not under a subscriber-context string, so
+     * without it {@code propagate(TRACE)} would seed nothing against the exact stack
+     * it exists for. A key neither source carries is simply not seeded — no throw,
+     * no null entry, and {@code ctx.get} gives back null exactly as it would for a
+     * key nobody ever wrote.
      *
-     * <p><b>Declared-and-automatic, never discovered-and-automatic.</b> There is
-     * no {@code Hooks}, no Micrometer context propagation and no write-back: a
-     * reader of the config sees exactly what crosses the boundary, and nothing
-     * crosses that a person did not write down. Implicit context that is right
-     * 99 % of the time is wrong during the incident you bought it for.
+     * <p><b>Declared, never discovered.</b> The ThreadLocal source is a lookup by a
+     * name you wrote down, not a firehose: there is no {@code Hooks} install, no
+     * write-back, and nothing crosses that is not on this whitelist. A reader of the
+     * config still sees exactly what crosses the boundary — the source widened, the
+     * whitelist did not. Implicit context that is right 99 % of the time is wrong
+     * during the incident you bought it for. The ThreadLocal read needs
+     * {@code io.micrometer:context-propagation} on the classpath (it is, in any
+     * Spring Boot WebFlux app); absent it, only the subscriber-context source
+     * applies, and nothing is required.
      *
      * <p>Seeded per SUBSCRIPTION, not per assembly — two subscriptions of the
      * same Mono under two different subscriber contexts get their own values —

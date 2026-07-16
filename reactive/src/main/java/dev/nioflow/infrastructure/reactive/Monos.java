@@ -32,15 +32,28 @@ final class Monos {
     }
 
     /**
-     * The declared keys, and only them — the bridge is a WHITELIST. A key the
-     * subscriber context does not carry is not seeded at all: no null entry, and
-     * a stage reading it gets back null exactly as it would for a key nobody ever
-     * wrote.
+     * The declared keys, and only them — the bridge is a WHITELIST. Each is read
+     * from two sources, in order: Reactor's subscriber {@link ContextView} first
+     * (a value a caller wrote with {@code contextWrite}, or that automatic context
+     * propagation already lifted there), then — for a key the context does not
+     * carry — a registered ThreadLocalAccessor of the same name (RFC 0033), which
+     * is where Micrometer Tracing / Sleuth / MDC keep it. A key neither source
+     * carries is not seeded at all: no null entry, and a stage reading it gets
+     * back null exactly as it would for a key nobody ever wrote. Keys line up by
+     * NAME on both paths.
      */
     static Map<String, Object> seed(ContextView view, List<Context.Key<?>> keys) {
         Map<String, Object> seeded = HashMap.newHashMap(keys.size());
         for (Context.Key<?> key : keys) {
-            view.getOrEmpty(key.name()).ifPresent(value -> seeded.put(key.name(), value));
+            var fromView = view.getOrEmpty(key.name());
+            if (fromView.isPresent()) {
+                seeded.put(key.name(), fromView.get());
+                continue;
+            }
+            Object fromThreadLocal = ThreadLocalContext.get(key.name());
+            if (fromThreadLocal != null) {
+                seeded.put(key.name(), fromThreadLocal);
+            }
         }
         return seeded;
     }

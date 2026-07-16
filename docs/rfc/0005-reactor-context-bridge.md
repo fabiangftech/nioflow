@@ -95,9 +95,11 @@ The rest is the flow's state: the propagated keys ride along with the default bu
 
 ## What this deliberately does NOT do
 
-**No `reactor.core.publisher.Hooks`. No Micrometer `ContextPropagation`.** Making the bridge fully automatic is possible and it is the wrong trade: implicit context propagation across a thread hop is how you get an MDC that is right 99 % of the time and silently wrong during the incident you bought it for.
+**No `reactor.core.publisher.Hooks`. No automatic (discover-everything) propagation.** Making the bridge fully automatic is possible and it is the wrong trade: implicit context propagation across a thread hop is how you get an MDC that is right 99 % of the time and silently wrong during the incident you bought it for.
 
 The line this RFC draws: **declared-and-automatic, never discovered-and-automatic.** A reader of `NioFlowConfig` can see exactly what crosses the boundary, and nothing crosses that a person did not write down. RFC 0002 put it well (`0002:433`): *"explicit, cheap, and honest."* `propagate()` keeps all three — it just stops charging the honesty to every controller method.
+
+> **Refined by [RFC 0033](0033-reactor-context-bridge-is-string-only.md).** The original bridge read the subscriber context *only*, by string name — which meant `propagate(TRACE)` seeded nothing against Micrometer Tracing / Sleuth / MDC, since those keep the trace id in a ThreadLocal, not under a subscriber-context string. RFC 0033 adds a second, declared source: a registered Micrometer `ThreadLocalAccessor` of the same name, read only when the subscriber context does not carry the key. This does NOT weaken the stance above — there is still no `Hooks`, no write-back, and nothing crosses that is not on the `propagate()` whitelist. The *source* widened (subscriber context, then a same-named accessor); the whitelist did not. The Micrometer read is optional (`io.micrometer:context-propagation`, probed once); absent it, the bridge is exactly the subscriber-context-only one this RFC describes.
 
 **No write-back.** Nothing in the reactive package writes into the subscriber context on the way out, and this RFC adds nothing. A stage that wants to publish something publishes it in the value.
 

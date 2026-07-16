@@ -1,10 +1,10 @@
 # RFC 0033 — `propagate` bridges strings, not trace context: make it work or say so
 
-- **Status**: 📋 Proposed
-- **Target**: `reactive` (`Monos.seed`, `ReactiveFlow.propagate`, and its docs / RFC 0005)
+- **Status**: ✅ Implemented — option 1 (integrate `ContextRegistry`) + option 2's doc honesty
+- **Target**: `reactive` (`Monos.seed`, `ThreadLocalContext`, `MicrometerThreadLocals`, `ReactiveFlow.propagate`, RFC 0005 / CLAUDE.md)
 - **Depends on**: RFC 0005 (the context bridge this refines)
-- **Severity**: **Medium-High** — the #1 reason people reach for reactive context propagation (tracing/MDC) compiles, runs, and silently seeds nothing
-- **Realized by**: integrating Micrometer's `ContextRegistry` accessor path so ThreadLocal-bridged values are found, OR documenting loudly that `propagate` is a raw-string bridge that requires the producer to have written under the exact `Context.Key.name()`.
+- **Severity**: **Medium-High** — the #1 reason people reach for reactive context propagation (tracing/MDC) compiled, ran, and silently seeded nothing
+- **Realized by**: reading each declared key from two sources by name — Reactor's subscriber `ContextView` first, then a registered Micrometer `ThreadLocalAccessor` of the same name (via `ContextRegistry`) — so a value tracing keeps in a ThreadLocal actually crosses. The Micrometer read is optional (`io.micrometer:context-propagation` compileOnly, probed once by `ThreadLocalContext`, touched only by `MicrometerThreadLocals`), and the widened source is documented on `propagate`, in RFC 0005 and in CLAUDE.md.
 
 ## The finding
 
@@ -43,3 +43,42 @@ Recommended: **option 1** (make the headline use case work) *plus* **option 2's 
 - **A new optional dependency.** `ContextRegistry` (io.micrometer:context-propagation) must stay `compileOnly` and load only when present, or the zero-dependency promise breaks. Follow the exact SPI-load pattern the OpenTelemetry/Resilience4j adapters use.
 - **Accessor semantics differ from a plain map read.** ThreadLocal accessors capture at subscription; make sure the `deferContextual` seeding point still gives per-subscription isolation (RFC 0005's reason it is not a `with()` builder step). Test the two-subscription race.
 - **Doing nothing (option 2 alone) leaves the footgun armed.** It is the honest minimum, but a library that ships `propagate(TRACE)` and means "only if you also hand-wrote the string" is setting a trap the name disarms in the reader's mind. Prefer to actually make it work.
+
+## Results
+
+Shipped option 1 + option 2's doc honesty. No hot-path change (the seed runs once
+per subscription, as before; the ThreadLocal source is a fallback only when the
+subscriber context misses).
+
+- **`Monos.seed` reads two sources, by name, in order:** the subscriber
+  `ContextView` first (unchanged — a `contextWrite` value, or one automatic context
+  propagation already lifted there wins), then `ThreadLocalContext.get(name)` for a
+  key the context does not carry. So the subscriber context still wins when it
+  carries the key, and a ThreadLocal-only value now crosses instead of vanishing.
+
+- **The Micrometer read is optional and isolated.** `ThreadLocalContext` probes
+  once (`Class.forName("io.micrometer.context.ContextRegistry")`) and, only if
+  present, calls `MicrometerThreadLocals.read` — the one class that references
+  `context-propagation`, loaded only after the probe passed, so a consumer without
+  the dependency never resolves those types and the bridge stays the plain
+  subscriber-context lookup. `context-propagation` is `compileOnly` — the same
+  posture as core's OpenTelemetry / Resilience4j adapters, nothing required.
+
+- **The whitelist stance is intact.** Still no `Hooks`, no write-back, no
+  discovery: a declared key is read from a same-named accessor, nothing else
+  crosses. The `propagate` javadoc, RFC 0005 and CLAUDE.md now say the source
+  widened and the whitelist did not.
+
+- **Tests:** `ReactiveContextThreadLocalTest` registers a ThreadLocal accessor and
+  asserts (a) a declared key crosses from the ThreadLocal when the subscriber
+  context lacks it — the case that silently failed before; (b) the subscriber
+  context still wins over the ThreadLocal; (c) an empty ThreadLocal seeds nothing.
+  The existing `ReactiveContextTest` (subscriber-context path) stays green — the
+  change is additive. Full reactive suite green; SonarLint over the diff carries
+  one deliberate `S1181` (the class-init-safe probe), documented in
+  `tools/sonarlint/README.md`.
+
+- **Not taken:** option 3's `propagateMdc`/recipe — the `ContextRegistry`
+  integration makes the plain `propagate(TRACE)` work against the ThreadLocal
+  stack directly, so a separate recipe would be redundant. It can land later if a
+  concrete case wants a non-`ContextRegistry` bridge.

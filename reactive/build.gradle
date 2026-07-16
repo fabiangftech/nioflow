@@ -30,6 +30,14 @@ dependencies {
     testImplementation 'io.projectreactor:reactor-core:3.7.0'
     testImplementation 'io.projectreactor:reactor-test:3.7.0'
 
+    // Optional (RFC 0033): the context bridge reads ThreadLocal-backed trace
+    // context (Micrometer Tracing / Sleuth / MDC) via ContextRegistry when this
+    // is on the classpath — as it is in any Spring Boot WebFlux app. compileOnly,
+    // probed once at runtime: absent it, propagate() stays the plain
+    // subscriber-context string bridge, and nothing is required.
+    compileOnly 'io.micrometer:context-propagation:1.1.2'
+    testImplementation 'io.micrometer:context-propagation:1.1.2'
+
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
