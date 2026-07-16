@@ -17,6 +17,7 @@
 - [Architecture](architecture.md)
 - [API reference](api-reference.md)
 - [Benchmarks](benchmarks.md)
+- [Troubleshooting & operability](troubleshooting.md)
 
 - **Links**
 - [GitHub](https://github.com/fabiangftech/nioflow)

@@ -9,7 +9,7 @@ fast-path measured neutral and was dropped). **0023–0030 are the
 production-hardening cluster — all implemented** — fixes for a multi-agent
 audit's findings, all clustered in the shutdown / cancel / metrics /
 reactive-bridge corners the steady-state hot path never exercises. **0031–0041
-are the second audit cluster — 0031, 0033, 0034, 0035, 0038 and 0039 implemented, 0032 part-shipped (phase A), the rest proposed** — a fresh
+are the second audit cluster — 0031, 0033, 0034, 0035, 0036, 0038 and 0039 implemented, 0032 part-shipped (phase A), the rest proposed** — a fresh
 multi-agent review (core, reactive, docs, adopter) covering an admission-control
 gap on `call()`, the engine god class, reactive safety defaults, and a batch of
 docs/build and long-uptime hardening items; none is on the steady-state hot path.
@@ -53,7 +53,7 @@ docs/build and long-uptime hardening items; none is on the steady-state hot path
 | [0033](0033-reactor-context-bridge-is-string-only.md) | `propagate` bridges strings, not trace context — make it work or say so | ✅ Implemented | reactive | 0005 |
 | [0034](0034-reactive-budget-safe-by-default.md) | The reactive budget footgun ships armed — make safety the default | ✅ Implemented | reactive | 0003, 0006, 0028 |
 | [0035](0035-mirror-test-covers-every-builder.md) | `ReactiveMirrorTest` must cover every builder pair + one behaviour per family | ✅ Implemented | reactive (tests) | 0008, **0030** |
-| [0036](0036-examples-overhaul.md) | Examples overhaul: stop shipping the anti-pattern the docs warn against | 📋 Proposed | examples, docs | — |
+| [0036](0036-examples-overhaul.md) | Examples overhaul: stop shipping the anti-pattern the docs warn against | ✅ Implemented | examples, docs | — |
 | [0037](0037-docs-and-build-hygiene.md) | Docs & build hygiene: one benchmark source, reachable RFCs, a pinned JDK floor | 📋 Proposed | docs, build | 0018, 0022 |
 | [0038](0038-per-request-decision-id-compaction.md) | Compact per-request decision ids so branching never falls off the bitset | ✅ Implemented | core | 0011 |
 | [0039](0039-bounded-key-lane-and-depth-metric.md) | Bound the per-key lane, and surface its depth | ✅ Implemented | core | 0024, 0026 |

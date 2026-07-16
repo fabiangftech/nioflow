@@ -1,10 +1,10 @@
 # RFC 0036 — Examples overhaul: stop shipping the anti-pattern the docs warn against
 
-- **Status**: 📋 Proposed
-- **Target**: `examples/springboot-with-nioflow`, `examples/springwebflux-with-nioflow`, and a small amount of `docs`
+- **Status**: ✅ Implemented — option 1 (typed beans) + option 2 (operability runbook); options 3 (reusable BlockHound) and 4 (thin-adapter example) deferred as follow-ups
+- **Target**: `examples/springboot-with-nioflow`, `docs`
 - **Depends on**: — (touches example modules and docs only; no core/reactive change)
 - **Severity**: **Medium** — a credibility hole: the flagship example contradicts the central type-safety claim, and the operability story the examples should teach is absent
-- **Realized by**: wiring one typed `@Bean` per contract in the primary Spring config (moving the wildcard-bean form to a clearly-labelled "advanced alternative"), promoting the BlockHound boss-non-blocking check to a reusable rule, and adding an operability/runbook example (thread dumps, hung executions, budgets).
+- **Realized by**: rewriting the primary Spring config to one typed `@Bean` per contract (the wildcard-bean form stays only in `WildcardFlowBeanTest`, labelled as the alternative), and adding a `docs/troubleshooting.md` operability runbook (hung-request playbook, virtual-thread dumps, the guardrails).
 
 ## The findings
 
@@ -47,3 +47,36 @@ Recommended: **option 1** (fix the credibility hole — do this first and on its
 - **Churn in the example most people copy.** Worth it: shipping the anti-pattern is a larger cost than the diff. Keep the wildcard form available (relabelled) so nobody who relied on it is stranded.
 - **A published test artifact (option 3) is new surface to maintain.** If that is too much, a documented snippet in `docs` is an acceptable lighter form.
 - **Operability docs date faster than code.** Anchor the runbook to observable facts (thread names, frame shapes) and link it from the reactive example so it stays near the thing it describes.
+
+## Results
+
+Shipped option 1 + option 2.
+
+- **The flagship config is now the recommended pattern.** `NioFlowConfig`
+  (springboot example) declares one typed `@Bean` per contract —
+  `greetingFlow()`/`creditFlow()`/… each `DefaultNioFlow.from(Type.class)` with
+  `destroyMethod = "close"` — matching what its own Javadoc always argued for.
+  Spring disambiguates the five `NioFlow<String, String>` beans by injection-point
+  name (Lombok's `@RequiredArgsConstructor` takes it from the field), so each bean
+  method is named after the field it feeds. The wildcard `NioFlow<?, ?>` form
+  stays only in `WildcardFlowBeanTest`, framed as the alternative and its limit,
+  not the recommendation. The example compiles and its tests (including the
+  context-loading ones) pass — the contradiction between the prose and the code is
+  gone.
+
+- **An operability runbook.** `docs/troubleshooting.md` (linked in the sidebar
+  under Deep dive) is the hung-request playbook: the two thread kinds and what
+  "hung" looks like on each, how to take a virtual-thread dump (`jcmd
+  Thread.dump_to_file`, since `jstack` misses parked virtual workers), how to read
+  the frames (`Blocking.await` = a reactive step waiting on a Mono), a
+  symptom→cause→fix table (unbudgeted leak, keyed head-of-line, slow handler on a
+  shared boss, drain that won't complete, wrong bound configured), and a
+  consolidated view of the guardrails (`defaultBudget`/`requireBudget`, the
+  BlockHound gate, the metrics, `dedicated()`). Anchored to observable facts
+  (thread names, frame shapes) so it dates slowly.
+
+- **Deferred:** option 3 (promote the BlockHound boss-non-blocking rule to a
+  reusable published test artifact) and option 4 (a thin-adapter entry-point
+  example, `Mono.fromFuture(flow.just(x).executeCancellable().future())`). Both
+  are additive follow-ups; the runbook already tells a consumer to carry the
+  BlockHound gate, and the WebFlux page already covers the thin-adapter decision.
