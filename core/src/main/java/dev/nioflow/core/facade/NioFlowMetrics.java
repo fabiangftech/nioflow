@@ -67,4 +67,23 @@ public interface NioFlowMetrics {
 
     default void queueDepth(int pending) {
     }
+
+    /**
+     * The backlog of a per-key FIFO lane changed: {@code depth} executions are
+     * queued behind that key's running head (RFC 0039). Fired on the boss as a
+     * value enrolls behind a busy key or is released from the front — the signal
+     * that says head-of-line buildup is happening BEFORE it becomes an outage.
+     * Not keyed on purpose: report the max or a percentile across lanes, never a
+     * per-key series (that is how a cardinality explosion starts).
+     */
+    default void keyLaneDepth(int depth) {
+    }
+
+    /**
+     * How many per-key FIFO lanes are active right now — how many distinct keys
+     * are serializing work at once (RFC 0039). Fired when a lane is created or
+     * retired.
+     */
+    default void keyLanesActive(int active) {
+    }
 }

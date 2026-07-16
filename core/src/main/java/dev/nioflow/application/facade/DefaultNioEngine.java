@@ -127,6 +127,18 @@ public class DefaultNioEngine implements NioEngine {
     private final OverflowPolicy overflowPolicy;
     private final int inFlightCapacity;
 
+    // Optional per-key backlog bound (RFC 0039): caps how many executions may
+    // queue behind ONE key's running head. 0 = unbounded (default), so keyed
+    // execution is unchanged unless keyLaneCapacity(...) is called. Checked at
+    // admission (the caller's thread), because enrollment happens on the boss,
+    // which must never park: FAIL throws, DROP fails the future, BLOCK parks the
+    // caller on keyLaneVacancy until the hot key drains. Volatile: set once by
+    // keyLaneCapacity() before use, then only read.
+    private volatile int keyLaneCapacity;
+    private volatile OverflowPolicy keyLaneOverflowPolicy = OverflowPolicy.FAIL;
+    // BLOCK producers wait here; the key's boss notifies as it releases a lane.
+    private final Object keyLaneVacancy = new Object();
+
     // Metrics SPI: null (default) means zero instrumentation on the hot path.
     // AtomicReference for the publication semantics (a plain volatile field of a
     // non-primitive type is what SonarQube's S3077 flags); readers snapshot it
@@ -315,6 +327,93 @@ public class DefaultNioEngine implements NioEngine {
         }
     }
 
+    /**
+     * Bounds each per-key FIFO lane's backlog (RFC 0039): at most {@code maxDepth}
+     * executions may queue behind one key's running head. Off by default
+     * (unbounded), so keyed execution is unchanged unless this is called — like
+     * {@link #metrics}, set it before the engine takes traffic.
+     *
+     * <p>The bound is a per-KEY backpressure, distinct from the in-flight capacity
+     * (which bounds total admission): a hot key whose head stalls can otherwise
+     * grow its backlog without limit, each queued execution holding a drain slot
+     * so {@code shutdown(grace)} never completes. FAIL rejects the excess call
+     * with a {@link RejectedExecutionException}, DROP fails its future (reported to
+     * the error handlers and the metrics sink), BLOCK parks the CALLING thread
+     * until the key drains — so, exactly as for the in-flight BLOCK, do NOT use
+     * BLOCK when keyed calls originate on an event loop; prefer FAIL or DROP there.
+     */
+    public DefaultNioEngine keyLaneCapacity(int maxDepth, OverflowPolicy policy) {
+        if (maxDepth < 1) {
+            throw new IllegalArgumentException("keyLaneCapacity maxDepth must be at least 1, was " + maxDepth);
+        }
+        this.keyLaneCapacity = maxDepth;
+        this.keyLaneOverflowPolicy = policy;
+        return this;
+    }
+
+    /**
+     * Admission for a keyed call (RFC 0039), on the caller's thread. Returns true
+     * to proceed; false is DROP (the caller fails the future). FAIL throws; BLOCK
+     * parks here until the key's backlog has room. Unbounded (the default) is one
+     * volatile read. The depth counted is the BACKLOG — executions already queued
+     * behind the key's running head — so the running head itself is never blocked.
+     */
+    private boolean admitKeyLane(Object key) {
+        int capacity = keyLaneCapacity;
+        if (capacity == 0 || key == null) {
+            return true;
+        }
+        return switch (keyLaneOverflowPolicy) {
+            case DROP -> keyLaneDepth(key) < capacity;
+            case FAIL -> {
+                if (keyLaneDepth(key) >= capacity) {
+                    throw new RejectedExecutionException(
+                            "Key-lane capacity " + capacity + " reached for key " + key);
+                }
+                yield true;
+            }
+            case BLOCK -> {
+                awaitKeyLaneVacancy(key, capacity);
+                yield true;
+            }
+        };
+    }
+
+    private void awaitKeyLaneVacancy(Object key, int capacity) {
+        synchronized (keyLaneVacancy) {
+            while (keyLaneDepth(key) >= capacity && !closed) {
+                try {
+                    keyLaneVacancy.wait();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while waiting for key-lane capacity", e);
+                }
+            }
+        }
+    }
+
+    // Wakes BLOCK producers after the key's boss released a lane slot (or at
+    // shutdown, so nobody hangs). Guarded so an engine that never set a BLOCK
+    // bound touches neither the monitor nor the boss with a lock.
+    private void signalKeyLaneVacancy() {
+        if (keyLaneCapacity > 0 && keyLaneOverflowPolicy == OverflowPolicy.BLOCK) {
+            synchronized (keyLaneVacancy) {
+                keyLaneVacancy.notifyAll();
+            }
+        }
+    }
+
+    private RejectedExecutionException keyLaneRejection(Object key) {
+        RejectedExecutionException rejection = new RejectedExecutionException(
+                "Key-lane capacity " + keyLaneCapacity + " reached for key " + key + "; call dropped");
+        NioFlowMetrics sink = metrics.get();
+        if (sink != null) {
+            sink.valueDropped();
+        }
+        notifyError(rejection);
+        return rejection;
+    }
+
     @Override
     public CompletableFuture<Object> call(Object input, Map<String, Object> context) {
         return call(input, context, version.get().links());
@@ -329,6 +428,12 @@ public class DefaultNioEngine implements NioEngine {
     public CompletableFuture<Object> call(Object input, Map<String, Object> context, List<Link> chain, Object key) {
         if (closed) {
             return CompletableFuture.failedFuture(rejection());
+        }
+        // Per-key backlog bound first (RFC 0039), then the in-flight bound (RFC
+        // 0031): a keyed call that its hot key cannot admit never takes an
+        // in-flight permit. Both no-op unless configured.
+        if (!admitKeyLane(key)) {
+            return CompletableFuture.failedFuture(keyLaneRejection(key));
         }
         // Admission on the request/response path too (RFC 0031): capacity bounds
         // in-flight calls, not just inject's results queue. FAIL throws here; DROP
@@ -354,6 +459,9 @@ public class DefaultNioEngine implements NioEngine {
         if (closed) {
             return new RejectedCall(CompletableFuture.failedFuture(rejection()));
         }
+        if (!admitKeyLane(key)) {
+            return new RejectedCall(CompletableFuture.failedFuture(keyLaneRejection(key)));
+        }
         if (!admit()) {
             return new RejectedCall(CompletableFuture.failedFuture(capacityRejection()));
         }
@@ -366,6 +474,9 @@ public class DefaultNioEngine implements NioEngine {
         if (closed) {
             return CompletableFuture.failedFuture(rejection());
         }
+        if (!admitKeyLane(key)) {
+            return CompletableFuture.failedFuture(keyLaneRejection(key));
+        }
         if (!admit()) {
             return CompletableFuture.failedFuture(capacityRejection());
         }
@@ -377,6 +488,9 @@ public class DefaultNioEngine implements NioEngine {
                                                PreparedChain prepared, Object key) {
         if (closed) {
             return new RejectedCall(CompletableFuture.failedFuture(rejection()));
+        }
+        if (!admitKeyLane(key)) {
+            return new RejectedCall(CompletableFuture.failedFuture(keyLaneRejection(key)));
         }
         if (!admit()) {
             return new RejectedCall(CompletableFuture.failedFuture(capacityRejection()));
@@ -688,6 +802,10 @@ public class DefaultNioEngine implements NioEngine {
     public int shutdown(Duration gracePeriod) {
         // 1. Stop accepting: call/inject reject from this point on.
         closed = true;
+        // Wake any BLOCK producer parked on a full key lane (RFC 0039): the
+        // closed flag it re-checks now makes it stop waiting, so shutdown never
+        // hangs on a keyed backpressure wait.
+        signalKeyLaneVacancy();
         // 2. Drain: wait up to the grace period for in-flight executions.
         int pending = awaitDrain(gracePeriod);
         // 3. Engine-owned executors are terminated; JVM-shared ones outlive the
@@ -759,7 +877,12 @@ public class DefaultNioEngine implements NioEngine {
         return activeExecutions.sum();
     }
 
-    // Test hook: how many executions are queued behind a key's active head.
+    // The backlog behind a key's running head, 0 if the key is idle. Also the
+    // keyed-admission depth check (RFC 0039): size() on the lock-free queue is
+    // thread-safe, and the caller reads a snapshot, so the bound is SOFT — a burst
+    // of concurrent same-key admissions can overshoot slightly, which is exactly
+    // what a backpressure limit needs (approximate, never a hang). Package-private
+    // so the keyed tests can assert the backlog too.
     int keyLaneDepth(Object key) {
         KeyLane lane = keyLanes.get(key);
         return lane == null ? 0 : lane.waiting.size();
@@ -1201,9 +1324,11 @@ public class DefaultNioEngine implements NioEngine {
             KeyLane lane = keyLanes.computeIfAbsent(key, ignored -> new KeyLane());
             if (lane.active) {
                 lane.waiting.add(this);
+                meterKeyLaneDepth(lane.waiting.size());   // head-of-line buildup, visible
             } else {
                 lane.active = true;
                 laneHeld = true;
+                meterKeyLanesActive();                    // a new key started serializing
                 advance(0, input);
             }
         }
@@ -1222,8 +1347,12 @@ public class DefaultNioEngine implements NioEngine {
             Execution next = lane.waiting.poll();
             if (next == null) {
                 keyLanes.remove(key);
+                meterKeyLanesActive();      // the key stopped serializing
+                signalKeyLaneVacancy();      // its backlog is empty: any BLOCK waiter may proceed
                 return;
             }
+            meterKeyLaneDepth(lane.waiting.size());   // backlog shrank by one
+            signalKeyLaneVacancy();                    // a slot freed for a BLOCK waiter
             // Hand the lane to the successor as a FRESH boss task, never an inline
             // call. A successor advancing inside its predecessor's terminal frame
             // recurses one stack frame per queued execution — the very thing the
@@ -1364,6 +1493,22 @@ public class DefaultNioEngine implements NioEngine {
                 sinkCall.run();
             } catch (Throwable failure) {
                 notifyError(failure);
+            }
+        }
+
+        // Key-lane gauges (RFC 0039), emitted on the boss as a lane fills or
+        // drains. Guarded like every other SPI call; a null snapshot means no
+        // metrics installed for this execution, so nothing is read or pushed.
+        private void meterKeyLaneDepth(int depth) {
+            if (metrics != null) {
+                meter(() -> metrics.keyLaneDepth(depth));
+            }
+        }
+
+        private void meterKeyLanesActive() {
+            if (metrics != null) {
+                int active = keyLanes.size();
+                meter(() -> metrics.keyLanesActive(active));
             }
         }
 

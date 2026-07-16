@@ -1,10 +1,10 @@
 # RFC 0039 — Bound the per-key lane, and surface its depth
 
-- **Status**: 📋 Proposed
-- **Target**: `core` (`DefaultNioEngine` — `KeyLane`, the metrics SPI)
+- **Status**: ✅ Implemented — option 2 (the metric) + option 1 (an engine-level bound)
+- **Target**: `core` (`DefaultNioEngine`, `NioFlowMetrics`, `OpenTelemetryMetrics`)
 - **Depends on**: RFC 0026 (the off-boss key-lane release), RFC 0024 (the drain counter it interacts with)
 - **Severity**: **Medium** — a hot-key head-of-line hazard: an unbounded FIFO lane can grow without limit and block a clean drain, and operators cannot see it building
-- **Realized by**: an optional per-key queue bound (reusing `OverflowPolicy`), and at minimum promoting `keyLaneDepth` from a test hook to a real metric so head-of-line buildup is observable before it becomes an outage.
+- **Realized by**: two SPI gauges (`keyLaneDepth`/`keyLanesActive`, emitted on the boss as a key's backlog fills or drains) so buildup is observable, plus `DefaultNioEngine.keyLaneCapacity(maxDepth, OverflowPolicy)` — an engine-level bound checked at ADMISSION (the caller's thread), because enrollment runs on the boss, which must never park: FAIL throws, DROP fails the future, BLOCK parks the caller until the key drains. Off by default, so keyed execution is unchanged unless configured.
 
 ## The finding
 
@@ -40,3 +40,45 @@ Recommended: **option 2 first** (make it observable — nearly free), then **opt
 - **A bound changes keyed semantics** (a rejected same-key call is new behavior). Keep it off by default and opt-in; document that keyed + bound means "ordering *and* backpressure," and that BLOCK on an event-loop thread is the same hazard called out in RFC 0031 (prefer FAIL/DROP for `call()`).
 - **Per-key metric cardinality.** A gauge *per key* can explode cardinality for high-key-count workloads; prefer a max-across-active-lanes gauge plus an active-lane count, not one series per key.
 - **The bound must not deadlock with the drain.** A BLOCKed producer parked on a full lane during shutdown must be released/rejected when the engine closes, exactly as `admit()`'s BLOCK path must — reuse that shutdown-unpark logic.
+
+## Results
+
+Shipped option 2 + option 1 (engine-level). No hot-path change (unbounded — the
+default — is one volatile read on the keyed admission path, and the gauges fire
+only when a keyed value actually enrolls behind a busy head with a metrics sink
+installed); the keyed JMH benchmark stayed in range.
+
+- **The gauges** `keyLaneDepth(int)` and `keyLanesActive(int)` were added to
+  `NioFlowMetrics` (no-op defaults) and implemented in `OpenTelemetryMetrics`
+  (`nioflow.key_lane.depth`, `nioflow.key_lanes.active`). They fire on the boss:
+  depth as a value enrolls behind (or is released from) a key's running head,
+  active-count as a lane is created or retired. Not keyed — report a max or
+  percentile across lanes, never a per-key series (the cardinality trap the RFC
+  flagged).
+
+- **The bound is engine-level and admission-checked.**
+  `keyLaneCapacity(maxDepth, OverflowPolicy)` is a fluent setter (like `metrics()`),
+  off by default. The check runs on the CALLER's thread in the four `call`/
+  `callCancellable` entry points, BEFORE the in-flight `admit()` (so a keyed call
+  its hot key cannot admit never takes an in-flight permit) — it cannot run at
+  enrollment, which is on the boss, and the boss must never park. FAIL throws a
+  `RejectedExecutionException`; DROP fails the returned future and reports
+  `valueDropped()` + the error handlers; BLOCK parks the caller on a monitor until
+  the key's boss signals a freed slot (or shutdown wakes it via the same monitor —
+  the `closed` re-check under the monitor closes the lost-wakeup window). The bound
+  is SOFT (the depth is a snapshot read), which is exactly what a backpressure
+  limit wants: approximate, never a hang. The event-loop caveat for BLOCK is the
+  same one RFC 0031 documents for the in-flight bound.
+
+- **Tests:** `DefaultNioEngineKeyLaneBoundTest` — the gauges report depth and
+  active-lane count as a backlog builds; FAIL rejects the excess keyed call (and a
+  DIFFERENT key is unaffected — the bound is per key); DROP fails the future and
+  reports it; BLOCK parks the producer until the head drains, then it proceeds;
+  and unbounded (default) never rejects. The existing keyed/shutdown/drain suites
+  stay green. SonarLint over the main-source diff is clean (the one `S2925` is a
+  test-only "assert the producer is parked" sleep, the pattern the backpressure
+  BLOCK test already uses, and test code is out of the authoritative analysis).
+
+- **Not done:** option 3 (a default head-of-line timeout) — a hidden timeout is
+  less honest than an explicit bound + the existing per-stage timeout, and the
+  metric now makes the buildup visible without one.

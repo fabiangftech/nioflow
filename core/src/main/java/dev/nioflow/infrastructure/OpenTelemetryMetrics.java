@@ -42,6 +42,8 @@ public final class OpenTelemetryMetrics implements NioFlowMetrics {
     private final LongCounter forksFailed;
     private final AtomicInteger queueDepth = new AtomicInteger();
     private final AtomicInteger forksInFlight = new AtomicInteger();
+    private final AtomicInteger keyLaneDepth = new AtomicInteger();
+    private final AtomicInteger keyLanesActive = new AtomicInteger();
     // Attribute instances cached per name: no allocations on the hot path.
     private final Map<String, Attributes> stageAttributes = new ConcurrentHashMap<>();
     private final Map<String, Attributes> recoveryAttributes = new ConcurrentHashMap<>();
@@ -65,6 +67,10 @@ public final class OpenTelemetryMetrics implements NioFlowMetrics {
                 .buildWithCallback(gauge -> gauge.record(queueDepth.get()));
         meter.gaugeBuilder("nioflow.fork.in_flight").ofLongs()
                 .buildWithCallback(gauge -> gauge.record(forksInFlight.get()));
+        meter.gaugeBuilder("nioflow.key_lane.depth").ofLongs()
+                .buildWithCallback(gauge -> gauge.record(keyLaneDepth.get()));
+        meter.gaugeBuilder("nioflow.key_lanes.active").ofLongs()
+                .buildWithCallback(gauge -> gauge.record(keyLanesActive.get()));
     }
 
     @Override
@@ -130,5 +136,15 @@ public final class OpenTelemetryMetrics implements NioFlowMetrics {
     @Override
     public void queueDepth(int pending) {
         queueDepth.set(pending);
+    }
+
+    @Override
+    public void keyLaneDepth(int depth) {
+        keyLaneDepth.set(depth);
+    }
+
+    @Override
+    public void keyLanesActive(int active) {
+        keyLanesActive.set(active);
     }
 }
