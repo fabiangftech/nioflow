@@ -1048,8 +1048,16 @@ public class DefaultNioEngine implements NioEngine {
         private final Object key;
         // True only while this execution HOLDS its key's lane: a keyed
         // execution that failed before enrolling (submission rejected at
-        // shutdown) must not release a lane it never took.
-        private boolean laneHeld;
+        // shutdown) must not release a lane it never took. VOLATILE (RFC 0040):
+        // the boss writes it (run()/releaseKey), but the off-boss shutdown
+        // terminal reads it — cancel() runs complete(CANCELLED) on the CALLER's
+        // thread when boss.execute is rejected, and the finished CAS orders the
+        // racing terminals but carries no happens-before for this earlier boss
+        // write. A stale false there would skip releaseKey() and hang the lane's
+        // successors, so a clean drain would never complete. Off the hot path
+        // (written once when a keyed execution takes its lane), so the volatile
+        // costs nothing measurable.
+        private volatile boolean laneHeld;
         // Per-execution context: null until a contextual stage puts the first
         // entry (or the caller handed a map to call/inject). Stage
         // applications are serialized by the executor handoffs — one

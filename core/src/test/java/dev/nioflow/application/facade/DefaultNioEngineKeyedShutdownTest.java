@@ -63,6 +63,31 @@ class DefaultNioEngineKeyedShutdownTest {
     }
 
     @Test
+    void aKeyedHeadCancelledOffBossAtShutdownReleasesItsSuccessor() {
+        // RFC 0040: laneHeld is written on the boss (the head took its lane) but
+        // read on the OFF-boss cancel terminal — complete(CANCELLED) runs on the
+        // caller's thread once the boss is gone at shutdown. A stale `false` read
+        // there would skip releaseKey() and strand the successor; the volatile
+        // makes the read see the boss's write.
+        DefaultNioEngine engine = DefaultNioEngine.dedicated(1);
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        CompletableFuture<Integer> hold = new CompletableFuture<>();
+        flow.handleAsync("hold", value -> hold);
+
+        Object key = "acct-7";
+        Cancellable<Integer> head = flow.just(0).key(key).executeCancellable();
+        CompletableFuture<Integer> successor = flow.just(1).key(key).executeAsync();
+        awaitBacklog(engine, key, 1);   // the successor is queued behind the head
+
+        engine.shutdown(Duration.ZERO); // boss gone
+        head.cancel();                  // its terminal runs OFF the boss
+
+        assertTrue(settled(successor), "the successor was stranded: releaseKey was skipped off-boss");
+        assertEquals(0, engine.keyLaneDepth(key), "the lane did not drain");
+        assertEquals(0, engine.activeKeyLanes(), "the key lane leaked");
+    }
+
+    @Test
     void thePostedHandoffKeepsPerKeyFifoOrderingWhenTheHeadWasParked() {
         DefaultNioEngine engine = new DefaultNioEngine();
         NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);

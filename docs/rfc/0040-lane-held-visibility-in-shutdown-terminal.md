@@ -1,6 +1,6 @@
 # RFC 0040 — `laneHeld` visibility on the off-boss shutdown terminal
 
-- **Status**: 📋 Proposed
+- **Status**: ✅ Implemented — option 1 (`volatile laneHeld`)
 - **Target**: `core` (`DefaultNioEngine.Execution`)
 - **Depends on**: RFC 0007 (cancellation), RFC 0024 (the atomic terminal), RFC 0026 (off-boss key-lane release)
 - **Severity**: **Low** (narrow: dedicated engine + keyed + external cancel of the lane head + concurrent worker rejection during shutdown) — but the fix is nearly free
@@ -38,3 +38,31 @@ Recommended: **option 1** — the minimal, obviously-correct fix for a flag this
 
 - **The race may be genuinely unobservable today**, tempting a "won't fix." The cost of fixing is one keyword; the cost of a memory-model bug in shutdown is a hang no one can reproduce. Fix it and move on.
 - **Do not over-correct** by making other cold `Execution` fields volatile reflexively — audit which are actually read off-boss (this one is, via the documented cancel path) and fix those, leaving boss-only fields plain.
+
+## Results
+
+Shipped option 1. `Execution.laneHeld` is now `volatile`. Off the hot path
+(written once, when a keyed execution takes its lane; read at the terminal), so
+the cost is nil — the full core suite and the RFC 0021 gates are unmoved.
+
+- **The race is closed by the JMM, not by luck.** The boss writes `laneHeld = true`
+  in `run()`/`releaseKey`; the off-boss cancel terminal (`complete(CANCELLED)` on
+  the caller's thread, when `boss.execute` is rejected at a dedicated engine's
+  shutdown) reads it to decide whether to `releaseKey()`. The `finished` CAS orders
+  the two racing terminals but carries no happens-before for that earlier boss
+  write, so a stale `false` was possible — and would skip `releaseKey()`, strand
+  the lane's successors, and stop `shutdown(grace)` from ever reporting clean. The
+  volatile read now sees the boss's write.
+
+- **Tests:** a focused `aKeyedHeadCancelledOffBossAtShutdownReleasesItsSuccessor`
+  (a keyed head parked on a never-completing async call, one successor queued, the
+  dedicated engine shut down so the boss is gone, then the head cancelled off-boss)
+  asserts the successor is released and the lane does not leak. The existing
+  `aDeepKeyedBacklogDrainedOffBossAtShutdownDoesNotOverflowTheStack` (RFC 0026,
+  20k backlog) already exercised the same off-boss path and asserts the whole
+  backlog drains — the behavioural consequence a stale `laneHeld` would break.
+  Both stay green (on a strong-memory-model host the stale read is unlikely to
+  manifest, which is exactly why the fix is by-the-JMM, not by-observation).
+
+- **Not needed: making other cold `Execution` fields volatile.** Only `laneHeld`
+  is read on the documented off-boss path; the rest stay plain (boss-only).
