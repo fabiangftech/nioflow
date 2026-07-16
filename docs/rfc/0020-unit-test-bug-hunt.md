@@ -1,14 +1,16 @@
 # RFC 0020 — Bug-hunting with deterministic unit tests in `core/` and `reactive/`
 
-- **Status**: 📝 Proposed
+- **Status**: ✅ Implemented (first pass) — 33 new deterministic probes, all green; no bug surfaced
 - **Target**: `core/src/test/…` and `reactive/src/test/…` (JUnit only — no `tests/`, no JMH)
 - **Depends on**: the whole implemented surface (RFC 0001–0017); it adds no feature, it probes them
 - **Part of**: test hardening, not the throughput series — the guardrail that keeps the series honest
-- **Realized by** (proposed): new `*…Test` methods added to the matching per-feature
-  test classes (and a few new probe classes) under `core/` and `reactive/`; each
-  found bug lands as a **red test first**, then the fix, then the test stays as a
-  regression guard. No engine or API change is a *goal* — any that a probe forces
-  is a bug being fixed.
+- **Realized by**: four new probe classes —
+  `DefaultNioEngineDifferentialProbeTest` (16 differential shapes),
+  `DefaultNioFlowFusionEquivalenceProbeTest` (5 fused-vs-unfused shapes),
+  `DefaultNioFlowThrowingUserCodeProbeTest` (8 adversarial probes) in `core/`, and
+  `ReactiveEquivalenceProbeTest` (4 probes) in `reactive/`. No engine or API change
+  was forced — every probe is green, which for a bug-hunt is the success signal the
+  Risks section names. See **Results** below.
 
 ## Summary
 
@@ -145,6 +147,48 @@ The campaign is a pass over the two tables, tracked as a checklist:
    reads as a bug ledger.
 4. `tools/sonarlint/run.sh core` and `tools/sonarlint/run.sh reactive` introduce
    no new findings over the touched files (judge by the diff, per `CLAUDE.md`).
+
+## Results (first pass)
+
+The campaign ran the two flagship techniques hardest, because they are the ones
+no existing test does *systematically*, and added an adversarial pass over user
+code that throws in corners the happy-path tests skip:
+
+- **Differential (compiled ≡ interpreted)** — `DefaultNioEngineDifferentialProbeTest`
+  builds 16 chain shapes (plain runs, filter cuts, positional and multiple
+  recoveries, sync-stage fusion, background, contextual, fan-out, `when`,
+  first-match `match`, nested branches, lane-scoped filter and recover, a
+  dispatch-alone timeout, and a guard-skipped decision inside a compiled window)
+  and asserts sealed and unsealed engines agree on value-or-failure across 14
+  inputs each. **All agree.**
+- **Fusion-equivalence (fused ≡ unfused)** — `DefaultNioFlowFusionEquivalenceProbeTest`
+  builds each shape twice, once fusable and once with a generous per-stage
+  timeout that never fires but forces every stage to dispatch alone, and asserts
+  identical outcomes — including `filter` cuts and positional `recover` inside a
+  run. **All agree.**
+- **Throwing user code** — `DefaultNioFlowThrowingUserCodeProbeTest` confirms a
+  `recover` that itself throws is caught by the *next* positional recovery (not
+  itself), fused and unfused; and that a throwing `when`/`match`/`filter`
+  predicate fails the value through the recovery path **without killing the boss**
+  (a second execution still runs — a dead boss would hang it, which the
+  `orTimeout` guards would surface). **All hold.**
+- **Reactive equivalence** — `ReactiveEquivalenceProbeTest` asserts a chain of
+  `handleMono` stages equals the same logic in plain `handle` stages (and that a
+  never-firing default budget does not move the result), plus the three-arm
+  `FlowResult` mapping through the reactive terminal (a `filter` cut → `Filtered`,
+  an empty Mono → `Completed(null)`). **All agree.**
+
+**No bug surfaced, and that is the documented success signal** (see Risks): the
+deliverable is 33 permanent, deterministic guards that pin invariants nothing
+tested adversarially before. The remaining table rows — decision-bitset word
+boundary, batch wrong-arity, fork context isolation and guard compaction,
+cancellation between fused links, `defaultBudget` inside a fork, `propagate`,
+`pipe`/`pipeResilient` — were found **already guarded** by the existing
+per-feature classes (`DefaultNioEngineDecisionBitsetTest`, `DefaultNioFlowBatchTest`,
+`DefaultNioFlowForkTest`, `ReactiveCancellationTest`, `ReactiveDefaultBudgetTest`,
+`ReactiveMonoSemanticsTest`), verified during this pass rather than duplicated.
+Both suites are green and SonarLint is clean over the new files (judged by the
+diff, per `CLAUDE.md`).
 
 ## Non-goals
 
