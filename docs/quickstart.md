@@ -55,7 +55,8 @@ import dev.nioflow.application.facade.DefaultNioFlow;
 import dev.nioflow.core.facade.NioFlow;
 
 // Declared once: takes a String, answers an Integer.
-NioFlow<String, Integer> flow = DefaultNioFlow.from(String.class)
+// The witness names O — chaining off from() would otherwise infer it as Object.
+NioFlow<String, Integer> flow = DefaultNioFlow.<String, Integer>from(String.class)
         .handle("trim", String::trim)          // named stages are editable later
         .filter(s -> !s.isEmpty());            // cut the flow: execute() returns null
 

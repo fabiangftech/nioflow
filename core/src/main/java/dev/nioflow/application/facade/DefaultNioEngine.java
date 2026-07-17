@@ -137,9 +137,13 @@ public class DefaultNioEngine implements NioEngine {
     private final List<Consumer<Throwable>> errorHandlers = new CopyOnWriteArrayList<>();
     final List<Consumer<Object>> completeHandlers = new CopyOnWriteArrayList<>();
     private final BlockingQueue<CompletableFuture<Object>> inFlight = new LinkedBlockingQueue<>();
-    // One in-flight group per Batch link instance (identity equality by
-    // design): executions from ANY boss park here until size or window.
-    private final ConcurrentHashMap<Batch, BatchGroup> batchGroups = new ConcurrentHashMap<>();
+    // One in-flight group per batch POINT, keyed by Batch#groupKey: executions
+    // from ANY boss park here until size or window. Keyed by the group key and
+    // not the link instance because a Batch is rebuilt whenever the chain around
+    // it is rebuilt with different guards (a lane, or RFC 0038's per-request
+    // decision compaction) — keying by instance gave every rebuilt copy its own
+    // group, which stopped coalescing and leaked a group per request.
+    private final ConcurrentHashMap<Object, BatchGroup> batchGroups = new ConcurrentHashMap<>();
     // FIFO lane per active business key. The map is concurrent because
     // different keys live on different bosses; each lane's INTERNALS are
     // only touched by its key's boss (deterministic affinity), and the
@@ -896,7 +900,7 @@ public class DefaultNioEngine implements NioEngine {
     // factory instead of `new BatchGroup(...)`, which it could not write once it
     // became a top-level class.
     BatchGroup batchGroupFor(Batch batch) {
-        return batchGroups.computeIfAbsent(batch, BatchGroup::new);
+        return batchGroups.computeIfAbsent(batch.groupKey(), ignored -> new BatchGroup(batch));
     }
 
     /**

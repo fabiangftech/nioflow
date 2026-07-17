@@ -125,7 +125,18 @@ public interface NioStep<T, O> {
     <R, C> NioStep<C, O> fanOutAsync(String name, List<Function<T, CompletionStage<R>>> branches,
                                      Function<List<R>, C> join);
 
-    /** Coalescing point; see NioFlow#batch. Per-request batches may re-type. */
+    /**
+     * Coalescing point; see NioFlow#batch. Per-request batches may re-type.
+     *
+     * <p><b>A batch declared HERE pools with nobody.</b> Executions coalesce by
+     * batch POINT, and this builds a fresh one per request — so each call flushes
+     * a group of one when its window elapses, paying the window for no
+     * coalescing, and the engine retains that group for its own lifetime.
+     * Coalescing across requests is what {@code batch} is for, and it needs a
+     * batch point the requests SHARE: declare it on the shared definition
+     * ({@link NioFlow#batch}) or inside a lane ({@link Lane#batch}). Use this
+     * overload only to bulk-map values within one request.
+     */
     <R> NioStep<R, O> batch(int size, Duration window, Function<List<T>, List<R>> bulk);
 
     <R> NioStep<R, O> batch(String name, int size, Duration window, Function<List<T>, List<R>> bulk);

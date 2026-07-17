@@ -134,10 +134,25 @@ abstract class AbstractChain<X> {
 
     @SuppressWarnings("unchecked")
     <R, C> void fanOutBranches(String name, List<Function<X, R>> branches, Function<List<R>, C> join) {
+        requireBranches(name, branches);
         appendLink(new FanOut(name,
                 (List<Function<Object, Object>>) (List<?>) List.copyOf(branches),
                 (Function<List<Object>, Object>) (Function<?, ?>) join,
                 false, guards()));
+    }
+
+    /**
+     * A fan-out joins when its branch countdown reaches zero, and only a branch
+     * ever counts down — so with no branches nothing ever does, and the value
+     * never resumes: the caller's future hangs forever. The list is usually
+     * built (a stream over configured enrichers), so empty is reachable in one
+     * environment and not another. Rejected HERE rather than at seal() so the
+     * stack trace points at the caller's own fanOut(...) line.
+     */
+    private static void requireBranches(String name, List<?> branches) {
+        if (branches.isEmpty()) {
+            throw new IllegalArgumentException("fanOut '" + name + "' needs at least one branch");
+        }
     }
 
     /**
@@ -150,6 +165,7 @@ abstract class AbstractChain<X> {
     @SuppressWarnings("unchecked")
     <R, C> void fanOutAsyncBranches(String name, List<Function<X, CompletionStage<R>>> branches,
                                     Function<List<R>, C> join) {
+        requireBranches(name, branches);
         appendLink(new FanOut(name,
                 (List<Function<Object, Object>>) (List<?>) List.copyOf(branches),
                 (Function<List<Object>, Object>) (Function<?, ?>) join,
@@ -252,8 +268,9 @@ abstract class AbstractChain<X> {
                     : new Background(background.name(), background.effect(), guards);
             case FanOut fanOut -> same ? fanOut
                     : new FanOut(fanOut.name(), fanOut.branches(), fanOut.join(), fanOut.async(), guards);
-            case Batch batch -> same ? batch
-                    : new Batch(batch.name(), batch.size(), batch.window(), batch.bulk(), guards);
+            // withGuards, not a new Batch: a rebuilt copy must keep pooling with
+            // the batch point it was declared on (see Batch#groupKey).
+            case Batch batch -> same ? batch : batch.withGuards(guards);
             // A nested fork's own chain was already compacted in ITS scope.
             case Fork fork -> same ? fork : new Fork(fork.name(), fork.chain(), guards);
         };

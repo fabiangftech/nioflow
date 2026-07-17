@@ -98,8 +98,8 @@ A fresh four-lens review (core concurrency, reactive design, docs accuracy,
 adopter/DX) run against the 2.1.0 tree. Like the first cluster it found the
 steady-state hot path solid, and again the findings sit off it — an
 admission-control gap on the request/response path, reactive safety defaults,
-long-uptime hazards, and maintainability/docs debt. These are **proposed**, to
-be worked through later; ordered by severity for a production push:
+long-uptime hazards, and maintainability/docs debt. **All are implemented and
+shipped in 2.2.0**; listed here in the severity order they were worked through:
 
 | # | Finding | Severity | Ship order |
 | --- | --- | --- | --- |

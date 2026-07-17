@@ -15,6 +15,8 @@ import dev.nioflow.core.model.Recovery;
 import dev.nioflow.core.model.Retry;
 import dev.nioflow.core.model.Stage;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -43,6 +45,16 @@ import java.util.function.Function;
  */
 final class Execution implements Runnable {
 
+    private static final VarHandle LANE_HELD;
+
+    static {
+        try {
+            LANE_HELD = MethodHandles.lookup().findVarHandle(Execution.class, "laneHeld", boolean.class);
+        } catch (ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
     // The engine this execution runs on: its shared executors, chain version,
     // drain counter, metrics and handlers. Before RFC 0032 this was the implicit
     // enclosing DefaultNioEngine.this; now every engine member is reached through
@@ -64,7 +76,8 @@ final class Execution implements Runnable {
     // write. A stale false there would skip releaseKey() and hang the lane's
     // successors, so a clean drain would never complete. Off the hot path
     // (written once when a keyed execution takes its lane), so the volatile
-    // costs nothing measurable.
+    // costs nothing measurable. Released through LANE_HELD's CAS, which
+    // elects a single releaser among the two that can reach releaseKey().
     private volatile boolean laneHeld;
     // Per-execution context: null until a contextual stage puts the first
     // entry (or the caller handed a map to call/inject). Stage
@@ -165,6 +178,19 @@ final class Execution implements Runnable {
     // gone. See releaseKey's body for how each case is handled without
     // recursion or a racy deque read (RFC 0026).
     private void releaseKey() {
+        // Exactly one release per execution that took the lane. TWO callers can
+        // reach here for the same execution: its own terminal (complete/fail,
+        // which read laneHeld) and the hand-off below, when the successor it
+        // hands to already reached a terminal while queued. Both can run at once
+        // in the RFC 0040 shutdown window — a boss still drains queued tasks
+        // while rejecting new ones — and a double release would hand ONE lane to
+        // TWO successors: two heads running concurrently under the same key,
+        // the one thing key() promises never happens. The CAS on the volatile
+        // RFC 0040 already made cross-thread-visible elects the single releaser,
+        // and costs no new field and no allocation.
+        if (!LANE_HELD.compareAndSet(this, true, false)) {
+            return;
+        }
         DefaultNioEngine.KeyLane lane = engine.keyLanes.get(key);
         if (lane == null) {
             return;
@@ -189,7 +215,21 @@ final class Execution implements Runnable {
         try {
             boss.execute(() -> {
                 next.laneHeld = true;
-                next.advance(0, next.input);
+                // A successor CANCELLED WHILE QUEUED already ran its terminal:
+                // it won the finished CAS back when laneHeld was still false, so
+                // it released nothing (correctly — it held nothing), and its
+                // complete() will never run again to release what we just handed
+                // it. advance() would call complete(CANCELLED), lose the CAS and
+                // return at its first line, leaving the lane active with no head
+                // and every later execution on this key hanging forever. Hand the
+                // lane straight on instead. Still iterative: each hand-off is a
+                // fresh boss task, so a backlog of cancelled successors drains
+                // one task at a time and never recurses on the boss stack.
+                if (next.finished.get()) {
+                    next.releaseKey();
+                } else {
+                    next.advance(0, next.input);
+                }
             });
         } catch (RejectedExecutionException gone) {
             // The boss is gone: fail the whole remaining backlog iteratively.

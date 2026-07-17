@@ -8,8 +8,10 @@ coordinates on the same version — see the [quickstart](docs/quickstart.md)).
 
 ## [Unreleased]
 
-The second design-audit cluster (RFCs 0031–0041). See the
-[RFC index](docs/rfc/0000-index.md) for the full record.
+## [2.2.0] - 2026-07-17
+
+The second design-audit cluster (RFCs 0031–0041), plus the release scan's four
+fixes. See the [RFC index](docs/rfc/0000-index.md) for the full record.
 
 ### Changed — BREAKING
 
@@ -38,6 +40,32 @@ The second design-audit cluster (RFCs 0031–0041). See the
 
 ### Fixed
 
+- **A keyed execution cancelled while queued no longer wedges its key lane.** It
+  reached its terminal before the lane was handed to it, so the hand-off's
+  `complete()` lost the exactly-once CAS and returned before releasing — leaving
+  the lane active with no head, and every later execution on that key hanging
+  forever (plus a leaked lane entry and drain slots a graceful shutdown could
+  never clear). Reachable from any disconnected client: a disposed subscription
+  cancels whatever is queued behind a hot key. The hand-off now passes the lane
+  on past a finished successor, and the release is elected by a CAS so the two
+  paths that can reach it never both run.
+- **`fanOutMono` no longer joins a silent `null` from an empty branch.** Its
+  branches skipped the `required()` guard every other value-carrying reactive
+  step goes through, so a repository lookup that missed (`Mono.empty()`) put a
+  `null` in the join's results list instead of failing — RFC 0027's silent null,
+  alive in the one step that never got the fix. An empty branch is now an
+  `EmptyMonoException` that `recover()` catches, as everywhere else.
+- **A lane-scoped `batch()` keeps coalescing once decision ids are compacted.**
+  The batch link is rebuilt whenever its guards are remapped — which RFC 0038
+  made happen on every per-request pipeline past decision 511 — and the in-flight
+  group was keyed by link INSTANCE, so each rebuilt copy silently got its own
+  group: no coalescing (every execution parking alone until its window) and one
+  leaked group per request, for the life of the engine. Groups are now keyed by
+  a `Batch#groupKey` that survives the rebuild.
+- **`fanOut` with an empty branch list is rejected at build time** instead of
+  hanging the request forever. Only a branch counts the join's countdown down,
+  so with no branches the join never ran — and a stream-built branch list is
+  empty in one environment and not another.
 - **Per-request `when`/`match` no longer falls off the decision bitset** (RFC
   0038): decision ids are compacted so long-running per-request branching never
   drops onto the per-execution overflow map.
@@ -53,9 +81,12 @@ The second design-audit cluster (RFCs 0031–0041). See the
   wildcard `NioFlow<?, ?>` bean its own Javadoc warned against (RFC 0036).
 - `ReactiveMirrorTest` now covers all twelve builder pairs, and `ReactiveParityTest`
   probes `match()` and flow-level `when()` behaviour (RFC 0035).
-- `DefaultNioEngine` began shedding its nested types (RFC 0032 phase A):
-  `CompiledChain`, `ChainVersion`, `Region`, `Prepared`, `RejectedCall` and
-  `SharedExecutors` are now top-level.
+- `DefaultNioEngine` shed its nested types (RFC 0032 phases A and B1):
+  `CompiledChain`, `ChainVersion`, `Region`, `Prepared`, `RejectedCall`,
+  `SharedExecutors` and `Execution` itself are now top-level. Phase C (unifying
+  the three execution drivers) was reconsidered and closed by a test pinning the
+  cancellation invariant, rather than a unification that would have cost the hot
+  path.
 
 ## [2.1.0]
 

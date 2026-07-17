@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * RFC 0027 — a value-carrying reactive step that returns {@code Mono.empty()}
@@ -39,6 +40,41 @@ class ReactiveEmptyMonoTest {
 
     private ReactiveFlow<Integer, Integer> flow() {
         return Reactive.<Integer, Integer>flow(DefaultNioFlow.from(Integer.class, engine)).allowUnbudgeted();
+    }
+
+    /**
+     * The position RFC 0027 missed: a fan-out BRANCH. Every other value-carrying
+     * reactive step routed through {@code required()}; {@code fanOutMono}'s
+     * branches went straight to {@code budgeted(...).toFuture()}, so an empty
+     * branch Mono completed its future with null and the join read a null out of
+     * its results list — RFC 0027's silent null, alive in the one step that
+     * skipped the guard. A repository lookup that misses is exactly the empty
+     * Mono this exists for, which is what makes it ordinary rather than exotic.
+     */
+    @Test
+    void anEmptyFanOutMonoBranchFailsInsteadOfJoiningANull() {
+        AtomicReference<Object> joined = new AtomicReference<>();
+        AtomicReference<Throwable> recovered = new AtomicReference<>();
+
+        java.util.List<java.util.function.Function<Integer, Mono<String>>> branches = java.util.List.of(
+                value -> Mono.empty(),                    // the repository miss
+                value -> Mono.just("b" + value));
+
+        Integer outcome = flow().just(1)
+                .fanOutMono("enrich", branches, results -> {
+                    joined.set(results);
+                    return 99;
+                })
+                .recover(error -> {
+                    recovered.set(error);
+                    return -1;
+                })
+                .execute();
+
+        assertEquals(-1, outcome);
+        assertInstanceOf(EmptyMonoException.class, recovered.get(),
+                "an empty fan-out branch must fail the value, not join a null");
+        assertNull(joined.get(), "the join must never run on a results list holding a null");
     }
 
     @Test

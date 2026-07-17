@@ -22,7 +22,7 @@ sequenceDiagram
 The chain stays open by default. New links appended to the shared definition apply from the next execution on:
 
 ```java
-NioFlow<Order, Order> flow = DefaultNioFlow.from(Order.class)
+NioFlow<Order, Order> flow = DefaultNioFlow.<Order, Order>from(Order.class)
         .handle("price", pricing::apply);
 
 flow.just(order).execute();               // runs: price

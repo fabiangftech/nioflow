@@ -22,7 +22,7 @@
 
 ```java
 // The shared definition: what every request goes through first.
-NioFlow<OrderRequest, Receipt> orders = DefaultNioFlow.from(OrderRequest.class)
+NioFlow<OrderRequest, Receipt> orders = DefaultNioFlow.<OrderRequest, Receipt>from(OrderRequest.class)
         .handle("validate", validator::check)
         .background("audit", audit::record);
 

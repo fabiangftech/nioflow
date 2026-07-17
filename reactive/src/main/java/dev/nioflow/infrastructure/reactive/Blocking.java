@@ -45,10 +45,13 @@ final class Blocking {
     /**
      * Turns an empty value-carrying Mono into an {@link EmptyMonoException}
      * BEFORE it becomes a silent {@code null} (RFC 0027). The error is deferred
-     * (a supplier), so a Mono that DOES emit builds no exception. Only
-     * {@code handleMono}/{@code adaptMono} route through here — {@code adaptFlux}
-     * awaits a {@code collectList}, which emits an empty list, never an empty
-     * Mono, so it is unaffected.
+     * (a supplier), so a Mono that DOES emit builds no exception. Every
+     * value-carrying reactive step routes through here — {@code handleMono},
+     * {@code adaptMono} and each {@code fanOutMono} BRANCH (a repository lookup
+     * that misses is exactly the empty Mono this exists for, and the join would
+     * otherwise read a null out of its results list). {@code adaptFlux} awaits a
+     * {@code collectList}, which emits an empty list, never an empty Mono, so it
+     * is unaffected.
      */
     static <T> Mono<T> required(Mono<T> mono, String step) {
         return mono.switchIfEmpty(Mono.error(() -> new EmptyMonoException(step)));
@@ -136,10 +139,15 @@ final class Blocking {
      * exactly as on the async main line.
      */
     static <T, R> List<Function<T, CompletionStage<R>>> asyncBranches(
-            List<Function<T, Mono<R>>> reactive, Duration budget) {
+            List<Function<T, Mono<R>>> reactive, Duration budget, String step) {
         List<Function<T, CompletionStage<R>>> async = new ArrayList<>(reactive.size());
         for (Function<T, Mono<R>> branch : reactive) {
-            async.add(value -> budgeted(branch.apply(value), budget).toFuture());
+            // required INSIDE, budgeted OUTSIDE — the same order awaitValue uses,
+            // so the timeout still wraps the switchIfEmpty. Without required, an
+            // empty branch Mono completed its future with null and the join read
+            // a null out of its results list: RFC 0027's silent null, in the one
+            // value-carrying step that skipped the guard.
+            async.add(value -> budgeted(required(branch.apply(value), step), budget).toFuture());
         }
         return async;
     }

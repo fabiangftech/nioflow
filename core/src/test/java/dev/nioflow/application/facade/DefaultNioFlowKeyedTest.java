@@ -1,10 +1,12 @@
 package dev.nioflow.application.facade;
 
+import dev.nioflow.core.facade.Cancellable;
 import dev.nioflow.core.facade.NioFlow;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
@@ -135,6 +137,57 @@ class DefaultNioFlowKeyedTest extends EngineTestSupport {
 
         assertEquals(1, java.util.Set.copyOf(bosses).size(),
                 "same key must always orchestrate on the same boss: " + bosses);
+    }
+
+    /**
+     * The lane must survive a successor that reaches its terminal while still
+     * QUEUED. A cancel there is not exotic: a disposed subscription — a
+     * disconnected client, an upstream {@code .timeout()} — cancels whatever is
+     * waiting its turn behind a hot key's head, and a backlog on a hot key is
+     * precisely what {@code key()} exists to create.
+     *
+     * <p>The bug this pins: the cancelled successor won the {@code finished} CAS
+     * back when it held no lane (so it correctly released nothing), and the
+     * hand-off then gave it the lane anyway. Its {@code advance} called
+     * {@code complete(CANCELLED)}, which lost the CAS and returned at its first
+     * line — never reaching {@code releaseKey()}. The lane stayed active with no
+     * head, and every later execution on that key hung forever.
+     */
+    @Test
+    void aSuccessorCancelledWhileQueuedHandsTheLaneOn() throws Exception {
+        CountDownLatch headRunning = new CountDownLatch(1);
+        CountDownLatch releaseHead = new CountDownLatch(1);
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.handle("gate", value -> {
+            if (value == 1) {
+                headRunning.countDown();
+                try {
+                    releaseHead.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return value * 10;
+        });
+        engine.seal();
+
+        // E1 takes the lane and parks on a worker; the boss stays free.
+        CompletableFuture<Integer> head = flow.just(1).key("acct").executeAsync();
+        assertTrue(headRunning.await(5, TimeUnit.SECONDS));
+
+        // E2 enrolls BEHIND it, then its caller goes away.
+        Cancellable<Integer> queued = flow.just(2).key("acct").executeCancellable();
+        queued.cancel();
+        // Its terminal must land while it is still queued — that IS the case
+        // under test, so wait for it instead of racing E1's hand-off.
+        CompletableFuture<Integer> queuedFuture = queued.future();
+        assertThrows(CancellationException.class, () -> queuedFuture.get(5, TimeUnit.SECONDS));
+
+        releaseHead.countDown();
+        assertEquals(10, head.orTimeout(5, TimeUnit.SECONDS).join());
+
+        assertEquals(30, flow.just(3).key("acct").executeAsync().orTimeout(5, TimeUnit.SECONDS).join(),
+                "a successor cancelled while queued must not wedge its key lane");
     }
 
     @Test

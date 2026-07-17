@@ -153,7 +153,7 @@ class DefaultReactiveFlow<I, O> implements ReactiveFlow<I, O>, AutoCloseable {
     public <R> ReactiveFlow<I, O> fanOutMono(String name, List<Function<I, Mono<R>>> branches,
                                              Function<List<R>, I> join) {
         return wrap(delegate.fanOutAsync(name,
-                Blocking.asyncBranches(branches, config.budgetFor(name, null)), join));
+                Blocking.asyncBranches(branches, config.budgetFor(name, null), name), join));
     }
 
     // ── a Flux through the flow: Reactor's operators do the backpressure ──

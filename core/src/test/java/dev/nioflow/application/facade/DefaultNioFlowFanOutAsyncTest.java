@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.NioStep;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -24,6 +25,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * fanOut; only the completion mechanism differs.
  */
 class DefaultNioFlowFanOutAsyncTest {
+
+    /** Same countdown, same hang, same build-time rejection as the sync fan-out. */
+    @Test
+    void anEmptyBranchListIsRejectedAtBuildTimeInsteadOfHangingTheRequest() {
+        List<Function<Integer, CompletionStage<Integer>>> none = List.of();
+        NioStep<Integer, Integer> step = DefaultNioFlow.<Integer, Integer>from(Integer.class).just(7);
+
+        IllegalArgumentException rejected = assertThrows(IllegalArgumentException.class,
+                () -> step.fanOutAsync("remote", none, List::size));
+        assertEquals("fanOut 'remote' needs at least one branch", rejected.getMessage());
+    }
 
     @Test
     void branchesInvokeConcurrentlyAndJoinInDeclarationOrder() {

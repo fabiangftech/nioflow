@@ -1,6 +1,7 @@
 package dev.nioflow.application.facade;
 
 import dev.nioflow.core.facade.NioFlow;
+import dev.nioflow.core.facade.NioStep;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -14,6 +15,24 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DefaultNioFlowFanOutTest {
+
+    /**
+     * A fan-out joins when its branch countdown reaches zero, and only a branch
+     * ever counts down — so with no branches nothing ever did, the join never
+     * ran, and the caller's future hung forever. The list is usually built
+     * (a stream over configured enrichers), so empty is reachable in one
+     * environment and not another: the worst kind of hang to debug. Rejected at
+     * the caller's own fanOut(...) line instead.
+     */
+    @Test
+    void anEmptyBranchListIsRejectedAtBuildTimeInsteadOfHangingTheRequest() {
+        List<Function<Integer, Integer>> none = List.of();
+        NioStep<Integer, Integer> step = DefaultNioFlow.<Integer, Integer>from(Integer.class).just(7);
+
+        IllegalArgumentException rejected = assertThrows(IllegalArgumentException.class,
+                () -> step.fanOut("enrich", none, List::size));
+        assertEquals("fanOut 'enrich' needs at least one branch", rejected.getMessage());
+    }
 
     @Test
     void branchesRunInParallelAndJoinInDeclarationOrder() {

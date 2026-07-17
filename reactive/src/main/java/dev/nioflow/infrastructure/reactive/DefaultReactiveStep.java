@@ -164,7 +164,7 @@ class DefaultReactiveStep<T, O> implements ReactiveStep<T, O> {
     public <R, C> ReactiveStep<C, O> fanOutMono(String name, List<Function<T, Mono<R>>> branches,
                                                 Function<List<R>, C> join) {
         return retyped(delegate.fanOutAsync(name,
-                Blocking.asyncBranches(branches, config.budgetFor(name, null)), join));
+                Blocking.asyncBranches(branches, config.budgetFor(name, null), name), join));
     }
 
     /**

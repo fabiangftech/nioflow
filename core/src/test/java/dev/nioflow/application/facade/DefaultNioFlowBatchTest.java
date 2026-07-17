@@ -28,6 +28,59 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class DefaultNioFlowBatchTest extends EngineTestSupport {
 
+    /**
+     * A batch link is REBUILT whenever the chain around it is rebuilt with
+     * DIFFERENT GUARDS — and since RFC 0038 that happens on every per-request
+     * pipeline whose decision ids get compacted, which is every one of them once
+     * the engine-wide counter passes 511 (seconds of traffic on a flow that uses
+     * per-request when()/match()). Keying the in-flight group by link INSTANCE
+     * gave each rebuilt copy its own group: the batch silently stopped
+     * coalescing — every execution parking alone until its own window — and
+     * leaked one group per request for the life of the engine. Batch#groupKey is
+     * what survives the rebuild.
+     *
+     * <p>Lane-scoped on purpose: a main-line batch carries no guards, so
+     * remapGuards hands back the same empty list, the link is reused as-is and
+     * the bug never fires. The guards are the trigger, which is exactly what
+     * makes this reachable only through the (documented, first-class)
+     * combination of a lane-scoped batch and per-request branching.
+     */
+    @Test
+    void aLaneScopedBatchKeepsCoalescingAfterPerRequestDecisionIdsAreCompacted() {
+        var bulkCalls = new AtomicInteger();
+        NioFlow<Integer, Integer> flow = DefaultNioFlow.from(Integer.class, engine);
+        flow.when(value -> value > 0)
+                .then(lane -> lane.batch("pool", 4, Duration.ofSeconds(30), values -> {
+                    bulkCalls.incrementAndGet();
+                    return values.stream().map(value -> value * 10).toList();
+                }));
+        engine.seal();
+
+        // Burn the engine-wide decision counter past the bitset limit. Ids are
+        // drawn when the Decision is built, so none of these has to execute.
+        for (int i = 0; i <= DefaultNioEngine.MAX_BITSET_DECISION_ID; i++) {
+            flow.just(1).when(value -> true).then(lane -> lane.handle(value -> value));
+        }
+
+        // Each of these copies the shared chain and compacts its decision ids —
+        // rebuilding the guarded batch link on the way through.
+        List<CompletableFuture<Integer>> calls = new ArrayList<>();
+        for (int i = 1; i <= 4; i++) {
+            calls.add(flow.just(i).when(value -> true).then(lane -> lane.handle(value -> value))
+                    .executeAsync());
+        }
+
+        // A 30s window against a 5s timeout: if the four stopped pooling, each
+        // parks alone waiting for its own window and this fails visibly instead
+        // of hanging the suite.
+        assertEquals(10, calls.get(0).orTimeout(5, TimeUnit.SECONDS).join());
+        assertEquals(20, calls.get(1).orTimeout(5, TimeUnit.SECONDS).join());
+        assertEquals(30, calls.get(2).orTimeout(5, TimeUnit.SECONDS).join());
+        assertEquals(40, calls.get(3).orTimeout(5, TimeUnit.SECONDS).join());
+        assertEquals(1, bulkCalls.get(),
+                "a rebuilt batch link must pool with the batch point it was declared on");
+    }
+
     @Test
     void sizeTriggerFlushesWithoutWaitingForTheWindow() {
         var bulkCalls = new AtomicInteger();
