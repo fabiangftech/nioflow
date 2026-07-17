@@ -8,7 +8,7 @@ coordinates on the same version — see the [quickstart](docs/quickstart.md)).
 
 ## [Unreleased]
 
-## [2.2.0] - 2026-07-17
+## [2.3.0] - 2026-07-17
 
 The second design-audit cluster (RFCs 0031–0041), plus the release scan's four
 fixes. See the [RFC index](docs/rfc/0000-index.md) for the full record.

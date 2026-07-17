@@ -30,8 +30,8 @@ The reactive facade ships as its own artifact, **`dev.nioflow:nioflow-reactive`*
 **Gradle**
 
 ```groovy
-implementation 'dev.nioflow:nioflow-core:2.2.0'
-implementation 'dev.nioflow:nioflow-reactive:2.2.0'
+implementation 'dev.nioflow:nioflow-core:2.3.0'
+implementation 'dev.nioflow:nioflow-reactive:2.3.0'
 ```
 
 **Maven**
@@ -40,12 +40,12 @@ implementation 'dev.nioflow:nioflow-reactive:2.2.0'
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-core</artifactId>
-    <version>2.2.0</version>
+    <version>2.3.0</version>
 </dependency>
 <dependency>
     <groupId>dev.nioflow</groupId>
     <artifactId>nioflow-reactive</artifactId>
-    <version>2.2.0</version>
+    <version>2.3.0</version>
 </dependency>
 ```
 

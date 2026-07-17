@@ -99,7 +99,7 @@ adopter/DX) run against the 2.1.0 tree. Like the first cluster it found the
 steady-state hot path solid, and again the findings sit off it — an
 admission-control gap on the request/response path, reactive safety defaults,
 long-uptime hazards, and maintainability/docs debt. **All are implemented and
-shipped in 2.2.0**; listed here in the severity order they were worked through:
+shipped in 2.3.0**; listed here in the severity order they were worked through:
 
 | # | Finding | Severity | Ship order |
 | --- | --- | --- | --- |

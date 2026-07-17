@@ -7,8 +7,8 @@
 - Returns a `Mono` in WebFlux, and blocking code is safe inside it
 
 ```groovy
-implementation 'dev.nioflow:nioflow-core:2.2.0'
-implementation 'dev.nioflow:nioflow-reactive:2.2.0'  // WebFlux only
+implementation 'dev.nioflow:nioflow-core:2.3.0'
+implementation 'dev.nioflow:nioflow-reactive:2.3.0'  // WebFlux only
 ```
 
 <p class="cover-actions"><a href="#/quickstart">Quickstart</a> <a href="#/overview">What is nioflow</a> <a href="https://central.sonatype.com/artifact/dev.nioflow/nioflow-core" target="_blank" rel="noopener">Maven Central</a></p>
