@@ -34,56 +34,56 @@ public class NioFlowConfig {
 
     // ── String in, String out ────────────────────────────────────────────
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<String, String> greetingFlow() {
         return DefaultNioFlow.from(String.class);
     }
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<String, String> textFlow() {
         return DefaultNioFlow.from(String.class);
     }
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<String, String> gatewayFlow() {
         return DefaultNioFlow.from(String.class);
     }
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<String, String> enrichFlow() {
         return DefaultNioFlow.from(String.class);
     }
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<String, String> bulkFlow() {
         return DefaultNioFlow.from(String.class);
     }
 
     // ── Integer in, Integer out ──────────────────────────────────────────
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<Integer, Integer> numberFlow() {
         return DefaultNioFlow.from(Integer.class);
     }
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<Integer, Integer> orderedFlow() {
         return DefaultNioFlow.from(Integer.class);
     }
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<Integer, Integer> reportFlow() {
         return DefaultNioFlow.from(Integer.class);
     }
 
     // ── Integer in, String out (adapt moves I → O per request) ───────────
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<Integer, String> invoiceFlow() {
         return DefaultNioFlow.from(Integer.class);
     }
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public NioFlow<Integer, String> creditFlow() {
         return DefaultNioFlow.from(Integer.class);
     }

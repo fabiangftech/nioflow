@@ -41,7 +41,7 @@ import java.time.Duration;
 @Configuration
 public class NioFlowConfig {
 
-    @Bean(destroyMethod = "close")
+    @Bean
     public ReactiveFlow<String, Receipt> orders() {
         return Reactive.<String, Receipt>flow(DefaultNioFlow.from(String.class))
                 .defaultBudget(Duration.ofSeconds(3))
